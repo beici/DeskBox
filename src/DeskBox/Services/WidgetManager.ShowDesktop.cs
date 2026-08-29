@@ -27,12 +27,19 @@ public sealed partial class WidgetManager
     {
         if (_widgetsRaisedFromTray || _isTogglingWidgetsDesktopLayer)
         {
+            App.LogVerbose(
+                $"[ShowDesktop] Self-heal skipped reason={reason} " +
+                $"raised={_widgetsRaisedFromTray} toggling={_isTogglingWidgetsDesktopLayer}");
             return;
         }
 
         if (IsWidgetInteractionActive ||
             !WidgetLayerService.ShouldKeepWidgetsVisibleOnShowDesktop())
         {
+            App.LogVerbose(
+                $"[ShowDesktop] Self-heal skipped reason={reason} " +
+                $"interactionActive={IsWidgetInteractionActive} " +
+                $"keepVisible={WidgetLayerService.ShouldKeepWidgetsVisibleOnShowDesktop()}");
             return;
         }
 
