@@ -107,12 +107,17 @@ namespace DeskBoxGuiDriver
 
         public static void RightClick()
         {
-            var inputs = new INPUT[2];
+            var inputs = new INPUT[1];
             inputs[0].type = INPUT_MOUSE;
             inputs[0].u.mi.dwFlags = MOUSEEVENTF_RIGHTDOWN;
-            inputs[1].type = INPUT_MOUSE;
-            inputs[1].u.mi.dwFlags = MOUSEEVENTF_RIGHTUP;
-            SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
+            SendInput(1, inputs, Marshal.SizeOf(typeof(INPUT)));
+            // A zero-gap down/up pair is occasionally not recognized as a
+            // RightTap by XAML input; hold briefly like a real user.
+            System.Threading.Thread.Sleep(80);
+            var release = new INPUT[1];
+            release[0].type = INPUT_MOUSE;
+            release[0].u.mi.dwFlags = MOUSEEVENTF_RIGHTUP;
+            SendInput(1, release, Marshal.SizeOf(typeof(INPUT)));
         }
 
         public static void LeftClick()
