@@ -250,6 +250,40 @@ public static partial class Win32Helper
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool IsIconic(IntPtr hWnd);
+
+    public const uint EVENT_SYSTEM_MINIMIZESTART = 0x0002;
+    public const uint WINEVENT_OUTOFCONTEXT = 0x0000;
+    public const uint WINEVENT_SKIPOWNPROCESS = 0x0002;
+
+    public delegate void WinEventProc(
+        IntPtr hWinEventHook,
+        uint eventId,
+        IntPtr hWnd,
+        int idObject,
+        int idChild,
+        uint idThread,
+        uint dwmsEventTime);
+
+    // DllImport rather than LibraryImport: the source generator does not
+    // accept managed delegate parameters, and the hook callback must outlive
+    // the call. Callers keep the delegate instance alive for the hook lifetime.
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetWinEventHook(
+        uint eventMin,
+        uint eventMax,
+        IntPtr hmodWinEventProc,
+        WinEventProc pfnWinEventProc,
+        uint idProcess,
+        uint idThread,
+        uint dwFlags);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool UnhookWinEvent(IntPtr hWinEventHook);
+
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
     [LibraryImport("user32.dll")]
@@ -1151,6 +1185,29 @@ public static partial class Win32Helper
 
     [LibraryImport("dwmapi.dll")]
     public static partial int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int pvAttribute, int cbAttribute);
+
+    [LibraryImport("dwmapi.dll")]
+    public static partial int DwmGetWindowAttribute(IntPtr hwnd, int attr, ref int pvAttribute, int cbAttribute);
+
+    /// <summary>
+    /// Reads the DWM cloak state of a window. Returns -1 when dwmapi is
+    /// unavailable or the call fails; otherwise the raw DWMWA_CLOAK value
+    /// (0 visible, 1 cloaked).
+    /// </summary>
+    public static int TryGetDwmCloakState(IntPtr hwnd)
+    {
+        try
+        {
+            int cloaked = 0;
+            int result = DwmGetWindowAttribute(hwnd, DWMWA_CLOAK, ref cloaked, sizeof(int));
+            return result != 0 ? -1 : cloaked;
+        }
+        catch (Exception ex) when (
+            ex is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
+        {
+            return -1;
+        }
+    }
 
     [LibraryImport("dwmapi.dll")]
     public static partial int DwmFlush();

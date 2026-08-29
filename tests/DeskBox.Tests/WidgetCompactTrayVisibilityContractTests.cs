@@ -120,9 +120,13 @@ public sealed class WidgetCompactTrayVisibilityContractTests
 
         Assert.Contains("RootElement.XamlRoot", popupGuard, StringComparison.Ordinal);
         Assert.Contains(
-            "VisualTreeHelper.GetOpenPopupsForXamlRoot(xamlRoot).Count > 0",
+            "VisualTreeHelper.GetOpenPopupsForXamlRoot(xamlRoot)",
             popupGuard,
             StringComparison.Ordinal);
+        // ToolTips are non-interactive: they must not block hover expansion,
+        // while every other open popup keeps blocking capsule transitions.
+        Assert.Contains("IsToolTipPopup(popup)", popupGuard, StringComparison.Ordinal);
+        Assert.Contains("return true;", popupGuard, StringComparison.Ordinal);
         Assert.Contains(
             "HasBlockingSurface: HasBlockingFlyoutOpen()",
             collapseSource,

@@ -93,6 +93,7 @@ public partial class App : Application
     private DisplayAreaWatcherService? _displayAreaWatcher;
     private DisplayTopologyTransitionCoordinator? _displayTopologyTransitionCoordinator;
     private AppLifecycleRecoveryWatcher? _lifecycleRecoveryWatcher;
+    private WidgetShowDesktopSelfHealService? _showDesktopSelfHealService;
     private EverythingSearchService? _everythingSearchService;
     private SearchEngineService? _searchEngineService;
     private FileMetaService? _fileMetaService;
@@ -968,6 +969,7 @@ public partial class App : Application
                 async (generation, reasons) =>
                     WidgetManager is null ||
                     await WidgetManager.RestoreWidgetPositionsAsync(generation, reasons));
+            InitializeShowDesktopSelfHealWatcher();
 
             // Phase 3: Restore widgets
             int recoveredDesktopItems = await new DesktopOrganizationTransaction(
@@ -1199,6 +1201,21 @@ public partial class App : Application
     internal void RequestDisplayTopologyRestore(string reason)
     {
         _displayTopologyTransitionCoordinator?.RequestRestore(reason);
+    }
+
+    private void InitializeShowDesktopSelfHealWatcher()
+    {
+        try
+        {
+            _showDesktopSelfHealService = new WidgetShowDesktopSelfHealService(
+                UiDispatcherQueue,
+                reason => WidgetManager?.VerifyRestingWidgetsAfterShellMinimize(reason));
+            _showDesktopSelfHealService.Start();
+        }
+        catch (Exception ex)
+        {
+            Log($"[ShowDesktop] Self-heal watcher initialization failed: {ex.Message}");
+        }
     }
 
     private AppDiagnosticsService? _diagnosticsService;
@@ -3633,6 +3650,8 @@ public partial class App : Application
         _displayTopologyTransitionCoordinator = null;
         _lifecycleRecoveryWatcher?.Dispose();
         _lifecycleRecoveryWatcher = null;
+        _showDesktopSelfHealService?.Dispose();
+        _showDesktopSelfHealService = null;
 
         _diagnosticsService?.Dispose();
         _diagnosticsService = null;

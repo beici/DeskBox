@@ -829,6 +829,16 @@ public static class WidgetLayerService
             keepVisible);
     }
 
+    /// <summary>
+    /// Public gate for visibility self-heals: resting widgets must be rescued
+    /// from shell Show Desktop minimize/cloak storms only when the user asked
+    /// for widgets to stay visible on Show Desktop.
+    /// </summary>
+    internal static bool ShouldKeepWidgetsVisibleOnShowDesktop()
+    {
+        return ShouldAttachRestingWindowToDesktop();
+    }
+
     private static bool TryAttachRestingWindowWithoutChangingLevel(
         IntPtr windowHandle)
     {

@@ -94,6 +94,13 @@ public sealed class WidgetTrayAnimationController
 
     public bool IsPositionTransitionActive => _targetPosition.HasValue;
 
+    /// <summary>
+    /// True while this controller has DWM-cloaked the window for a tray hide
+    /// animation and has not revealed it yet. External visibility self-heals
+    /// must not uncloak such windows; the cloak is intentional.
+    /// </summary>
+    public bool IsCloakedForTrayShow => _isWindowCloakedForTrayShow;
+
     public long NextGeneration()
     {
         return ++Generation;

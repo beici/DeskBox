@@ -1137,10 +1137,13 @@ public sealed class FileServiceTests : IDisposable
     public async Task EnumerateDirectoryAsync_RecognizesInternetShortcutAndHidesExtension()
     {
         var service = new FileService();
-        string shortcutFile = Path.Combine(_tempRoot, "Steam.url");
+        // A generic URL keeps this hermetic: a steam://rungameid URL is filtered
+        // as a dead shortcut whenever the ambient machine has Steam libraries
+        // without that app manifest, so it cannot assert enumeration behavior.
+        string shortcutFile = Path.Combine(_tempRoot, "Example.url");
         await File.WriteAllTextAsync(
             shortcutFile,
-            "[InternetShortcut]\nURL=steam://rungameid/123\nIconFile=%ProgramFiles%\\Steam\\steam.exe\nIconIndex=0\n");
+            "[InternetShortcut]\nURL=https://example.org/\nIconFile=%ProgramFiles%\\Example\\example.exe\nIconIndex=0\n");
 
         var items = await service.EnumerateDirectoryAsync(
             _tempRoot,
@@ -1149,8 +1152,8 @@ public sealed class FileServiceTests : IDisposable
 
         var item = Assert.Single(items);
         Assert.True(item.IsShortcut);
-        Assert.Equal("Steam", item.Name);
-        Assert.Equal("steam://rungameid/123", item.TargetPath);
+        Assert.Equal("Example", item.Name);
+        Assert.Equal("https://example.org/", item.TargetPath);
     }
 
     [Fact]

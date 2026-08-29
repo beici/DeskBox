@@ -8,6 +8,8 @@ using Microsoft.UI;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using System.Diagnostics;
 using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
@@ -45,7 +47,14 @@ public abstract partial class WidgetWindowBase : Window
     protected AppWindow AppWindow = null!;
     protected WidgetWindowDiagnostics Diagnostics = null!;
     protected WidgetTrayAnimationController TrayAnimation = null!;
-    
+
+    /// <summary>
+    /// True while the tray animation controller holds the window DWM-cloaked
+    /// for an intentional tray hide. The Show Desktop self-heal skips such
+    /// windows so it never undoes a deliberate hide.
+    /// </summary>
+    internal bool IsTrayCloakActive => TrayAnimation.IsCloakedForTrayShow;
+
     // Smart Animation Adapter - for future enhancement
     private static SmartAnimationAdapter? _smartAdapter;
     
@@ -221,8 +230,37 @@ public abstract partial class WidgetWindowBase : Window
     protected virtual bool HasBlockingFlyoutOpen()
     {
         XamlRoot? xamlRoot = RootElement.XamlRoot;
-        return xamlRoot is not null &&
-            VisualTreeHelper.GetOpenPopupsForXamlRoot(xamlRoot).Count > 0;
+        if (xamlRoot is null)
+        {
+            return false;
+        }
+
+        foreach (Popup popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(xamlRoot))
+        {
+            if (IsToolTipPopup(popup))
+            {
+                // ToolTips are non-interactive previews. Counting them as a
+                // blocking surface let a stationary pointer keep its own
+                // tooltip open and defer hover expansion until the pointer
+                // left the capsule, which surfaced as "hover stops responding
+                // until a click on the desktop".
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsToolTipPopup(Popup popup)
+    {
+        if (popup.Child is ToolTip)
+        {
+            return true;
+        }
+
+        return popup.Child is FrameworkElement { Parent: ToolTip };
     }
 
     /// <summary>Allows hosts with custom title bars to update collapse actions.</summary>

@@ -1,0 +1,21 @@
+# DeskBox 缺陷总表（缺陷库）
+
+> 维护规则：每轮迭代开始时从本表选取输入；每个问题闭环（修复 + 回归验证）后更新状态。
+> 优先级定义：P0 = 生产环境核心功能失效；P1 = 高频可复现、明显影响体验；P2 = 低频或边界场景；P3 = 代码质量/卫生。
+> 详细单问题文档位于 `docs/quality/issues/`。
+
+| 编号 | 标题 | 状态 | 优先级 | 根因分类 | 首次记录 | 修复轮次 | 单问题文档 |
+|---|---|---|---|---|---|---|---|
+| DEF-001 | 「显示桌面」后部分格子不显示，需打开新窗口才恢复 | 修复待实测确认 | P0 | 窗口交互/Shell 事件恢复缺失 | R1 | R1 | issues/DEF-001-show-desktop-widgets-not-restored.md |
+| DEF-002 | 胶囊悬停自动展开偶现无响应（需点击桌面空白后恢复） | 已修复（代码+契约测试+回归通过） | P1 | 窗口交互/状态机阻塞面误判 | R1 | R1 | issues/DEF-002-hover-expand-blocked-by-tooltip-popup.md |
+| DEF-003 | 胶囊展开/收起动画逐帧开销，达不到稳定 60fps | 部分修复（每帧分配已消除），Win11 合成器动画列为 R2 候选 | P1 | 渲染性能/逐帧 DP 写 + HWND 缩放 | R1 | R1（部分） | issues/DEF-003-hover-expand-animation-frame-cost.md |
+| DEF-004 | 主进程内存达 600MB、DWM 内存 1–2GB 的关联定位 | 分析完成，待运行时基线数据 | P1 | 资源管理（待量化） | R1 | R2 起 | issues/DEF-004-memory-600mb-dwm-correlation.md |
+| DEF-005 | Internet 快捷方式枚举测试依赖宿主机 Steam 状态 | 已修复（测试密闭化，回归通过） | P3 | 测试隔离性 | R1 | R1 | issues/DEF-005-internet-shortcut-test-environment-coupling.md |
+
+## R1 轮扫描发现、列入观察清单（未立案）
+
+| 现象 | 位置 | 说明 |
+|---|---|---|
+| `WidgetSurfaceSnapshotCache<T>` 无生产调用方 | `src/DeskBox/Services/WidgetSurfaceSnapshotCache.cs` | 仅测试引用，疑似遗留死代码；待确认后于后续轮次清理（P3） |
+| `HardwareAdaptiveAnimationService._measuredRenderDuration/_isMeasuring` 未使用字段 | 编译警告 CS0169 | 与 DEF-003 的硬件档位联动候选相关，R2 一并处理 |
+| `OnboardingWindow._desktopOrganizationCompleted` 未使用 | 编译警告 CS0414 | P3 卫生问题 |
