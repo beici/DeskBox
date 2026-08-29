@@ -66,6 +66,7 @@ public sealed partial class ContentWidgetWindow
 
         ContentWidgetShell.SetTitleBarRowHeight(metrics.RowHeight);
         ContentWidgetShell.SetTitleBarPadding(WidgetTitleBarMetricsCalculator.CreateOuterPadding(chromeMode));
+        ApplyTitleAppearance();
     }
 
     private void ApplyTitleActionButtonConfiguration()
@@ -344,6 +345,8 @@ public sealed partial class ContentWidgetWindow
             App.Current.LocalizationService,
             SetWidgetForegroundModeOverride,
             () => showForegroundColorPickerWhenClosed = true));
+        flyout.Items.Add(CreateTitleAppearanceMenu(flyout.Hide));
+        flyout.Items.Add(CreateMarginMenuEntry(flyout.Hide));
 
         if (_config.WidgetKind is WidgetKind.File)
         {

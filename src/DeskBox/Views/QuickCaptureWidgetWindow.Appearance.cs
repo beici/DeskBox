@@ -202,6 +202,7 @@ public sealed partial class QuickCaptureWidgetWindow
         QuickCaptureShell.SetTitleBarPadding(WidgetTitleBarMetricsCalculator.CreateOuterPadding(chromeMode));
         TitleIcon.IconSize = metrics.TitleIconSize;
         TitleText.FontSize = metrics.TitleTextSize;
+        ApplyTitleAppearance();
         ApplyTitleActionButtonConfiguration();
         ApplyLockActionIconState();
 
@@ -538,4 +539,205 @@ public sealed partial class QuickCaptureWidgetWindow
     {
         return FindVisualChild<Button>(parent, "PinItemButton");
     }
+
+    protected override void ApplyWidgetForegroundAppearance()
+    {
+        base.ApplyWidgetForegroundAppearance();
+        ApplyClipboardItemColors();
+    }
+
+    /// <summary>
+    /// Applies the clipboard record list colors resolved from
+    /// <see cref="QuickCaptureClipboardColorSettings"/>. Follow-theme mode
+    /// reuses the widget-local semantic text brush (so the list stays
+    /// consistent with the widget foreground preference) and the theme card
+    /// color sentinel; custom modes write the stored colors into the two
+    /// dedicated brushes referenced by the record list template.
+    /// </summary>
+    private void ApplyClipboardItemColors()
+    {
+        if (RootGrid.Resources.TryGetValue(
+                "QuickCaptureClipboardItemForegroundBrush",
+                out object? textBrushObject) &&
+            textBrushObject is SolidColorBrush textBrush &&
+            RootGrid.Resources.TryGetValue(
+                "TextFillColorPrimaryBrush",
+                out object? semanticTextObject) &&
+            semanticTextObject is SolidColorBrush semanticTextBrush)
+        {
+            textBrush.Color =
+                QuickCaptureClipboardColorSettings.GetTextModeOverride(Config) ==
+                    QuickCaptureClipboardColorSettings.ModeCustom &&
+                QuickCaptureClipboardColorSettings.TryGetTextColorOverride(Config, out Windows.UI.Color textColor)
+                    ? textColor
+                    : semanticTextBrush.Color;
+        }
+
+        if (RootGrid.Resources.TryGetValue(
+                "QuickCaptureClipboardItemBackgroundBrush",
+                out object? backgroundBrushObject) &&
+            backgroundBrushObject is SolidColorBrush backgroundBrush &&
+            RootGrid.Resources.TryGetValue(
+                "QuickCaptureClipboardItemCardThemeBrush",
+                out object? themeCardObject) &&
+            themeCardObject is SolidColorBrush themeCardBrush)
+        {
+            backgroundBrush.Color =
+                QuickCaptureClipboardColorSettings.GetBackgroundModeOverride(Config) ==
+                    QuickCaptureClipboardColorSettings.ModeCustom &&
+                QuickCaptureClipboardColorSettings.TryGetBackgroundColorOverride(Config, out Windows.UI.Color backgroundColor)
+                    ? backgroundColor
+                    : themeCardBrush.Color;
+        }
+    }
+
+    private Windows.UI.Color ResolveClipboardItemEffectiveTextColor()
+    {
+        return RootGrid.Resources.TryGetValue(
+                "QuickCaptureClipboardItemForegroundBrush",
+                out object? textBrushObject) &&
+            textBrushObject is SolidColorBrush textBrush
+            ? textBrush.Color
+            : Microsoft.UI.Colors.White;
+    }
+
+    private Windows.UI.Color ResolveClipboardItemEffectiveBackgroundColor()
+    {
+        return RootGrid.Resources.TryGetValue(
+                "QuickCaptureClipboardItemBackgroundBrush",
+                out object? backgroundBrushObject) &&
+            backgroundBrushObject is SolidColorBrush backgroundBrush
+            ? backgroundBrush.Color
+            : Microsoft.UI.Colors.Transparent;
+    }
+
+    private async Task ShowClipboardItemColorPickerAsync(bool isBackground)
+    {
+        if (RootElement.XamlRoot is null)
+        {
+            return;
+        }
+
+        Windows.UI.Color initialColor = isBackground
+            ? ResolveClipboardItemEffectiveBackgroundColor()
+            : ResolveClipboardItemEffectiveTextColor();
+        var picker = new ColorPicker
+        {
+            Color = initialColor,
+            IsAlphaEnabled = false,
+            MinWidth = 340
+        };
+        var localization = App.Current.LocalizationService;
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootElement.XamlRoot,
+            Title = localization.T(isBackground
+                ? "QuickCapture.ClipboardColor.Background"
+                : "QuickCapture.ClipboardColor.Text"),
+            Content = picker,
+            PrimaryButtonText = localization.T("Common.Save"),
+            CloseButtonText = localization.T("Common.Cancel"),
+            DefaultButton = ContentDialogButton.Primary
+        };
+
+        try
+        {
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            Windows.UI.Color pendingText = isBackground
+                ? ResolveClipboardItemEffectiveTextColor()
+                : picker.Color;
+            Windows.UI.Color pendingBackground = isBackground
+                ? picker.Color
+                : ResolveClipboardItemEffectiveBackgroundColor();
+            if (!QuickCaptureClipboardColorSettings.IsPairReadable(
+                    pendingText,
+                    pendingBackground,
+                    out double contrastRatio))
+            {
+                await ShowClipboardColorRejectedDialogAsync(contrastRatio);
+                return;
+            }
+
+            if (isBackground)
+            {
+                QuickCaptureClipboardColorSettings.SetBackgroundColorOverride(Config, picker.Color);
+                QuickCaptureClipboardColorSettings.SetBackgroundModeOverride(
+                    Config,
+                    QuickCaptureClipboardColorSettings.ModeCustom);
+            }
+            else
+            {
+                QuickCaptureClipboardColorSettings.SetTextColorOverride(Config, picker.Color);
+                QuickCaptureClipboardColorSettings.SetTextModeOverride(
+                    Config,
+                    QuickCaptureClipboardColorSettings.ModeCustom);
+            }
+
+            _settingsService.UpdateWidget(Config);
+            ApplyClipboardItemColors();
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[QuickCaptureClipboardColor] Color picker failed: {ex.Message}");
+        }
+    }
+
+    private async Task ShowClipboardColorRejectedDialogAsync(double contrastRatio)
+    {
+        if (RootElement.XamlRoot is null)
+        {
+            return;
+        }
+
+        var localization = App.Current.LocalizationService;
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootElement.XamlRoot,
+            Title = localization.T("QuickCapture.ClipboardColor.RejectedTitle"),
+            Content = string.Format(
+                localization.T("QuickCapture.ClipboardColor.RejectedBody"),
+                contrastRatio.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
+                QuickCaptureClipboardColorSettings.MinimumContrastRatio.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)),
+            CloseButtonText = localization.T("Common.Close")
+        };
+        await dialog.ShowAsync();
+    }
+
+    internal void SetClipboardItemFollowTheme(bool isBackground)
+    {
+        if (isBackground)
+        {
+            QuickCaptureClipboardColorSettings.SetBackgroundModeOverride(
+                Config,
+                QuickCaptureClipboardColorSettings.ModeFollowTheme);
+        }
+        else
+        {
+            QuickCaptureClipboardColorSettings.SetTextModeOverride(
+                Config,
+                QuickCaptureClipboardColorSettings.ModeFollowTheme);
+        }
+
+        _settingsService.UpdateWidget(Config);
+        ApplyClipboardItemColors();
+    }
+
+    internal void ResetClipboardItemColors()
+    {
+        QuickCaptureClipboardColorSettings.ResetOverrides(Config);
+        _settingsService.UpdateWidget(Config);
+        ApplyClipboardItemColors();
+    }
+
+    internal bool IsClipboardItemTextCustom =>
+        QuickCaptureClipboardColorSettings.GetTextModeOverride(Config) ==
+        QuickCaptureClipboardColorSettings.ModeCustom;
+
+    internal bool IsClipboardItemBackgroundCustom =>
+        QuickCaptureClipboardColorSettings.GetBackgroundModeOverride(Config) ==
+        QuickCaptureClipboardColorSettings.ModeCustom;
 }

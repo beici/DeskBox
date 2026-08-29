@@ -56,12 +56,21 @@
             <StaticResource x:Key="GridViewItemForeground" ResourceKey="TextFillColorPrimaryBrush" />
             <StaticResource x:Key="GridViewItemForegroundPointerOver" ResourceKey="TextFillColorSecondaryBrush" />
             <StaticResource x:Key="GridViewItemForegroundSelected" ResourceKey="TextFillColorPrimaryBrush" />
-            <StaticResource x:Key="ListViewItemForeground" ResourceKey="TextFillColorPrimaryBrush" />
-            <StaticResource x:Key="ListViewItemForegroundPointerOver" ResourceKey="TextFillColorPrimaryBrush" />
-            <StaticResource x:Key="ListViewItemForegroundPressed" ResourceKey="TextFillColorPrimaryBrush" />
-            <StaticResource x:Key="ListViewItemForegroundSelected" ResourceKey="TextFillColorPrimaryBrush" />
-            <StaticResource x:Key="ListViewItemForegroundSelectedPointerOver" ResourceKey="TextFillColorPrimaryBrush" />
-            <StaticResource x:Key="ListViewItemForegroundSelectedPressed" ResourceKey="TextFillColorPrimaryBrush" />
+            <!-- Clipboard record list colors. The foreground brush aliases the
+                 widget-local semantic text color so follow-theme mode stays
+                 consistent with the widget foreground preference; the card
+                 brush starts at the theme card color and both colors are
+                 replaced at runtime when the user picks custom colors
+                 (QuickCaptureClipboardColorSettings). -->
+            <SolidColorBrush x:Key="QuickCaptureClipboardItemForegroundBrush" Color="#FFF5F5F5" />
+            <SolidColorBrush x:Key="QuickCaptureClipboardItemBackgroundBrush" Color="{ThemeResource CardBackgroundFillColorDefault}" />
+            <SolidColorBrush x:Key="QuickCaptureClipboardItemCardThemeBrush" Color="{ThemeResource CardBackgroundFillColorDefault}" />
+            <StaticResource x:Key="ListViewItemForeground" ResourceKey="QuickCaptureClipboardItemForegroundBrush" />
+            <StaticResource x:Key="ListViewItemForegroundPointerOver" ResourceKey="QuickCaptureClipboardItemForegroundBrush" />
+            <StaticResource x:Key="ListViewItemForegroundPressed" ResourceKey="QuickCaptureClipboardItemForegroundBrush" />
+            <StaticResource x:Key="ListViewItemForegroundSelected" ResourceKey="QuickCaptureClipboardItemForegroundBrush" />
+            <StaticResource x:Key="ListViewItemForegroundSelectedPointerOver" ResourceKey="QuickCaptureClipboardItemForegroundBrush" />
+            <StaticResource x:Key="ListViewItemForegroundSelectedPressed" ResourceKey="QuickCaptureClipboardItemForegroundBrush" />
 
             <x:Double x:Key="QuickCaptureDetailActionIconSize">13</x:Double>
 
@@ -506,7 +515,7 @@
                                 <Border
                                     x:Name="ItemMaterialBackground"
                                     Grid.ColumnSpan="2"
-                                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                    Background="{StaticResource QuickCaptureClipboardItemBackgroundBrush}"
                                     BorderThickness="0"
                                     CornerRadius="4"
                                     Margin="{Binding ElementName=ItemsListView, Path=DataContext.ItemChromeMargin}" />

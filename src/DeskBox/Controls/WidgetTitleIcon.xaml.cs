@@ -59,6 +59,24 @@ public sealed partial class WidgetTitleIcon : UserControl
             typeof(WidgetTitleIcon),
             new PropertyMetadata(14d, OnAppearancePropertyChanged));
 
+    public static readonly DependencyProperty CustomImageSourceProperty =
+        DependencyProperty.Register(
+            nameof(CustomImageSource),
+            typeof(ImageSource),
+            typeof(WidgetTitleIcon),
+            new PropertyMetadata(null, OnAppearancePropertyChanged));
+
+    /// <summary>
+    /// User-picked title icon image. When set it replaces every built-in
+    /// icon kind; the image is centered and uniformly scaled into the icon
+    /// surface ("尺寸适配与居中裁剪"). Null restores the built-in icon.
+    /// </summary>
+    public ImageSource? CustomImageSource
+    {
+        get => (ImageSource?)GetValue(CustomImageSourceProperty);
+        set => SetValue(CustomImageSourceProperty, value);
+    }
+
     public WidgetTitleIcon()
     {
         InitializeComponent();
@@ -174,6 +192,13 @@ public sealed partial class WidgetTitleIcon : UserControl
         IconSurface.Height = Math.Clamp(Math.Round(iconSize + 2), 15, 34);
         IconSurface.MinWidth = 0;
 
+        if (CustomImageSource is not null)
+        {
+            ApplyCustomImageIcon(iconSize);
+            ApplySurfaceCornerRadiusOverride();
+            return;
+        }
+
         switch (mode)
         {
             case WidgetTitleIconMode.LineMono:
@@ -225,6 +250,28 @@ public sealed partial class WidgetTitleIcon : UserControl
             ColorIcon.Source = new SvgImageSource(new Uri(
                 $"ms-appx:///Assets/WidgetTitleIcons/{assetName}.svg"));
             _currentColorAssetName = assetName;
+        }
+
+        ColorIcon.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>
+    /// Shows the user-picked image inside the color-icon host. The host is
+    /// centered with uniform stretch, so any PNG/ICO/JPG input is adapted to
+    /// the title icon size without distortion; ICO inputs render their
+    /// embedded best-fitting frame.
+    /// </summary>
+    private void ApplyCustomImageIcon(double iconSize)
+    {
+        double imageSize = Math.Clamp(Math.Round(iconSize + 3), 18, 34);
+        IconSurface.Width = imageSize;
+        IconSurface.Height = imageSize;
+        ColorIcon.Width = imageSize;
+        ColorIcon.Height = imageSize;
+        if (!ReferenceEquals(ColorIcon.Source, CustomImageSource))
+        {
+            ColorIcon.Source = CustomImageSource;
+            _currentColorAssetName = string.Empty;
         }
 
         ColorIcon.Visibility = Visibility.Visible;

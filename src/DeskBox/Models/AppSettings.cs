@@ -262,6 +262,13 @@ public class AppSettings
     public string WidgetForegroundColor { get; set; } = "#F5F5F5";
 
     /// <summary>
+    /// Default widget title bar alignment for the icon + caption block:
+    /// <c>"Left"</c>, <c>"Center"</c>, or <c>"Right"</c>. Per-widget
+    /// overrides live in widget metadata.
+    /// </summary>
+    public string WidgetTitleAlignment { get; set; } = "Left";
+
+    /// <summary>
     /// Widget text edge mode: <c>"Off"</c>, <c>"Soft"</c>, <c>"Strong"</c>.
     /// </summary>
     public string WidgetTextEdgeMode { get; set; } = "Off";

@@ -610,6 +610,29 @@ public sealed partial class WidgetShell : UserControl
     public FrameworkElement GroupNavigationElement => GroupTitleSwitcher;
 
     /// <summary>
+    /// Aligns the default title block (icon + caption) and the group switcher
+    /// to the left/center/right of the title bar. Both hosts share this
+    /// layout so alignment survives group membership changes.
+    /// </summary>
+    public void SetTitleAlignment(HorizontalAlignment alignment)
+    {
+        TitleIdentityHost.HorizontalAlignment = alignment;
+        GroupTitleSwitcher.HorizontalAlignment = alignment == HorizontalAlignment.Right
+            ? HorizontalAlignment.Right
+            : HorizontalAlignment.Stretch;
+    }
+
+    /// <summary>
+    /// Replaces the title icon with a user-picked image, or restores the
+    /// built-in icon when the source is null. The image is centered and
+    /// uniformly scaled by the icon surface itself.
+    /// </summary>
+    public void SetTitleCustomIcon(ImageSource? source)
+    {
+        TitleIcon.CustomImageSource = source;
+    }
+
+    /// <summary>
     /// Clears hover state that WinUI can leave behind when the native host is
     /// hidden without delivering the matching routed PointerExited events.
     /// </summary>

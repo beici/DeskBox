@@ -88,14 +88,27 @@ public sealed partial class QuickCaptureWidgetWindow
         };
         bool startRenameWhenClosed = false;
         bool showForegroundColorPickerWhenClosed = false;
+        bool pendingClipboardTextPickerWhenClosed = false;
+        bool pendingClipboardBackgroundPickerWhenClosed = false;
         renameItem.Click += (_, _) => startRenameWhenClosed = true;
         flyout.Closed += (_, _) =>
         {
             if (startRenameWhenClosed)
             {
                 DispatcherQueue.TryEnqueue(StartTitleRename);
+                return;
             }
-            else if (showForegroundColorPickerWhenClosed)
+
+            if (pendingClipboardTextPickerWhenClosed ||
+                pendingClipboardBackgroundPickerWhenClosed)
+            {
+                bool isBackground = pendingClipboardBackgroundPickerWhenClosed;
+                DispatcherQueue.TryEnqueue(async () =>
+                    await ShowClipboardItemColorPickerAsync(isBackground));
+                return;
+            }
+
+            if (showForegroundColorPickerWhenClosed)
             {
                 DispatcherQueue.TryEnqueue(async () =>
                     await ShowWidgetForegroundColorPickerAsync());
@@ -126,6 +139,11 @@ public sealed partial class QuickCaptureWidgetWindow
             _localizationService,
             SetWidgetForegroundModeOverride,
             () => showForegroundColorPickerWhenClosed = true));
+        flyout.Items.Add(CreateTitleAppearanceMenu(flyout.Hide));
+        flyout.Items.Add(CreateMarginMenuEntry(flyout.Hide));
+        flyout.Items.Add(CreateClipboardItemColorMenu(
+            () => pendingClipboardTextPickerWhenClosed = true,
+            () => pendingClipboardBackgroundPickerWhenClosed = true));
 
         WidgetGroupMenuBuilder.Append(
             flyout,
@@ -156,6 +174,73 @@ public sealed partial class QuickCaptureWidgetWindow
         flyout.Items.Add(disableWidget);
 
         return flyout;
+    }
+
+    private MenuFlyoutSubItem CreateClipboardItemColorMenu(
+        Action markTextPickerRequested,
+        Action markBackgroundPickerRequested)
+    {
+        var localization = _localizationService;
+
+        var menu = new MenuFlyoutSubItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.Menu"),
+            Icon = new FontIcon { Glyph = "\uE790" }
+        };
+
+        var followTheme = new ToggleMenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.FollowTheme"),
+            IsChecked = !IsClipboardItemTextCustom && !IsClipboardItemBackgroundCustom
+        };
+        followTheme.Click += (_, _) =>
+        {
+            SetClipboardItemFollowTheme(isBackground: false);
+            SetClipboardItemFollowTheme(isBackground: true);
+        };
+        menu.Items.Add(followTheme);
+
+        var textColor = new MenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.Text"),
+            Icon = new FontIcon { Glyph = "\uE8D2" }
+        };
+        textColor.Click += (_, _) => markTextPickerRequested();
+        menu.Items.Add(textColor);
+
+        var backgroundColor = new MenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.Background"),
+            Icon = new FontIcon { Glyph = "\uE790" }
+        };
+        backgroundColor.Click += (_, _) => markBackgroundPickerRequested();
+        menu.Items.Add(backgroundColor);
+
+        var reset = new MenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.Reset"),
+            Icon = new FontIcon { Glyph = "\uE777" }
+        };
+        reset.Click += (_, _) => ResetClipboardItemColors();
+        menu.Items.Add(reset);
+
+        menu.Items.Add(new MenuFlyoutSeparator());
+        var textCustom = new ToggleMenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.TextCustom"),
+            IsChecked = IsClipboardItemTextCustom,
+            IsEnabled = false
+        };
+        menu.Items.Add(textCustom);
+        var backgroundCustom = new ToggleMenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.BackgroundCustom"),
+            IsChecked = IsClipboardItemBackgroundCustom,
+            IsEnabled = false
+        };
+        menu.Items.Add(backgroundCustom);
+
+        return menu;
     }
 
     private void SetChromeModeOverride(WidgetChromeMode mode)

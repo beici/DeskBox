@@ -12,7 +12,7 @@ public abstract partial class WidgetWindowBase
 {
     private AccessibilitySettings? _foregroundAccessibilitySettings;
 
-    protected void ApplyWidgetForegroundAppearance()
+    protected virtual void ApplyWidgetForegroundAppearance()
     {
         EnsureForegroundAccessibilityWatcher();
         bool highContrast = _foregroundAccessibilitySettings?.HighContrast == true;
