@@ -415,7 +415,7 @@ public sealed partial class WidgetManager
         long generation = TrackTemporarilyRaisedWidgets(
             handles,
             "title-activated-all");
-        WidgetLayerService.BringGroupTemporarilyToFront(handles, activeHwnd);
+        WidgetLayerService.BringTitleActivatedGroupToFront(handles, activeHwnd);
         QueueTemporaryRaisedWidgetRestore(
             "title-activated-all-fallback",
             generation,

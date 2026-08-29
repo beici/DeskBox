@@ -569,6 +569,126 @@ public static class WidgetLayerService
     }
 
     /// <summary>
+    /// Raises the widget group when a title bar is clicked: only the clicked
+    /// widget performs the transient topmost round-trip, and every peer is
+    /// inserted behind it with one DeferWindowPos batch.
+    ///
+    /// <see cref="BringGroupTemporarilyToFront"/> instead flips every widget
+    /// through HWND_TOPMOST and back, which migrates each peer across DWM
+    /// z-order bands twice per title click. Those band migrations force DWM
+    /// to recomposite untouched widgets, and users see them flicker. Peers
+    /// never need the band migration: inserting them into the normal band
+    /// directly behind the just-raised active widget produces the same group
+    /// ordering with a single same-band move.
+    /// </summary>
+    public static void BringTitleActivatedGroupToFront(
+        IReadOnlyList<IntPtr> windowHandles,
+        IntPtr activeWindowHandle)
+    {
+        if (UsesDesktopPinnedMode())
+        {
+            return;
+        }
+
+        var handles = windowHandles
+            .Where(handle => handle != IntPtr.Zero && Win32Helper.IsWindow(handle))
+            .Distinct()
+            .ToList();
+        if (handles.Count == 0)
+        {
+            return;
+        }
+
+        IntPtr activeHandle = handles.Contains(activeWindowHandle)
+            ? activeWindowHandle
+            : handles[0];
+
+        // The clicked widget keeps the established transient-raise trick:
+        // a brief TOPMOST placement drops it at the top of the normal band
+        // when cleared, above every application window.
+        DetachFromDesktopIconLayerIfNeeded(activeHandle);
+        Win32Helper.SetWindowTopMost(activeHandle);
+        Win32Helper.ClearWindowTopMost(activeHandle);
+        Win32Helper.BringWindowToFront(activeHandle);
+        Win32Helper.SetForegroundWindow(activeHandle);
+
+        List<IntPtr> peers = handles
+            .Where(handle => handle != activeHandle)
+            .ToList();
+        if (peers.Count == 0)
+        {
+            return;
+        }
+
+        lock (s_desktopLayerLock)
+        {
+            foreach (IntPtr handle in peers)
+            {
+                DetachFromDesktopIconLayerIfNeeded(handle);
+            }
+
+            const uint flags =
+                Win32Helper.SWP_NOMOVE |
+                Win32Helper.SWP_NOSIZE |
+                Win32Helper.SWP_NOACTIVATE |
+                Win32Helper.SWP_NOOWNERZORDER |
+                Win32Helper.SWP_SHOWWINDOW;
+
+            IntPtr deferred = Win32Helper.BeginDeferWindowPos(peers.Count);
+            IntPtr insertAfter = activeHandle;
+            if (deferred != IntPtr.Zero)
+            {
+                foreach (IntPtr handle in peers)
+                {
+                    deferred = Win32Helper.DeferWindowPos(
+                        deferred,
+                        handle,
+                        insertAfter,
+                        0,
+                        0,
+                        0,
+                        0,
+                        flags);
+                    if (deferred == IntPtr.Zero)
+                    {
+                        break;
+                    }
+
+                    insertAfter = handle;
+                }
+
+                if (deferred != IntPtr.Zero && Win32Helper.EndDeferWindowPos(deferred))
+                {
+                    App.LogVerbose(
+                        $"[ZOrder] Title group raised batch active=0x{activeHandle.ToInt64():X} " +
+                        $"count={peers.Count}");
+                    return;
+                }
+            }
+
+            // Fallback: same ordering with per-window calls, still without
+            // any topmost round-trip on the peers.
+            IntPtr fallbackInsertAfter = activeHandle;
+            foreach (IntPtr handle in peers)
+            {
+                _ = Win32Helper.SetWindowPos(
+                    handle,
+                    fallbackInsertAfter,
+                    0,
+                    0,
+                    0,
+                    0,
+                    flags);
+                fallbackInsertAfter = handle;
+            }
+
+            App.LogVerbose(
+                $"[ZOrder] Title group raised fallback active=0x{activeHandle.ToInt64():X} " +
+                $"count={peers.Count}");
+        }
+    }
+
+    /// <summary>
     /// Applies a deterministic peer order without activating, moving, or
     /// resizing any widget. The first handle is the visually highest peer.
     /// The current highest DeskBox peer supplies the global Z-order boundary,
