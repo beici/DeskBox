@@ -1824,10 +1824,12 @@ public sealed partial class WidgetShell : UserControl
         }
 
         double value = Math.Clamp(progress, 0, 1);
-        bool compositionOwnsWin10Visuals =
-            _isCompactCompositionTransitionActive &&
-            !WindowsCompatibilityService.IsWindows11OrLater;
-        if (!compositionOwnsWin10Visuals)
+        // When the compositor owns the fades (Win10 and, since the frame-cost
+        // fix, Win11 too), the per-frame dependency-property writes are
+        // skipped entirely; the compositor drives opacity/scale on its own
+        // clock while the UI thread only resizes the HWND.
+        bool compositionOwnsFadeVisuals = _isCompactCompositionTransitionActive;
+        if (!compositionOwnsFadeVisuals)
         {
             double compactOpacity =
                 _compactTransitionProfile.GetCompactSurfaceOpacity(collapsed, value);
@@ -1874,7 +1876,7 @@ public sealed partial class WidgetShell : UserControl
         // Full-bleed background: fade out earlier during expand, fade in later during collapse
         bool hasFullBleed = _compactPresentation?.UseFullBleedBackground == true &&
             _compactPresentation.Thumbnail is not null;
-        if (hasFullBleed && !compositionOwnsWin10Visuals)
+        if (hasFullBleed && !compositionOwnsFadeVisuals)
         {
             double fullBleedOpacity;
             double fullBleedScale;
@@ -1918,12 +1920,12 @@ public sealed partial class WidgetShell : UserControl
         try
         {
             bool started = false;
-            if (!WindowsCompatibilityService.IsWindows11OrLater)
+            // Win10 pays heavily when XAML dependency properties are rewritten
+            // alongside a real HWND resize; Win11 measures show the same cost
+            // (the per-frame DP walk dominated hover-expand frames), so both
+            // run the independent fades on the compositor clock and leave the
+            // UI thread with only the physical bounds transition.
             {
-                // Win10 pays heavily when XAML dependency properties are
-                // rewritten alongside a real HWND resize. Keep the physical
-                // bounds transition on the UI thread, while independent fades
-                // run on the compositor clock.
                 StartCompactOpacityAnimation(
                     CollapsedChromeLayer,
                     progress => _compactTransitionProfile.GetCompactSurfaceOpacity(collapsed, progress));
@@ -1955,16 +1957,13 @@ public sealed partial class WidgetShell : UserControl
                 StartCompactScaleAnimation(
                     CompactFullBleedBackground,
                     progress => ResolveFullBleedTransition(collapsed, progress).Scale);
-                if (!WindowsCompatibilityService.IsWindows11OrLater)
-                {
-                    StartCompactOpacityAnimation(
-                        CompactFullBleedBackground,
-                        progress => ResolveFullBleedTransition(collapsed, progress).Opacity);
-                    StartCompactOpacityAnimation(
-                        CompactFullBleedOverlay,
-                        progress => ResolveFullBleedTransition(collapsed, progress).Opacity *
-                            ResolveFullBleedOverlayOpacity());
-                }
+                StartCompactOpacityAnimation(
+                    CompactFullBleedBackground,
+                    progress => ResolveFullBleedTransition(collapsed, progress).Opacity);
+                StartCompactOpacityAnimation(
+                    CompactFullBleedOverlay,
+                    progress => ResolveFullBleedTransition(collapsed, progress).Opacity *
+                        ResolveFullBleedOverlayOpacity());
 
                 started = true;
             }
