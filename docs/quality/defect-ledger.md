@@ -6,10 +6,10 @@
 
 | 编号 | 标题 | 状态 | 优先级 | 根因分类 | 首次记录 | 修复轮次 | 单问题文档 |
 |---|---|---|---|---|---|---|---|
-| DEF-001 | 「显示桌面」后部分格子不显示，需打开新窗口才恢复 | 修复待实测确认 | P0 | 窗口交互/Shell 事件恢复缺失 | R1 | R1 | issues/DEF-001-show-desktop-widgets-not-restored.md |
-| DEF-002 | 胶囊悬停自动展开偶现无响应（需点击桌面空白后恢复） | 已修复（代码+契约测试+回归通过） | P1 | 窗口交互/状态机阻塞面误判 | R1 | R1 | issues/DEF-002-hover-expand-blocked-by-tooltip-popup.md |
-| DEF-003 | 胶囊展开/收起动画逐帧开销，达不到稳定 60fps | 部分修复（每帧分配已消除），Win11 合成器动画列为 R2 候选 | P1 | 渲染性能/逐帧 DP 写 + HWND 缩放 | R1 | R1（部分） | issues/DEF-003-hover-expand-animation-frame-cost.md |
-| DEF-004 | 主进程内存达 600MB、DWM 内存 1–2GB 的关联定位 | 分析完成，待运行时基线数据 | P1 | 资源管理（待量化） | R1 | R2 起 | issues/DEF-004-memory-600mb-dwm-correlation.md |
+| DEF-001 | 「显示桌面」后部分格子不显示，需打开新窗口才恢复 | 链路实测通过（双钩子注册 + Win+D/最小化核验留痕）；正向恢复用例留生产日志观察 | P0 | 窗口交互/Shell 事件恢复缺失 | R1 | R1+R2 | issues/DEF-001-show-desktop-widgets-not-restored.md |
+| DEF-002 | 胶囊悬停自动展开偶现无响应（需点击桌面空白后恢复） | 已修复（代码+契约测试+回归 2998/2998）；GUI 悬停实测受工具限制列入人工清单 | P1 | 窗口交互/状态机阻塞面误判 | R1 | R1 | issues/DEF-002-hover-expand-blocked-by-tooltip-popup.md |
+| DEF-003 | 胶囊展开/收起动画逐帧开销，达不到稳定 60fps | R2：Win11 合成器透明度动画启用（每帧 ~12 次 DP 写→0）+ R1 每帧分配消除；契约更新；实测 dropped 对比与候选 2/3 待 R3 | P1 | 渲染性能/逐帧 DP 写 + HWND 缩放 | R1 | R1+R2（主体） | issues/DEF-003-hover-expand-animation-frame-cost.md |
+| DEF-004 | 主进程内存达 600MB、DWM 内存 1–2GB 的关联定位 | 关联已实测坐实（DWM Priv 5.88GB↔0.56GB 随实例启停；主进程 760↔318MB；GDI 200 排除泄漏）；表面级剖析与修复待 R3 | P1 | 资源管理（DWM 表面高水位，非 GDI/句柄泄漏） | R1 | —（证据 R2） | issues/DEF-004-memory-600mb-dwm-correlation.md |
 | DEF-005 | Internet 快捷方式枚举测试依赖宿主机 Steam 状态 | 已修复（测试密闭化，回归通过） | P3 | 测试隔离性 | R1 | R1 | issues/DEF-005-internet-shortcut-test-environment-coupling.md |
 | DEF-006 | 点击格子标题区域时其他格子闪烁 | 已修复（代码级审查 + 回归通过；GUI 实测待下一运行窗口） | P2 | 窗口交互/DWM 带迁移抖动 | 补充批次 | 补充批次 | batch-2/BUG-C1-title-click-flicker.md |
 
