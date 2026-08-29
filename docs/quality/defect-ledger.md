@@ -8,8 +8,8 @@
 |---|---|---|---|---|---|---|---|
 | DEF-001 | 「显示桌面」后部分格子不显示，需打开新窗口才恢复 | **已闭环（实测）**：链路三要素 + 正向恢复用例（人为 iconic → `Restored iconic resting widget restored=1`，R3） | P0 | 窗口交互/Shell 事件恢复缺失 | R1 | R1+R2+R3 | issues/DEF-001-show-desktop-widgets-not-restored.md |
 | DEF-002 | 胶囊悬停自动展开偶现无响应（需点击桌面空白后恢复） | 已修复；R3 悬停实测展开正常响应（SetCursorPos 真实悬停），偶发无响应复现未再现 | P1 | 窗口交互/状态机阻塞面误判 | R1 | R1+R3 | issues/DEF-002-hover-expand-blocked-by-tooltip-popup.md |
-| DEF-003 | 胶囊展开/收起动画逐帧开销，达不到稳定 60fps | **60fps 红线实测达成**：R3 S3 五连悬停 dropped=3/611（0.49%，修复前 3–10%）；视觉回归通过；冷启动首展 warm-up 观察项列 R4 | P1 | 渲染性能/逐帧 DP 写 + HWND 缩放 | R1 | R1+R2+R3 | issues/DEF-003-hover-expand-animation-frame-cost.md |
-| DEF-004 | 主进程内存达 600MB、DWM 内存 1–2GB 的关联定位 | 关联坐实（R2）；R3 补 DWM 悬停波动数据（561→930→静置回落）；ETW 表面剖析与修复待 R4 | P1 | 资源管理（DWM 表面高水位，非 GDI/句柄泄漏） | R1 | — | issues/DEF-004-memory-600mb-dwm-correlation.md |
+| DEF-003 | 胶囊展开/收起动画逐帧开销，达不到稳定 60fps | **已闭环（实测）**：R4 真 A/B——候选 1 后 dropped=0（0%），R1 版 0.49%，修复前 3–10%；视觉回归通过；冷启动首展 warm-up 观察项列 R4 后评估 | P1 | 渲染性能/逐帧 DP 写 + HWND 缩放 | R1 | R1+R2+R4 | issues/DEF-003-hover-expand-animation-frame-cost.md |
+| DEF-004 | 主进程内存达 600MB、DWM 内存 1–2GB 的关联定位 | **定位完成（实测）**：S2 布局编辑 50 次分段采样证明单会话增量有界（DeskBox +5MB 平台、DWM +10MB 平台、GDI 恒定 91），「编辑会话泄漏」排除；剩余为长周期累积，R5 转长周期观测 + ETW | P1 | 资源管理（DWM 表面高水位，非 GDI/句柄/编辑会话泄漏） | R1 | —（定位 R2+R4） | issues/DEF-004-memory-600mb-dwm-correlation.md |
 | DEF-005 | Internet 快捷方式枚举测试依赖宿主机 Steam 状态 | 已修复（测试密闭化，回归通过） | P3 | 测试隔离性 | R1 | R1 | issues/DEF-005-internet-shortcut-test-environment-coupling.md |
 | DEF-006 | 点击格子标题区域时其他格子闪烁 | 已修复（代码级审查 + 回归通过；GUI 实测待下一运行窗口） | P2 | 窗口交互/DWM 带迁移抖动 | 补充批次 | 补充批次 | batch-2/BUG-C1-title-click-flicker.md |
 
@@ -17,9 +17,9 @@
 
 | 编号 | 功能 | 状态 | 文档 |
 |---|---|---|---|
-| BATCH2-F1 | 格子边距手动精确输入（统一/分边、实时预览+取消恢复、0–200 拦截、双向同步、批量应用、随布局持久化） | 代码完成，回归通过，GUI 实测待补 | batch-2/FEATURE-B1-margin-input.md |
-| BATCH2-F2 | 随记剪贴板记录自定义配色（取色器+HEX、跟随主题默认、自定义优先、对比度校验、一键恢复、持久化） | 代码完成，回归通过，GUI 实测待补 | batch-2/FEATURE-B2-clipboard-colors.md |
-| BATCH2-F3 | 标题对齐（左/中/右+批量）、自定义图标（PNG/ICO/JPG+居中适配+恢复）、组内标题排序（既有能力确认，菜单上移/下移+持久化） | 代码完成，回归通过，GUI 实测待补 | batch-2/FEATURE-B3-title-icon-group-order.md |
+| BATCH2-F1 | 格子边距手动精确输入（统一/分边、实时预览+取消恢复、0–200 拦截、双向同步、批量应用、随布局持久化） | **已闭环（实测）**：R4 对话框全链实测（输入 66 即时移动、取消精确恢复、初值派生双向同步） | batch-2/FEATURE-B1-margin-input.md |
+| BATCH2-F2 | 随记剪贴板记录自定义配色（取色器+HEX、跟随主题默认、自定义优先、对比度校验、一键恢复、持久化） | 代码完成，回归通过；菜单复验受随记胶囊态右键时序影响降级人工清单（诊断日志 `[QuickCaptureMenu]` 已就位） | batch-2/FEATURE-B2-clipboard-colors.md |
+| BATCH2-F3 | 标题对齐（左/中/右+批量）、自定义图标（PNG/ICO/JPG+居中适配+恢复）、组内标题排序（既有能力确认，菜单上移/下移+持久化） | **对齐已闭环（实测）**：居中对齐实测成功并已恢复；图标 picker 路径列人工清单；组排序既有能力 | batch-2/FEATURE-B3-title-icon-group-order.md |
 
 ## R1 轮扫描发现、列入观察清单（未立案）
 

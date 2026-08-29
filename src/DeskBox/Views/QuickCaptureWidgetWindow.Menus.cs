@@ -141,9 +141,13 @@ public sealed partial class QuickCaptureWidgetWindow
             () => showForegroundColorPickerWhenClosed = true));
         flyout.Items.Add(CreateTitleAppearanceMenu(flyout.Hide));
         flyout.Items.Add(CreateMarginMenuEntry(flyout.Hide));
-        flyout.Items.Add(CreateClipboardItemColorMenu(
+        var clipboardColorMenu = CreateClipboardItemColorMenu(
             () => pendingClipboardTextPickerWhenClosed = true,
-            () => pendingClipboardBackgroundPickerWhenClosed = true));
+            () => pendingClipboardBackgroundPickerWhenClosed = true);
+        flyout.Items.Add(clipboardColorMenu);
+        App.Log(
+            $"[QuickCaptureMenu] built items={flyout.Items.Count} " +
+            $"clipboardColorSubItems={clipboardColorMenu.Items.Count}");
 
         WidgetGroupMenuBuilder.Append(
             flyout,
