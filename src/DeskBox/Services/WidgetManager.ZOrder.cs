@@ -408,8 +408,12 @@ public sealed partial class WidgetManager
             return;
         }
 
-        var handles = GetLoadedDesktopWindows()
-            .Where(window => window.Visible)
+        // Feed the raise in idle highest-first order so the batch insertion
+        // reproduces the settled peer order instead of the raw enumeration
+        // order (the transient 2.3s raise window should look like the idle
+        // layout, not a reshuffle of it).
+        var handles = GetWindowsInIdleHighestFirstOrder(
+                GetLoadedDesktopWindows().Where(window => window.Visible))
             .Select(window => window.WindowHandle)
             .ToList();
         long generation = TrackTemporarilyRaisedWidgets(

@@ -667,19 +667,23 @@ public static class WidgetLayerService
             }
 
             // Fallback: same ordering with per-window calls, still without
-            // any topmost round-trip on the peers.
+            // any topmost round-trip on the peers. A failed move leaves the
+            // chain anchored at the previous successful window so the group
+            // stays contiguous.
             IntPtr fallbackInsertAfter = activeHandle;
             foreach (IntPtr handle in peers)
             {
-                _ = Win32Helper.SetWindowPos(
+                if (Win32Helper.SetWindowPos(
                     handle,
                     fallbackInsertAfter,
                     0,
                     0,
                     0,
                     0,
-                    flags);
-                fallbackInsertAfter = handle;
+                    flags))
+                {
+                    fallbackInsertAfter = handle;
+                }
             }
 
             App.LogVerbose(

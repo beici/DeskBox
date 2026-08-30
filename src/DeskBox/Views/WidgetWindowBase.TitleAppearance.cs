@@ -257,23 +257,34 @@ public abstract partial class WidgetWindowBase
             bool perSide = modeSelection.SelectedIndex == 1;
             uniformBox.Visibility = perSide ? Visibility.Collapsed : Visibility.Visible;
             perSidePanel.Visibility = perSide ? Visibility.Visible : Visibility.Collapsed;
+            if (!perSide)
+            {
+                // The uniform entry must always describe the live position —
+                // a per-side preview moves the window, so a value captured at
+                // dialog-open time would be stale and Save would re-apply it.
+                (int liveLeft, int liveTop, int liveRight, int liveBottom) =
+                    GetCurrentWorkAreaMargins();
+                uniformBox.Text = GetNearestEdgeMargin(liveLeft, liveTop, liveRight, liveBottom)
+                    .ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
         }
 
         UpdateModeVisibility();
         modeSelection.SelectionChanged += (_, _) => UpdateModeVisibility();
 
-        var dialog = new ContentDialog
-        {
-            XamlRoot = RootElement.XamlRoot,
-            Title = localization.T("Widget.Margin.Configure"),
-            Content = content,
-            PrimaryButtonText = localization.T("Common.Save"),
-            CloseButtonText = localization.T("Common.Cancel"),
-            DefaultButton = ContentDialogButton.Primary
-        };
+        // Programmatic .Text writes (the live-sync below) must not re-run the
+        // preview/apply loop: out-of-range live margins (>200px) would surface
+        // a bogus validation error and re-entry would fight the user's edits.
+        bool suppressMarginPreview = false;
+        var editedSides = new HashSet<string>(StringComparer.Ordinal);
 
         void TryPreview(TextBox source)
         {
+            if (suppressMarginPreview)
+            {
+                return;
+            }
+
             validation.Visibility = Visibility.Collapsed;
             if (!WidgetMarginSettings.TryParseMargin(source.Text, out int value))
             {
@@ -285,14 +296,39 @@ public abstract partial class WidgetWindowBase
                 return;
             }
 
+            if (ReferenceEquals(source, leftBox)) editedSides.Add("Left");
+            else if (ReferenceEquals(source, topBox)) editedSides.Add("Top");
+            else if (ReferenceEquals(source, rightBox)) editedSides.Add("Right");
+            else if (ReferenceEquals(source, bottomBox)) editedSides.Add("Bottom");
+
             ApplyMarginsFromDialog(
                 modeSelection.SelectedIndex == 1,
-                uniformBox,
-                leftBox,
-                topBox,
-                rightBox,
-                bottomBox,
+                editedSides,
+                uniformBox.Text,
+                leftBox.Text,
+                topBox.Text,
+                rightBox.Text,
+                bottomBox.Text,
                 applyToAll.IsChecked == true);
+        }
+
+        void SyncBoxesFromLiveMargins()
+        {
+            suppressMarginPreview = true;
+            try
+            {
+                (int newLeft, int newTop, int newRight, int newBottom) = GetCurrentWorkAreaMargins();
+                leftBox.Text = newLeft.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                topBox.Text = newTop.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                rightBox.Text = newRight.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                bottomBox.Text = newBottom.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                uniformBox.Text = GetNearestEdgeMargin(newLeft, newTop, newRight, newBottom)
+                    .ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
+            finally
+            {
+                suppressMarginPreview = false;
+            }
         }
 
         uniformBox.TextChanged += (_, _) => TryPreview(uniformBox);
@@ -300,6 +336,16 @@ public abstract partial class WidgetWindowBase
         topBox.TextChanged += (_, _) => TryPreview(topBox);
         rightBox.TextChanged += (_, _) => TryPreview(rightBox);
         bottomBox.TextChanged += (_, _) => TryPreview(bottomBox);
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootElement.XamlRoot,
+            Title = localization.T("Widget.Margin.Configure"),
+            Content = content,
+            PrimaryButtonText = localization.T("Common.Save"),
+            CloseButtonText = localization.T("Common.Cancel"),
+            DefaultButton = ContentDialogButton.Primary
+        };
 
         // Preview semantics: every valid edit moves the widget immediately so
         // what the user sees is the final layout. Cancel therefore restores
@@ -355,6 +401,14 @@ public abstract partial class WidgetWindowBase
                 : WidgetMarginSettings.TryParseMargin(uniformBox.Text, out _);
             if (!valid)
             {
+                // Live-derived values can exceed the 0–200 entry range (a
+                // window 350px from an edge is legitimate). Never fail
+                // silently: show the same inline error the preview shows.
+                validation.Text = string.Format(
+                    localization.T("Widget.Margin.Invalid"),
+                    WidgetMarginSettings.MinimumMarginPixels,
+                    WidgetMarginSettings.MaximumMarginPixels);
+                validation.Visibility = Visibility.Visible;
                 return;
             }
 
@@ -364,12 +418,14 @@ public abstract partial class WidgetWindowBase
             SettingsService.UpdateWidget(Config);
             ApplyMarginsFromDialog(
                 perSide,
-                uniformBox,
-                leftBox,
-                topBox,
-                rightBox,
-                bottomBox,
+                editedSides,
+                uniformBox.Text,
+                leftBox.Text,
+                topBox.Text,
+                rightBox.Text,
+                bottomBox.Text,
                 applyToAll.IsChecked == true);
+            SyncBoxesFromLiveMargins();
         }
         catch (Exception ex)
         {
@@ -379,36 +435,43 @@ public abstract partial class WidgetWindowBase
 
     private void ApplyMarginsFromDialog(
         bool perSide,
-        TextBox uniformBox,
-        TextBox leftBox,
-        TextBox topBox,
-        TextBox rightBox,
-        TextBox bottomBox,
+        HashSet<string> editedSides,
+        string uniformText,
+        string leftText,
+        string topText,
+        string rightText,
+        string bottomText,
         bool applyToAll)
     {
         if (perSide)
         {
-            if (!WidgetMarginSettings.TryParseMargin(leftBox.Text, out int left) ||
-                !WidgetMarginSettings.TryParseMargin(topBox.Text, out int top) ||
-                !WidgetMarginSettings.TryParseMargin(rightBox.Text, out int right) ||
-                !WidgetMarginSettings.TryParseMargin(bottomBox.Text, out int bottom))
+            if (!WidgetMarginSettings.TryParseMargin(leftText, out int left) ||
+                !WidgetMarginSettings.TryParseMargin(topText, out int top) ||
+                !WidgetMarginSettings.TryParseMargin(rightText, out int right) ||
+                !WidgetMarginSettings.TryParseMargin(bottomText, out int bottom))
             {
                 return;
             }
 
             if (applyToAll)
             {
-                App.Current?.WidgetManager?.MoveVisibleWidgets((_, bounds) =>
-                    ShiftBoundsToMargins(bounds, left, top, right, bottom));
+                App.Current?.WidgetManager?.MoveVisibleWidgets((config, bounds) =>
+                    ShiftBoundsToMarginsForSides(
+                        bounds,
+                        editedSides,
+                        left,
+                        top,
+                        right,
+                        bottom));
             }
             else
             {
-                ApplyOwnMarginDelta(true, left, top, right, bottom);
+                ApplyOwnMarginDelta(true, editedSides, left, top, right, bottom);
             }
         }
         else
         {
-            if (!WidgetMarginSettings.TryParseMargin(uniformBox.Text, out int uniform))
+            if (!WidgetMarginSettings.TryParseMargin(uniformText, out int uniform))
             {
                 return;
             }
@@ -420,29 +483,23 @@ public abstract partial class WidgetWindowBase
             }
             else
             {
-                ApplyOwnMarginDelta(false, uniform, uniform, uniform, uniform);
+                ApplyOwnMarginDelta(false, editedSides, uniform, uniform, uniform, uniform);
             }
         }
-
-        // Keep the dialog in sync with the moved windows (双向同步): the
-        // displayed distances are always derived from the live bounds.
-        (int newLeft, int newTop, int newRight, int newBottom) = GetCurrentWorkAreaMargins();
-        leftBox.Text = newLeft.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        topBox.Text = newTop.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        rightBox.Text = newRight.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        bottomBox.Text = newBottom.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        uniformBox.Text = GetNearestEdgeMargin(newLeft, newTop, newRight, newBottom)
-            .ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private void ApplyOwnMarginDelta(
         bool perSide,
+        HashSet<string> editedSides,
         int left,
         int top,
         int right,
         int bottom)
     {
-        if (!Win32Helper.GetWindowRect(HWnd, out Win32Helper.RECT rect))
+        // A position-locked widget must not be moved by the margin dialog —
+        // the drag path enforces the same lock (CoordinatedMove).
+        if (Config.IsPositionLocked ||
+            !Win32Helper.GetWindowRect(HWnd, out Win32Helper.RECT rect))
         {
             return;
         }
@@ -453,7 +510,7 @@ public abstract partial class WidgetWindowBase
             Math.Max(1, rect.Right - rect.Left),
             Math.Max(1, rect.Bottom - rect.Top));
         RectInt32? target = perSide
-            ? ShiftBoundsToMargins(current, left, top, right, bottom)
+            ? ShiftBoundsToMarginsForSides(current, editedSides, left, top, right, bottom)
             : ShiftBoundsToNearestEdge(current, left);
         if (target is not RectInt32 next || (next.X == current.X && next.Y == current.Y))
         {
@@ -510,8 +567,9 @@ public abstract partial class WidgetWindowBase
     /// requested distance from the work-area edge. Horizontal and vertical
     /// axes are independent, matching how the per-side inputs are presented.
     /// </summary>
-    private static RectInt32? ShiftBoundsToMargins(
+    private static RectInt32? ShiftBoundsToMarginsForSides(
         RectInt32 bounds,
+        HashSet<string> editedSides,
         int left,
         int top,
         int right,
@@ -526,46 +584,35 @@ public abstract partial class WidgetWindowBase
         int workRight = workArea.X + workArea.Width;
         int workBottom = workArea.Y + workArea.Height;
 
-        int nearestHorizontal = Math.Min(
-            Math.Abs(bounds.X - workArea.X),
-            Math.Abs(workRight - (bounds.X + bounds.Width)));
-        int nearestVertical = Math.Min(
-            Math.Abs(bounds.Y - workArea.Y),
-            Math.Abs(workBottom - (bounds.Y + bounds.Height)));
-
         int currentLeft = bounds.X - workArea.X;
         int currentTop = bounds.Y - workArea.Y;
         int currentRight = workRight - (bounds.X + bounds.Width);
         int currentBottom = workBottom - (bounds.Y + bounds.Height);
 
+        // Only sides the user actually edited take effect. Without this gate
+        // the near-side arbitration would silently swallow an edit to the far
+        // side (the historical defect: typing into "left" when the window is
+        // currently nearest the right edge did nothing).
         int newX = bounds.X;
         int newY = bounds.Y;
-        if (Math.Abs(left - currentLeft) <= Math.Abs(right - currentRight))
+        if (editedSides.Contains("Left") && left != currentLeft)
         {
-            if (left != currentLeft)
-            {
-                newX = workArea.X + left;
-            }
+            newX = workArea.X + left;
         }
-        else if (right != currentRight)
+        else if (editedSides.Contains("Right") && right != currentRight)
         {
             newX = workRight - right - bounds.Width;
         }
 
-        if (Math.Abs(top - currentTop) <= Math.Abs(bottom - currentBottom))
+        if (editedSides.Contains("Top") && top != currentTop)
         {
-            if (top != currentTop)
-            {
-                newY = workArea.Y + top;
-            }
+            newY = workArea.Y + top;
         }
-        else if (bottom != currentBottom)
+        else if (editedSides.Contains("Bottom") && bottom != currentBottom)
         {
             newY = workBottom - bottom - bounds.Height;
         }
 
-        _ = nearestHorizontal;
-        _ = nearestVertical;
         if (newX == bounds.X && newY == bounds.Y)
         {
             return null;

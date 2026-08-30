@@ -45,6 +45,18 @@ public sealed partial class WidgetManager
                 continue;
             }
 
+            // Position-locked widgets are moved by no path other than the
+            // user dragging them unlocked (CoordinatedMove enforces the same
+            // lock), and collapsed capsules must never write their transient
+            // geometry into the resting config — both hosts reject compact
+            // bounds in UpdateConfigBoundsFromPhysical for that reason.
+            if (window.Config.IsPositionLocked ||
+                window.IsCompactArrangementActive ||
+                window.IsCompactCollapsedState)
+            {
+                continue;
+            }
+
             IntPtr hwnd = window.WindowHandle;
             if (hwnd == IntPtr.Zero ||
                 !Win32Helper.IsWindow(hwnd) ||

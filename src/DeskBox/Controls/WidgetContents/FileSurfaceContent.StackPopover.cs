@@ -21,6 +21,7 @@ public sealed partial class FileSurfaceContent
 {
 
     private StackPopoverHostWindow? _stackPopoverHostWindow;
+    private bool _stackPopoverCloseButtonInteractionLeased;
     private Windows.Graphics.RectInt32 _stackPopoverScreenBounds =
         new(0, 0, 0, 0);
     private ListViewBase? _stackPopoverItemsView;
@@ -1348,6 +1349,7 @@ public sealed partial class FileSurfaceContent
     {
         App.Current?.WidgetManager?.BeginWidgetInteraction(
             "surface-stack-popover-close-button");
+        _stackPopoverCloseButtonInteractionLeased = true;
         CloseStackPopover();
     }
 
@@ -1993,6 +1995,17 @@ public sealed partial class FileSurfaceContent
         if (_stackPopoverHostWindow is not { } host)
         {
             return;
+        }
+
+        // The close button leases one interaction-depth unit so the popover
+        // survives the hide/reuse cycle; release it here exactly once, or the
+        // depth never returns to zero and every idle memory-cleanup path
+        // stays blocked until a tray hide/show forces a reset.
+        if (_stackPopoverCloseButtonInteractionLeased)
+        {
+            _stackPopoverCloseButtonInteractionLeased = false;
+            App.Current?.WidgetManager?.EndWidgetInteraction(
+                "surface-stack-popover-close-button");
         }
 
         CommitStackPopoverTitleRename();

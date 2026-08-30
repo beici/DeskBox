@@ -2242,6 +2242,11 @@ settings.FocusClickedWidgetOnRaise = false;
                 changed = true;
             }
 
+            if (QuickCaptureClipboardColorSettings.NormalizeOverrides(widget))
+            {
+                changed = true;
+            }
+
             if (widget.IsDisabled && widget.WidgetKind != WidgetKind.Glance)
             {
                 widget.IsDisabled = false;

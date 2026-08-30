@@ -895,6 +895,7 @@ public partial class App : Application
             "App.OnLaunched",
             $"startup={isStartupLaunch}");
         Log("OnLaunched start");
+        LogBuildIdentity();
 
         try
         {
@@ -1219,6 +1220,39 @@ public partial class App : Application
     }
 
     private AppDiagnosticsService? _diagnosticsService;
+
+    /// <summary>
+    /// Logs the exact binary identity of the running instance (build time +
+    /// file version). Repeatedly, external re-tests have been run against a
+    /// stale installed binary and then reported features/fixes as missing;
+    /// this line makes any such mismatch visible in the first log line.
+    /// </summary>
+    private void LogBuildIdentity()
+    {
+        try
+        {
+            string? exePath = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
+            {
+                Log("[Build] identity unavailable: process path missing");
+                return;
+            }
+
+            var info = FileVersionInfo.GetVersionInfo(exePath);
+            string buildTime = File.GetLastWriteTime(exePath)
+                .ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
+            Log(
+                "[Build] running " +
+                $"path={exePath} " +
+                $"version={info.FileVersion} " +
+                $"buildTime={buildTime}");
+        }
+        catch (Exception ex)
+        {
+            Log($"[Build] identity logging failed: {ex.Message}");
+        }
+    }
+
 
     private void InitializeLifecycleRecoveryWatcher()
     {

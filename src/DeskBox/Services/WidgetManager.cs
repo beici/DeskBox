@@ -57,6 +57,11 @@ internal interface IDesktopWidgetWindow
     bool Visible { get; }
     bool IsRaisedAboveDesktopLayer { get; }
     bool IsCompactArrangementActive { get; }
+    /// <summary>
+    /// True while the host is in the collapsed capsule bounds state —
+    /// transient geometry that must never be persisted as resting config.
+    /// </summary>
+    bool IsCompactCollapsedState { get; }
     bool CanParticipateInCoordinatedMove { get; }
     Windows.Graphics.RectInt32 CoordinatedMoveBounds { get; }
     Windows.Foundation.Rect AnimationBounds { get; }

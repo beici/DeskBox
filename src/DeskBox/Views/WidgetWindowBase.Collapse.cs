@@ -199,6 +199,8 @@ public abstract partial class WidgetWindowBase
 
     public bool IsCompactArrangementActive => _collapseInitialized && _targetCollapsed;
 
+    public bool IsCompactCollapsedState => IsCompactBoundsStateActive;
+
     public void ApplyCompactArrangement(RectInt32 bounds, bool constrainSize)
     {
         if (!DispatcherQueue.HasThreadAccess)
@@ -782,8 +784,10 @@ public abstract partial class WidgetWindowBase
         // A working-set trim made the primed expansion layout cold again
         // (IsCompactExpansionReady now fails the epoch check). Re-arm the
         // background warm-up so the next hover expand does not hit the
-        // readiness deadline; the slice still defers to application idle.
-        QueueCompactExpansionWarmup();
+        // readiness deadline; visible widgets promote their re-priming to
+        // the urgent queue because the user is one hover away from it.
+        QueueCompactExpansionWarmup(
+            urgent: HWnd != IntPtr.Zero && Win32Helper.IsWindowVisible(HWnd));
     }
 
     private void QueueCompactExpansionWarmup(bool urgent = false)
@@ -869,6 +873,25 @@ public abstract partial class WidgetWindowBase
                             urgent ? "visible-critical" : "background-idle",
                             token,
                             urgent);
+                    }
+                    else if (gateEntered &&
+                        result != WidgetCompactWarmupSliceResult.Ready &&
+                        !_isCompactExpansionVisualTreePrimed)
+                    {
+                        // The full slice is blocked (app not idle, content not
+                        // ready, ...) but the budgeted priming pass is cheap
+                        // and removes most of the cold-start first-expand
+                        // cost even when the full warm-up never ran before
+                        // the first hover.
+                        try
+                        {
+                            PrimeCompactExpansionVisualTree("warmup-gate-priming");
+                        }
+                        catch (Exception ex)
+                        {
+                            App.LogVerbose(
+                                $"[CompactWarmup] Gate priming failed: {ex.Message}");
+                        }
                     }
                 }
                 finally
