@@ -2553,5 +2553,11 @@
   "Widget.CreateShortcut": "建立捷徑",
   "Widget.MoreSystemOperations": "更多系統操作",
   "Settings.ManagedPath.DesktopShortcut.Title": "在桌面保留收納檔案入口",
-  "Settings.ManagedPath.DesktopShortcut.Description": "直接開啟目前的收納資料夾，解除安裝 DeskBox 後仍可繼續使用"
+  "Settings.ManagedPath.DesktopShortcut.Description": "直接開啟目前的收納資料夾，解除安裝 DeskBox 後仍可繼續使用",
+    "Settings.Animation.FrameRate.Title": "動畫影格率",
+    "Settings.Animation.FrameRate.Description": "膠囊展開/收起節奏，實際影格率為重新整理率除以檔位且不超過所選值",
+    "Settings.QuickCapture.RecordColors.Title": "記錄配色",
+    "Settings.QuickCapture.RecordColors.Description": "剪貼簿記錄的文字與背景顏色；低對比組合會被拒絕",
+    "Settings.QuickCapture.RecordColors.Background.Title": "記錄背景顏色",
+    "Settings.QuickCapture.RecordColors.Background.Description": "開啟檢色器，支援直接輸入 HEX 色值"
 }

@@ -2553,5 +2553,11 @@
   "Widget.CreateShortcut": "Créer un raccourci",
   "Widget.MoreSystemOperations": "Autres opérations système",
   "Settings.ManagedPath.DesktopShortcut.Title": "Conserver un raccourci de stockage sur le bureau",
-  "Settings.ManagedPath.DesktopShortcut.Description": "Ouvre directement le dossier de stockage actuel et reste utilisable après la désinstallation de DeskBox"
+  "Settings.ManagedPath.DesktopShortcut.Description": "Ouvre directement le dossier de stockage actuel et reste utilisable après la désinstallation de DeskBox",
+    "Settings.Animation.FrameRate.Title": "Fréquence d'animation",
+    "Settings.Animation.FrameRate.Description": "Cadence d'ouverture/fermeture des capsules ; la fréquence effective est le taux de rafraîchissement divisé par le palier, sans le dépasser",
+    "Settings.QuickCapture.RecordColors.Title": "Couleurs des entrées",
+    "Settings.QuickCapture.RecordColors.Description": "Couleurs de texte et d'arrière-plan des enregistrements du presse-papiers ; les paires à faible contraste sont refusées",
+    "Settings.QuickCapture.RecordColors.Background.Title": "Couleur d'arrière-plan des entrées",
+    "Settings.QuickCapture.RecordColors.Background.Description": "Ouvre la palette de couleurs ; saisie HEX incluse"
 }

@@ -3,6 +3,7 @@ using DeskBox.Helpers;
 using DeskBox.Models;
 using DeskBox.Services;
 using DeskBox.ViewModels;
+using DeskBox.Views;
 using System.ComponentModel;
 using System.Globalization;
 using Microsoft.UI;
@@ -162,17 +163,33 @@ public sealed partial class QuickCaptureSurfaceContent :
     /// </summary>
     internal void ApplyClipboardItemColors()
     {
+        Windows.UI.Color textColor = default;
+        bool textCustom =
+            QuickCaptureClipboardColorSettings.GetTextModeOverride(ViewModel.Config) ==
+                QuickCaptureClipboardColorSettings.ModeCustom &&
+            QuickCaptureClipboardColorSettings.TryGetTextColorOverride(ViewModel.Config, out textColor);
+
         if (Resources.TryGetValue(
                 "QuickCaptureClipboardItemForegroundBrush",
                 out object? textBrushObject) &&
             textBrushObject is SolidColorBrush textBrush)
         {
-            textBrush.Color =
-                QuickCaptureClipboardColorSettings.GetTextModeOverride(ViewModel.Config) ==
-                    QuickCaptureClipboardColorSettings.ModeCustom &&
-                QuickCaptureClipboardColorSettings.TryGetTextColorOverride(ViewModel.Config, out Windows.UI.Color textColor)
-                    ? textColor
-                    : ResolveClipboardThemeTextColor();
+            textBrush.Color = textCustom
+                ? textColor
+                : ResolveClipboardThemeTextColor();
+        }
+        else
+        {
+            textCustom = false;
+        }
+        if (Resources.TryGetValue(
+                "QuickCaptureClipboardItemSecondaryBrush",
+                out object? secondaryBrushObject) &&
+            secondaryBrushObject is SolidColorBrush secondaryBrush)
+        {
+            secondaryBrush.Color = textCustom
+                ? Windows.UI.Color.FromArgb(0xE8, textColor.R, textColor.G, textColor.B)
+                : ResolveClipboardThemeSecondaryTextColor();
         }
 
         if (Resources.TryGetValue(
@@ -191,6 +208,13 @@ public sealed partial class QuickCaptureSurfaceContent :
                     ? backgroundColor
                     : themeCardBrush.Color;
         }
+    }
+
+    private Windows.UI.Color ResolveClipboardThemeSecondaryTextColor()
+    {
+        return TryGetThemeColor("TextFillColorSecondary", out Windows.UI.Color themeSecondary)
+            ? themeSecondary
+            : Windows.UI.Color.FromArgb(0xCC, 0xFF, 0xFF, 0xFF);
     }
 
     private Windows.UI.Color ResolveClipboardThemeTextColor()
@@ -213,6 +237,18 @@ public sealed partial class QuickCaptureSurfaceContent :
             value is Windows.UI.Color themeColor)
         {
             color = themeColor;
+            return true;
+        }
+
+        // Theme resources are often brushes rather than raw colors.
+        if (App.Current.Resources.TryGetValue(resourceKey + "Brush", out object? brushValue) &&
+            brushValue is SolidColorBrush themeBrush)
+        {
+            color = Windows.UI.Color.FromArgb(
+                themeBrush.Color.A,
+                themeBrush.Color.R,
+                themeBrush.Color.G,
+                themeBrush.Color.B);
             return true;
         }
 
@@ -246,88 +282,15 @@ public sealed partial class QuickCaptureSurfaceContent :
             return;
         }
 
-        Windows.UI.Color initialColor = isBackground
-            ? ResolveClipboardItemEffectiveBackgroundColor()
-            : ResolveClipboardItemEffectiveTextColor();
-        var picker = new ColorPicker
-        {
-            Color = initialColor,
-            IsAlphaEnabled = false,
-            MinWidth = 340
-        };
-        var localization = _localizationService;
-        var dialog = new ContentDialog
-        {
-            XamlRoot = XamlRoot,
-            Title = localization.T(isBackground
-                ? "QuickCapture.ClipboardColor.Background"
-                : "QuickCapture.ClipboardColor.Text"),
-            Content = picker,
-            PrimaryButtonText = localization.T("Common.Save"),
-            CloseButtonText = localization.T("Common.Cancel"),
-            DefaultButton = ContentDialogButton.Primary
-        };
-
-        try
-        {
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
-            {
-                return;
-            }
-
-            Windows.UI.Color pendingText = isBackground
-                ? ResolveClipboardItemEffectiveTextColor()
-                : picker.Color;
-            Windows.UI.Color pendingBackground = isBackground
-                ? picker.Color
-                : ResolveClipboardItemEffectiveBackgroundColor();
-            if (!QuickCaptureClipboardColorSettings.IsPairReadable(
-                    pendingText,
-                    pendingBackground,
-                    out double contrastRatio))
-            {
-                await ShowClipboardColorRejectedDialogAsync(localization, contrastRatio);
-                return;
-            }
-
-            if (isBackground)
-            {
-                QuickCaptureClipboardColorSettings.SetBackgroundColorOverride(ViewModel.Config, picker.Color);
-                QuickCaptureClipboardColorSettings.SetBackgroundModeOverride(
-                    ViewModel.Config,
-                    QuickCaptureClipboardColorSettings.ModeCustom);
-            }
-            else
-            {
-                QuickCaptureClipboardColorSettings.SetTextColorOverride(ViewModel.Config, picker.Color);
-                QuickCaptureClipboardColorSettings.SetTextModeOverride(
-                    ViewModel.Config,
-                    QuickCaptureClipboardColorSettings.ModeCustom);
-            }
-
-            _settingsService.UpdateWidget(ViewModel.Config);
-            ApplyClipboardItemColors();
-        }
-        catch (Exception ex)
-        {
-            App.Log($"[QuickCaptureClipboardColor] Color picker failed: {ex.Message}");
-        }
-    }
-
-    private static async Task ShowClipboardColorRejectedDialogAsync(
-        LocalizationService localization,
-        double contrastRatio)
-    {
-        var dialog = new ContentDialog
-        {
-            Title = localization.T("QuickCapture.ClipboardColor.RejectedTitle"),
-            Content = string.Format(
-                localization.T("QuickCapture.ClipboardColor.RejectedBody"),
-                contrastRatio.ToString("F2", System.Globalization.CultureInfo.InvariantCulture),
-                QuickCaptureClipboardColorSettings.MinimumContrastRatio.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)),
-            CloseButtonText = localization.T("Common.Close")
-        };
-        await dialog.ShowAsync();
+        await QuickCaptureClipboardColorEditor.ShowAsync(
+            ViewModel.Config,
+            _settingsService,
+            XamlRoot,
+            _localizationService,
+            isBackground,
+            ResolveClipboardItemEffectiveTextColor(),
+            ResolveClipboardItemEffectiveBackgroundColor());
+        ApplyClipboardItemColors();
     }
 
     internal void SetClipboardItemFollowTheme(bool isBackground)

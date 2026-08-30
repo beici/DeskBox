@@ -2553,5 +2553,11 @@
   "Widget.CreateShortcut": "শর্টকাট তৈরি করুন",
   "Widget.MoreSystemOperations": "আরও সিস্টেম অপারেশন",
   "Settings.ManagedPath.DesktopShortcut.Title": "ডেস্কটপে স্টোরেজ শর্টকাট রাখুন",
-  "Settings.ManagedPath.DesktopShortcut.Description": "বর্তমান স্টোরেজ ফোল্ডার সরাসরি খোলে এবং DeskBox আনইনস্টল করার পরেও ব্যবহার করা যায়"
+  "Settings.ManagedPath.DesktopShortcut.Description": "বর্তমান স্টোরেজ ফোল্ডার সরাসরি খোলে এবং DeskBox আনইনস্টল করার পরেও ব্যবহার করা যায়",
+    "Settings.Animation.FrameRate.Title": "অ্যানিমেশন ফ্রেম হার",
+    "Settings.Animation.FrameRate.Description": "ক্যাপসুল প্রসারণ/সংকোচনের ছন্দ; প্রকৃত ফ্রেম হার রিফ্রেশ হারকে স্তর দিয়ে ভাগ করা মান এবং নির্বাচিত মান অতিক্রম করে না",
+    "Settings.QuickCapture.RecordColors.Title": "রেকর্ডের রং",
+    "Settings.QuickCapture.RecordColors.Description": "ক্লিপবোর্ড রেকর্ডের লেখা ও পটভূমির রং; কম কনট্রাস্টের জোড়া প্রত্যাখ্যাত হয়",
+    "Settings.QuickCapture.RecordColors.Background.Title": "রেকর্ডের পটভূমির রং",
+    "Settings.QuickCapture.RecordColors.Background.Description": "কালার পিকার খোলে; HEX ইনপুট সমর্থিত"
 }

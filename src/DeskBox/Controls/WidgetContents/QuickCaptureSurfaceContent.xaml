@@ -17,8 +17,11 @@
         <!-- Clipboard record list colors (QuickCaptureClipboardColorSettings).
              The card brush starts at the theme card color and both colors are
              replaced at runtime when the user picks custom colors; the theme
-             sentinel keeps the follow-theme value fresh across theme flips. -->
+             sentinel keeps the follow-theme value fresh across theme flips.
+             The secondary brush is a derived (alpha-dimmed) copy of the main
+             text color so timestamps stay readable against custom colors. -->
         <SolidColorBrush x:Key="QuickCaptureClipboardItemForegroundBrush" Color="{ThemeResource TextFillColorPrimary}" />
+        <SolidColorBrush x:Key="QuickCaptureClipboardItemSecondaryBrush" Color="{ThemeResource TextFillColorSecondary}" />
         <SolidColorBrush x:Key="QuickCaptureClipboardItemBackgroundBrush" Color="{ThemeResource CardBackgroundFillColorDefault}" />
         <SolidColorBrush x:Key="QuickCaptureClipboardItemCardThemeBrush" Color="{ThemeResource CardBackgroundFillColorDefault}" />
 
@@ -264,7 +267,7 @@
                                             Visibility="{Binding TextPreviewVisibility}" />
                                         <TextBlock
                                             FontSize="{Binding SecondaryTextSize}"
-                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Foreground="{StaticResource QuickCaptureClipboardItemSecondaryBrush}"
                                             Text="{Binding CreatedAtText}"
                                             Visibility="{Binding ElementName=ItemsList, Path=DataContext.CreatedTimeVisibility}" />
                                     </StackPanel>

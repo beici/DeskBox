@@ -2553,5 +2553,11 @@
   "Widget.CreateShortcut": "Create shortcut",
   "Widget.MoreSystemOperations": "More system operations",
   "Settings.ManagedPath.DesktopShortcut.Title": "Keep a storage shortcut on the desktop",
-  "Settings.ManagedPath.DesktopShortcut.Description": "Opens the current storage folder directly and remains usable after DeskBox is uninstalled"
+  "Settings.ManagedPath.DesktopShortcut.Description": "Opens the current storage folder directly and remains usable after DeskBox is uninstalled",
+    "Settings.Animation.FrameRate.Title": "Animation frame rate",
+    "Settings.Animation.FrameRate.Description": "Capsule expand/collapse cadence. Delivered rate is the display refresh divided by the cap and never exceeds it.",
+    "Settings.QuickCapture.RecordColors.Title": "Record colors",
+    "Settings.QuickCapture.RecordColors.Description": "Text and background colors for clipboard records; low-contrast pairs are rejected",
+    "Settings.QuickCapture.RecordColors.Background.Title": "Record background color",
+    "Settings.QuickCapture.RecordColors.Background.Description": "Opens the color picker; HEX input is included"
 }

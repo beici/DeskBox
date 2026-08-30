@@ -269,6 +269,14 @@ public class AppSettings
     public string WidgetTitleAlignment { get; set; } = "Left";
 
     /// <summary>
+    /// Capsule transition frame-rate cap in fps. Supported values are
+    /// <c>30</c>, <c>60</c>, <c>90</c>, <c>120</c> (anything else falls back
+    /// to <c>60</c>); the delivered cadence is refresh/cap rounded, always at
+    /// or under the target.
+    /// </summary>
+    public int WidgetAnimationFrameRate { get; set; } = 60;
+
+    /// <summary>
     /// Widget text edge mode: <c>"Off"</c>, <c>"Soft"</c>, <c>"Strong"</c>.
     /// </summary>
     public string WidgetTextEdgeMode { get; set; } = "Off";

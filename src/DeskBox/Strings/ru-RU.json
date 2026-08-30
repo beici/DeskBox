@@ -2553,5 +2553,11 @@
   "Widget.CreateShortcut": "Создать ярлык",
   "Widget.MoreSystemOperations": "Дополнительные системные операции",
   "Settings.ManagedPath.DesktopShortcut.Title": "Сохранять ярлык хранилища на рабочем столе",
-  "Settings.ManagedPath.DesktopShortcut.Description": "Открывает текущую папку хранилища напрямую и продолжает работать после удаления DeskBox"
+  "Settings.ManagedPath.DesktopShortcut.Description": "Открывает текущую папку хранилища напрямую и продолжает работать после удаления DeskBox",
+    "Settings.Animation.FrameRate.Title": "Частота кадров анимации",
+    "Settings.Animation.FrameRate.Description": "Ритм разворачивания/сворачивания капсул; фактическая частота равна частоте обновления, делённой на уровень, и не превышает выбранную",
+    "Settings.QuickCapture.RecordColors.Title": "Цвета записей",
+    "Settings.QuickCapture.RecordColors.Description": "Цвет текста и фона записей буфера обмена; малоконтрастные сочетания отклоняются",
+    "Settings.QuickCapture.RecordColors.Background.Title": "Цвет фона записей",
+    "Settings.QuickCapture.RecordColors.Background.Description": "Открывает палитру; поддерживается ввод HEX"
 }

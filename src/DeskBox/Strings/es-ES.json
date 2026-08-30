@@ -2553,5 +2553,11 @@
   "Widget.CreateShortcut": "Crear acceso directo",
   "Widget.MoreSystemOperations": "Más operaciones del sistema",
   "Settings.ManagedPath.DesktopShortcut.Title": "Mantener un acceso directo al almacenamiento en el escritorio",
-  "Settings.ManagedPath.DesktopShortcut.Description": "Abre directamente la carpeta de almacenamiento actual y sigue funcionando después de desinstalar DeskBox"
+  "Settings.ManagedPath.DesktopShortcut.Description": "Abre directamente la carpeta de almacenamiento actual y sigue funcionando después de desinstalar DeskBox",
+    "Settings.Animation.FrameRate.Title": "Velocidad de fotogramas de la animación",
+    "Settings.Animation.FrameRate.Description": "Cadencia de expansión/contracción de cápsulas; la velocidad efectiva es la de refresco dividida por el nivel y nunca la supera",
+    "Settings.QuickCapture.RecordColors.Title": "Colores de registros",
+    "Settings.QuickCapture.RecordColors.Description": "Colores de texto y fondo de los registros del portapapeles; se rechazan las combinaciones de bajo contraste",
+    "Settings.QuickCapture.RecordColors.Background.Title": "Color de fondo de los registros",
+    "Settings.QuickCapture.RecordColors.Background.Description": "Abre el selector de color; incluye entrada HEX"
 }

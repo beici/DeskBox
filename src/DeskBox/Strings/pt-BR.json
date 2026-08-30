@@ -2553,5 +2553,11 @@
   "Widget.CreateShortcut": "Criar atalho",
   "Widget.MoreSystemOperations": "Mais operações do sistema",
   "Settings.ManagedPath.DesktopShortcut.Title": "Manter um atalho do armazenamento na área de trabalho",
-  "Settings.ManagedPath.DesktopShortcut.Description": "Abre diretamente a pasta de armazenamento atual e continua funcionando após desinstalar o DeskBox"
+  "Settings.ManagedPath.DesktopShortcut.Description": "Abre diretamente a pasta de armazenamento atual e continua funcionando após desinstalar o DeskBox",
+    "Settings.Animation.FrameRate.Title": "Taxa de quadros da animação",
+    "Settings.Animation.FrameRate.Description": "Cadência de expansão/recolhimento das cápsulas; a taxa efetiva é a de atualização dividida pelo nível e nunca a excede",
+    "Settings.QuickCapture.RecordColors.Title": "Cores dos registros",
+    "Settings.QuickCapture.RecordColors.Description": "Cores de texto e de fundo dos registros da área de transferência; pares de baixo contraste são rejeitados",
+    "Settings.QuickCapture.RecordColors.Background.Title": "Cor de fundo dos registros",
+    "Settings.QuickCapture.RecordColors.Background.Description": "Abre o seletor de cores; entrada HEX incluída"
 }

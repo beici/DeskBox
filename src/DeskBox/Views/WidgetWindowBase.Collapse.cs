@@ -129,6 +129,7 @@ public abstract partial class WidgetWindowBase
     private static int s_compactSessionFrameSkipLevel = WidgetCompactFrameSkipPolicy.FullRateLevel;
     private int _collapseAnimationFrameSkipLevel = WidgetCompactFrameSkipPolicy.FullRateLevel;
     private int _collapseAnimationFrameSkip = 1;
+    private bool _compactFrameRateCapActive;
     private int _collapseAnimationFrameIndex;
     private int _collapseAnimationRefreshRateHz;
     private double _collapseAnimationFrameBudgetMs;
@@ -3014,11 +3015,31 @@ public abstract partial class WidgetWindowBase
         _collapseAnimationDurationMs = durationMs;
         _collapseAnimationStarted = Stopwatch.GetTimestamp();
         int refreshRateHz = Win32Helper.GetDisplayRefreshRateForWindow(HWnd);
-        _collapseAnimationFrameSkipLevel = WidgetCompactFrameSkipPolicy.ClampLevel(
-            s_compactSessionFrameSkipLevel);
-        _collapseAnimationFrameSkip = WidgetCompactFrameSkipPolicy.ResolveSkip(
-            refreshRateHz,
-            _collapseAnimationFrameSkipLevel);
+        int frameRateCap = WidgetCompactFrameSkipPolicy.NormalizeFrameRate(
+            SettingsService.Settings.WidgetAnimationFrameRate);
+        if (frameRateCap > 0)
+        {
+            // A user-selected cap replaces the adaptive ladder entirely: the
+            // cadence is fixed at refresh/cap (rounded, always at or under
+            // the target) and the overrun escalation is bypassed — the user
+            // asked for this rate, so the session must not silently drop it.
+            _collapseAnimationFrameSkipLevel =
+                WidgetCompactFrameSkipPolicy.ResolveLevelForFrameRate(refreshRateHz, frameRateCap);
+            _collapseAnimationFrameSkip = WidgetCompactFrameSkipPolicy.ResolveSkipForFrameRate(
+                refreshRateHz,
+                frameRateCap);
+            _compactFrameRateCapActive = true;
+        }
+        else
+        {
+            _collapseAnimationFrameSkipLevel = WidgetCompactFrameSkipPolicy.ClampLevel(
+                s_compactSessionFrameSkipLevel);
+            _collapseAnimationFrameSkip = WidgetCompactFrameSkipPolicy.ResolveSkip(
+                refreshRateHz,
+                _collapseAnimationFrameSkipLevel);
+            _compactFrameRateCapActive = false;
+        }
+
         _collapseAnimationFrameIndex = 0;
         _collapseAnimationRefreshRateHz = refreshRateHz;
         _collapseAnimationFrameBudgetMs = 1000.0 / Math.Max(1, refreshRateHz);
@@ -3143,7 +3164,10 @@ public abstract partial class WidgetWindowBase
             _collapseAnimationOverrunTicks++;
         }
 
-        if (_collapseAnimationFrameSkipLevel >= WidgetCompactFrameSkipPolicy.ThirtyFpsLevel ||
+        // A user-selected frame-rate cap bypasses the adaptive escalation:
+        // the cadence is the cap, not the machine's saturated budget.
+        if (_compactFrameRateCapActive ||
+            _collapseAnimationFrameSkipLevel >= WidgetCompactFrameSkipPolicy.ThirtyFpsLevel ||
             !WidgetCompactFrameSkipPolicy.ShouldEscalate(
                 _collapseAnimationOverrunTicks,
                 _collapseAnimationSampledTicks))

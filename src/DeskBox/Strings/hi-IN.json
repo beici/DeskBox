@@ -2553,5 +2553,11 @@
   "Widget.CreateShortcut": "शॉर्टकट बनाएँ",
   "Widget.MoreSystemOperations": "अधिक सिस्टम संचालन",
   "Settings.ManagedPath.DesktopShortcut.Title": "डेस्कटॉप पर स्टोरेज शॉर्टकट रखें",
-  "Settings.ManagedPath.DesktopShortcut.Description": "मौजूदा स्टोरेज फ़ोल्डर सीधे खोलता है और DeskBox अनइंस्टॉल होने के बाद भी काम करता है"
+  "Settings.ManagedPath.DesktopShortcut.Description": "मौजूदा स्टोरेज फ़ोल्डर सीधे खोलता है और DeskBox अनइंस्टॉल होने के बाद भी काम करता है",
+    "Settings.Animation.FrameRate.Title": "एनीमेशन फ़्रेम दर",
+    "Settings.Animation.FrameRate.Description": "कैप्सूल विस्तार/संकुचन की गति; वास्तविक फ़्रेम दर रिफ्रेश दर को स्तर से विभाजित करके मिलती है और चयनित मान से अधिक नहीं होती",
+    "Settings.QuickCapture.RecordColors.Title": "रिकॉर्ड रंग",
+    "Settings.QuickCapture.RecordColors.Description": "क्लिपबोर्ड रिकॉर्ड का टेक्स्ट और पृष्ठभूमि रंग; कम कंट्रास्ट जोड़े अस्वीकृत होते हैं",
+    "Settings.QuickCapture.RecordColors.Background.Title": "रिकॉर्ड पृष्ठभूमि रंग",
+    "Settings.QuickCapture.RecordColors.Background.Description": "कलर पिकर खोलता है; HEX इनपुट शामिल है"
 }

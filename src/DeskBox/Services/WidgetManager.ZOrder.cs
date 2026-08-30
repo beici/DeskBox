@@ -408,14 +408,15 @@ public sealed partial class WidgetManager
             return;
         }
 
-        // Feed the raise in idle highest-first order so the batch insertion
-        // reproduces the settled peer order instead of the raw enumeration
-        // order (the transient 2.3s raise window should look like the idle
-        // layout, not a reshuffle of it).
-        var handles = GetWindowsInIdleHighestFirstOrder(
-                GetLoadedDesktopWindows().Where(window => window.Visible))
-            .Select(window => window.WindowHandle)
-            .ToList();
+        // Title clicks raise ONLY the clicked widget. The previous behavior
+        // also lifted every visible peer, and even a same-band z-order move
+        // of an acrylic-backed peer re-samples its backdrop (the content
+        // behind it changes), which users see as every widget flashing
+        // together on every click. Peers are motionless now: the title
+        // flyout is owned by the clicked widget, so it stays visible, and
+        // the group-wide raise remains available via F7/tray. The fallback
+        // restore below restores only what was tracked (the active widget).
+        var handles = new List<IntPtr> { activeHwnd };
         long generation = TrackTemporarilyRaisedWidgets(
             handles,
             "title-activated-all");

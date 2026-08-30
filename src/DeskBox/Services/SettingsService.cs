@@ -450,6 +450,7 @@ public const int DefaultSearchMaxResults = 100;
         settings.WidgetForegroundColor = WidgetForegroundSettings.DefaultCustomColorHex;
         settings.WidgetTextEdgeMode = WidgetForegroundSettings.EdgeOff;
         settings.WidgetTitleAlignment = WidgetTitleAppearanceSettings.AlignLeft;
+        settings.WidgetAnimationFrameRate = WidgetCompactFrameSkipPolicy.DefaultFrameRate;
         settings.WidgetBorderColorMode = WidgetBorderColorModeNeutral;
         settings.WidgetBorderStyle = WidgetBorderStyleThin;
         settings.WidgetAnimationEffect = WidgetAnimationEffectSlideFade;

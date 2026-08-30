@@ -2553,5 +2553,11 @@
   "Widget.CreateShortcut": "Verknüpfung erstellen",
   "Widget.MoreSystemOperations": "Weitere Systemaktionen",
   "Settings.ManagedPath.DesktopShortcut.Title": "Speicherverknüpfung auf dem Desktop behalten",
-  "Settings.ManagedPath.DesktopShortcut.Description": "Öffnet den aktuellen Speicherordner direkt und bleibt nach der Deinstallation von DeskBox verwendbar"
+  "Settings.ManagedPath.DesktopShortcut.Description": "Öffnet den aktuellen Speicherordner direkt und bleibt nach der Deinstallation von DeskBox verwendbar",
+    "Settings.Animation.FrameRate.Title": "Animationsbildrate",
+    "Settings.Animation.FrameRate.Description": "Kadenz für Ein-/Ausklappen; die gelieferte Rate ist Bildwiederholrate geteilt durch die Stufe und überschreitet sie nie",
+    "Settings.QuickCapture.RecordColors.Title": "Eintragsfarben",
+    "Settings.QuickCapture.RecordColors.Description": "Text- und Hintergrundfarben der Zwischenablage-Einträge; kontrastarme Paare werden abgelehnt",
+    "Settings.QuickCapture.RecordColors.Background.Title": "Hintergrundfarbe der Einträge",
+    "Settings.QuickCapture.RecordColors.Background.Description": "Öffnet den Farbwähler; HEX-Eingabe enthalten"
 }

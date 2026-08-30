@@ -2553,5 +2553,11 @@
   "Widget.CreateShortcut": "ショートカットを作成",
   "Widget.MoreSystemOperations": "その他のシステム操作",
   "Settings.ManagedPath.DesktopShortcut.Title": "デスクトップに保存フォルダーのショートカットを残す",
-  "Settings.ManagedPath.DesktopShortcut.Description": "現在の保存フォルダーを直接開き、DeskBox のアンインストール後も使用できます"
+  "Settings.ManagedPath.DesktopShortcut.Description": "現在の保存フォルダーを直接開き、DeskBox のアンインストール後も使用できます",
+    "Settings.Animation.FrameRate.Title": "アニメーションフレームレート",
+    "Settings.Animation.FrameRate.Description": "カプセル開閉の間隔。実効フレームレートはリフレッシュレートを段で割った値で、選択値を超えません",
+    "Settings.QuickCapture.RecordColors.Title": "レコードの色",
+    "Settings.QuickCapture.RecordColors.Description": "クリップボード記録の文字色と背景色。低コントラストの組み合わせは拒否されます",
+    "Settings.QuickCapture.RecordColors.Background.Title": "レコードの背景色",
+    "Settings.QuickCapture.RecordColors.Background.Description": "カラーピッカーを開きます。HEX 入力に対応"
 }

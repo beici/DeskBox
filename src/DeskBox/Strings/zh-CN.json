@@ -2553,5 +2553,11 @@
   "Widget.CreateShortcut": "创建快捷方式",
   "Widget.MoreSystemOperations": "更多系统操作",
   "Settings.ManagedPath.DesktopShortcut.Title": "在桌面保留收纳文件入口",
-  "Settings.ManagedPath.DesktopShortcut.Description": "直接打开当前收纳目录，卸载 DeskBox 后仍可继续使用"
+  "Settings.ManagedPath.DesktopShortcut.Description": "直接打开当前收纳目录，卸载 DeskBox 后仍可继续使用",
+    "Settings.Animation.FrameRate.Title": "动画帧率",
+    "Settings.Animation.FrameRate.Description": "胶囊展开/收起节奏，实际帧率为刷新率除以档位且不超过所选值",
+    "Settings.QuickCapture.RecordColors.Title": "记录配色",
+    "Settings.QuickCapture.RecordColors.Description": "剪贴板记录的文字与背景颜色；低对比度组合会被拒绝",
+    "Settings.QuickCapture.RecordColors.Background.Title": "记录背景颜色",
+    "Settings.QuickCapture.RecordColors.Background.Description": "打开取色器，支持直接输入 HEX 色值"
 }

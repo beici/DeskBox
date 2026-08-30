@@ -1,5 +1,7 @@
+using DeskBox.Controls.WidgetContents;
 using DeskBox.Helpers;
 using DeskBox.Models;
+using DeskBox.Views;
 using Microsoft.UI.Windowing;
 using Windows.Graphics;
 
@@ -7,6 +9,23 @@ namespace DeskBox.Services;
 
 public sealed partial class WidgetManager
 {
+    /// <summary>
+    /// Re-applies the clipboard record colors on every loaded Quick Capture
+    /// surface. Used by the Settings entry so live widgets update the moment
+    /// a color is committed from the settings window.
+    /// </summary>
+    internal void ApplyQuickCaptureClipboardColorsToLoadedWidgets()
+    {
+        foreach (ContentWidgetWindow window in _contentWidgets.Values)
+        {
+            if (window.Config.WidgetKind is WidgetKind.QuickCapture &&
+                window.CurrentContent is QuickCaptureSurfaceContent quickCaptureSurface)
+            {
+                quickCaptureSurface.ApplyClipboardItemColors();
+            }
+        }
+    }
+
     /// <summary>
     /// Re-runs the appearance preview (which includes the title appearance
     /// pass) on every visible widget window. Used by batch title-alignment

@@ -86,6 +86,29 @@ public partial class SettingsViewModel
     public IReadOnlyList<SettingsOption> AvailableWidgetAnimationSpeedOptions =>
         CreateSelectionOptions(AvailableWidgetAnimationSpeeds, AvailableWidgetAnimationSpeedDisplayNames);
 
+    public IReadOnlyList<SettingsOption> AvailableWidgetFrameRateOptions { get; } =
+        WidgetCompactFrameSkipPolicy.SelectableFrameRates
+            .Select(rate => new SettingsOption(rate, $"{rate} fps"))
+            .ToArray();
+
+    public int SelectedWidgetFrameRate
+    {
+        get => WidgetCompactFrameSkipPolicy.NormalizeFrameRate(
+            _settingsService.Settings.WidgetAnimationFrameRate);
+        set
+        {
+            int normalized = WidgetCompactFrameSkipPolicy.NormalizeFrameRate(value);
+            if (_settingsService.Settings.WidgetAnimationFrameRate == normalized)
+            {
+                return;
+            }
+
+            _settingsService.Settings.WidgetAnimationFrameRate = normalized;
+            _settingsService.SaveDebounced();
+            OnPropertyChanged(nameof(SelectedWidgetFrameRate));
+        }
+    }
+
     public IReadOnlyList<SettingsOption> AvailableWidgetAnimationSlideDirectionOptions =>
         CreateSelectionOptions(AvailableWidgetAnimationSlideDirections, AvailableWidgetAnimationSlideDirectionDisplayNames);
 

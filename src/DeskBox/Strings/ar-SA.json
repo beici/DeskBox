@@ -2553,5 +2553,11 @@
   "Widget.CreateShortcut": "إنشاء اختصار",
   "Widget.MoreSystemOperations": "المزيد من عمليات النظام",
   "Settings.ManagedPath.DesktopShortcut.Title": "الاحتفاظ باختصار التخزين على سطح المكتب",
-  "Settings.ManagedPath.DesktopShortcut.Description": "يفتح مجلد التخزين الحالي مباشرة ويظل قابلاً للاستخدام بعد إزالة DeskBox"
+  "Settings.ManagedPath.DesktopShortcut.Description": "يفتح مجلد التخزين الحالي مباشرة ويظل قابلاً للاستخدام بعد إزالة DeskBox",
+    "Settings.Animation.FrameRate.Title": "معدل إطارات الحركة",
+    "Settings.Animation.FrameRate.Description": "إيقاع فتح/طي الكبسولات؛ معدل الإطارات الفعلي هو معدل التحديث مقسومًا على المستوى ولا يتجاوزه",
+    "Settings.QuickCapture.RecordColors.Title": "ألوان السجلات",
+    "Settings.QuickCapture.RecordColors.Description": "لون نص السجلات وخلفيتها؛ تُرفض المجموعات منخفضة التباين",
+    "Settings.QuickCapture.RecordColors.Background.Title": "لون خلفية السجلات",
+    "Settings.QuickCapture.RecordColors.Background.Description": "يفتح منتقي الألوان مع دعم إدخال HEX"
 }

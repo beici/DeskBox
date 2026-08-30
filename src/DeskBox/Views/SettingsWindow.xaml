@@ -790,6 +790,17 @@ svc:Localized.DescriptionKey="Settings.DefaultWidth.Description"
 
                                 <toolkit:SettingsCard
                                     HorizontalContentAlignment="Right"
+                                    svc:Localized.DescriptionKey="Settings.Animation.FrameRate.Description"
+                                    svc:Localized.HeaderKey="Settings.Animation.FrameRate.Title">
+                                    <ComboBox
+                                        MinWidth="{StaticResource SettingsControlMinWidth}"
+                                        SelectedValuePath="Value"
+                                        SelectedValue="{Binding SelectedWidgetFrameRate, Mode=TwoWay}"
+                                        ItemsSource="{Binding AvailableWidgetFrameRateOptions}" />
+                                </toolkit:SettingsCard>
+
+                                <toolkit:SettingsCard
+                                    HorizontalContentAlignment="Right"
                                     svc:Localized.DescriptionKey="Settings.Animation.Direction.Description"
                                     svc:Localized.HeaderKey="Settings.Animation.Direction.Title">
                                     <ComboBox
@@ -1801,6 +1812,43 @@ svc:Localized.DescriptionKey="Settings.DefaultWidth.Description"
                                             MinWidth="190"
                                             ItemsSource="{Binding AvailableQuickCaptureWideOpenModeOptions}"
                                             controls:SettingsComboBox.Value="{Binding QuickCaptureWideOpenMode, Mode=TwoWay}" />
+                                    </toolkit:SettingsCard>
+                                </toolkit:SettingsExpander.Items>
+                            </toolkit:SettingsExpander>
+
+                            <toolkit:SettingsExpander
+                                Tag="QuickCapture"
+                                IsEnabled="{Binding QuickCaptureEnabled}"
+                                Loaded="QuickCaptureRecordColors_Loaded"
+                                HorizontalContentAlignment="Stretch"
+                                svc:Localized.DescriptionKey="Settings.QuickCapture.RecordColors.Description"
+                                svc:Localized.HeaderKey="Settings.QuickCapture.RecordColors.Title">
+                                <toolkit:SettingsExpander.HeaderIcon>
+                                    <FontIcon Glyph="&#xE790;" />
+                                </toolkit:SettingsExpander.HeaderIcon>
+                                <Button
+                                    x:Name="QuickCaptureRecordTextColorButton"
+                                    MinWidth="190"
+                                    HorizontalAlignment="Right"
+                                    HorizontalContentAlignment="Stretch"
+                                    Click="QuickCaptureRecordTextColor_Click" />
+                                <toolkit:SettingsExpander.Items>
+                                    <toolkit:SettingsCard
+                                        HorizontalContentAlignment="Right"
+                                        svc:Localized.DescriptionKey="Settings.QuickCapture.RecordColors.Background.Description"
+                                        svc:Localized.HeaderKey="Settings.QuickCapture.RecordColors.Background.Title">
+                                        <Button
+                                            x:Name="QuickCaptureRecordBackgroundColorButton"
+                                            MinWidth="190"
+                                            Click="QuickCaptureRecordBackgroundColor_Click" />
+                                    </toolkit:SettingsCard>
+                                    <toolkit:SettingsCard
+                                        HorizontalContentAlignment="Right"
+                                        svc:Localized.HeaderKey="Settings.QuickCapture.RecordColors.Reset.Title">
+                                        <Button
+                                            MinWidth="190"
+                                            Click="QuickCaptureRecordColorsReset_Click"
+                                            svc:Localized.Key="QuickCapture.ClipboardColor.Reset" />
                                     </toolkit:SettingsCard>
                                 </toolkit:SettingsExpander.Items>
                             </toolkit:SettingsExpander>
