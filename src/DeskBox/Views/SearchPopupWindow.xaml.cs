@@ -3601,6 +3601,9 @@ public sealed partial class SearchPopupWindow : Window
         {
             var data = new DataPackage { RequestedOperation = operation };
             await SetDragPayloadAsync(data, paths);
+            DeskBoxClipboardWriteScope.MarkWrite(
+                text: string.Join(Environment.NewLine, paths),
+                paths: paths);
             Clipboard.SetContent(data);
             Clipboard.Flush();
             ShowTransientStatus(_localizationService.T(
@@ -3820,10 +3823,15 @@ public sealed partial class SearchPopupWindow : Window
             return;
         }
 
+        string path = item.DetailPath;
+
         try
         {
             var data = new DataPackage { RequestedOperation = operation };
-            await SetDragPayloadAsync(data, item.DetailPath);
+            await SetDragPayloadAsync(data, path);
+            DeskBoxClipboardWriteScope.MarkWrite(
+                text: path,
+                paths: [path]);
             Clipboard.SetContent(data);
             Clipboard.Flush();
             ShowTransientStatus(_localizationService.T(
@@ -4058,6 +4066,7 @@ public sealed partial class SearchPopupWindow : Window
         {
             var dataPackage = new DataPackage();
             dataPackage.SetText(item.DetailPath);
+            DeskBoxClipboardWriteScope.MarkWrite(text: item.DetailPath);
             Clipboard.SetContent(dataPackage);
             ShowTransientStatus(_localizationService.T("Search.Action.PathCopied"));
         }

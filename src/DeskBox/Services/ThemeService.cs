@@ -205,6 +205,16 @@ public sealed class ThemeService
 
     public void RefreshAppearance()
     {
+        // ApplyToAllWindows reads window.Content and the broadcast reaches
+        // subscribers without dispatch protection, so the refresh must run
+        // on the UI thread (DEF-010: startup once pushed it to a thread-pool
+        // thread). Re-post instead of touching XAML objects cross-thread.
+        if (App.UiDispatcherQueue is { HasThreadAccess: false } dispatcherQueue)
+        {
+            _ = dispatcherQueue.TryEnqueue(RefreshAppearance);
+            return;
+        }
+
         ApplyToAllWindows();
         AppearanceChanged?.Invoke();
         App.ScheduleLightMemoryCleanup();

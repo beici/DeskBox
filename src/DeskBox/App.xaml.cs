@@ -937,15 +937,16 @@ public partial class App : Application
             var themeService = ThemeService;
             var localizationService = LocalizationService;
 
-            // Parallel: theme refresh only. Clipboard event subscription must stay on the UI thread.
-            var themeTask = Task.Run(() => themeService.RefreshAppearance());
+            // Theme refresh walks tracked windows (window.Content, XAML properties)
+            // and broadcasts AppearanceChanged to subscribers that assume the UI
+            // thread, so it runs inline here instead of on a thread-pool thread
+            // (DEF-010). Clipboard event subscription must stay on the UI thread.
+            themeService.RefreshAppearance();
             RefreshQuickCaptureClipboardService();
 
-            // Parallel: independent UI setup
+            // Independent UI setup
             CreateTrayIcon();
             InitializeLifecycleRecoveryWatcher();
-
-            await themeTask;
 
             if (FeatureWidgetSettings.IsEnabled(SettingsService.Settings, WidgetKind.Search))
             {

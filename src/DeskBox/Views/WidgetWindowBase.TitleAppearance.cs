@@ -696,7 +696,14 @@ public abstract partial class WidgetWindowBase
             return null;
         }
 
-        return new RectInt32(newX, newY, bounds.Width, bounds.Height);
+        // The margin entry is the only placement path that computes a target
+        // without clamping it. Oversized widgets plus large margins can push
+        // the raw target outside the work area, which the restart chain would
+        // then pull back — a second, silent drift. Apply the same work-area
+        // clamp the restore path uses so the applied position is final.
+        return WidgetPositioningService.EnsureVisible(
+            new RectInt32(newX, newY, bounds.Width, bounds.Height),
+            workArea);
     }
 
     /// <summary>
@@ -745,7 +752,12 @@ public abstract partial class WidgetWindowBase
             return null;
         }
 
-        return new RectInt32(x, y, bounds.Width, bounds.Height);
+        // Same work-area clamp as the per-side shift above: the uniform
+        // entry must not hand back a target the restart chain would move
+        // again.
+        return WidgetPositioningService.EnsureVisible(
+            new RectInt32(x, y, bounds.Width, bounds.Height),
+            workArea);
     }
 
     /// <summary>

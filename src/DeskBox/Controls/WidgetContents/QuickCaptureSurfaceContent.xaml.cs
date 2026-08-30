@@ -2614,6 +2614,7 @@ public sealed partial class QuickCaptureSurfaceContent :
             RequestedOperation = DataPackageOperation.Copy
         };
         dataPackage.SetText(text);
+        DeskBoxClipboardWriteScope.MarkWrite(text: text);
         Clipboard.SetContent(dataPackage);
         Clipboard.Flush();
         RaiseFeedback(

@@ -169,7 +169,18 @@ public sealed partial class WidgetManager
                 target.Y + Math.Max(1, target.Height) / 2);
             RectInt32 workArea = DisplayArea.GetFromPoint(center, DisplayAreaFallback.Nearest).WorkArea;
             WidgetPositioningService.UpdateConfigFromPhysicalBounds(window.Config, target, workArea);
+            // ResolveBoundsCore rebuilds the position from the anchor whenever
+            // one is valid, so persisting X/Y alone makes the next launch (or
+            // topology switch) silently revert the batch move. Capture the
+            // anchor from the same target/workArea the config was written
+            // from — the same sequence the single-widget margin path runs —
+            // and keep the group-host layout and the topology profile in
+            // step with it. Compact states and locked widgets never reach
+            // this point, so no compact-placement branch is needed here.
+            WidgetPositioningService.CaptureAnchor(window.Config, target, workArea);
             _settingsService.UpdateWidget(window.Config, notifySubscribers: false);
+            SynchronizeGroupLayoutFromMember(window.Config);
+            CaptureCurrentTopologyLayout(window.Config);
             applied++;
             anyChanged = true;
         }
