@@ -72,9 +72,9 @@
     "Settings.FileStacks.PopoverStyle.Neutral": "Neutro",
     "Settings.FileStacks.Auto.Title": "Empilhamento automático",
     "Settings.FileStacks.Auto.Description": "Agrupa automaticamente os arquivos pela regra de agrupamento; desligado, o empilhamento continua manual",
-    "Settings.FileStacks.GroupBy.Title": "Regra de agrupamento",
-    "Settings.FileStacks.GroupBy.Description": "Como as pilhas automáticas agrupam os arquivos",
-    "Settings.FileStacks.Enable.Description": "Desativar oculta todas as pilhas, incluindo as manuais",
+    "Settings.FileStacks.GroupBy.Title": "Agrupamento",
+    "Settings.FileStacks.GroupBy.Description": "Escolha como os arquivos são atribuídos automaticamente às pilhas",
+    "Settings.FileStacks.Enable.Description": "Formar pilhas automaticamente usando as regras de agrupamento selecionadas",
     "Settings.FileStacks.Status.Manual": "Somente manual",
     "Widget.Stack.UseDefaultOpenMode": "Usar modo de abertura padrão",
     "Widget.Stack.RenameUnavailable": "Esta pilha mudou. Tente novamente.",
@@ -658,15 +658,11 @@
     "Settings.FileStacks.PageTitle": "Pilhas de arquivos",
     "Settings.FileStacks.Description": "Organiza os itens sem mover arquivos; pilhas manuais são mantidas separadamente",
     "Settings.FileStacks.Enable.Title": "Ativar pilhas automáticas",
-    "Settings.FileStacks.Enable.Description": "Formar pilhas automaticamente usando as regras de agrupamento selecionadas",
     "Settings.FileStacks.Status.Off": "Desligado",
-
     "Settings.FileStacks.Status.On": "Agrupa arquivos soltos em pilhas",
     "Settings.FileStacks.Mode.Title": "Modo de pilhas de arquivos",
     "Settings.FileStacks.Mode.Description": "Ativa pilhas manuais e automáticas; desative para ocultar todas as pilhas",
     "Settings.FileStacks.Status.Custom": "Formatos personalizados · {0} regras",
-    "Settings.FileStacks.GroupBy.Title": "Agrupamento",
-    "Settings.FileStacks.GroupBy.Description": "Escolha como os arquivos são atribuídos automaticamente às pilhas",
     "Settings.FileStacks.GroupBy.Kind": "Tipo de arquivo",
     "Settings.FileStacks.GroupBy.DateAdded": "Data de adição ao DeskBox",
     "Settings.FileStacks.GroupBy.DateCreated": "Data de adição ao DeskBox",
@@ -1230,17 +1226,17 @@
     "Onboarding.Step1.Body": "O DeskBox não substitui o seu desktop do Windows. Ele coloca arquivos, busca e ferramentas em widgets leves — visíveis quando você precisa, discretos quando não precisa.",
     "Onboarding.Step1.Hint1": "Não substitui o desktop do Windows — todas as ações são reversíveis",
     "Onboarding.Step1.Hint2": "Os Widgets podem ser movidos e redimensionados livremente",
-  "Onboarding.Step2.Eyebrow": "CRIAR WIDGETS",
-  "Onboarding.Step2.Title": "Crie mais widgets pela bandeja",
-  "Onboarding.Step2.Body": "Clique com o botão direito no ícone do DeskBox na área de notificação da barra de tarefas para criar um widget quando quiser.",
-  "Onboarding.Step2.TrayActionTitle": "Clique com o botão direito no ícone do DeskBox",
-  "Onboarding.Step2.TrayActionBody": "Se estiver oculto, abra primeiro Mostrar ícones ocultos na barra de tarefas",
-  "Onboarding.Step2.RightClick": "Botão direito",
-  "Onboarding.Step2.NewWidgetTitle": "Novo widget",
-  "Onboarding.Step2.NewWidgetBody": "Reúna arquivos arrastados da área de trabalho",
-  "Onboarding.Step2.ConnectFolderTitle": "Mapeamento de pasta",
-  "Onboarding.Step2.ConnectFolderBody": "Mostre o conteúdo de uma pasta existente",
-  "Onboarding.Step2.FeatureHint": "Ative Tarefas, Captura Rápida e outros widgets de funções conforme necessário nas Configurações",
+    "Onboarding.Step2.Eyebrow": "CRIAR WIDGETS",
+    "Onboarding.Step2.Title": "Crie mais widgets pela bandeja",
+    "Onboarding.Step2.Body": "Clique com o botão direito no ícone do DeskBox na área de notificação da barra de tarefas para criar um widget quando quiser.",
+    "Onboarding.Step2.TrayActionTitle": "Clique com o botão direito no ícone do DeskBox",
+    "Onboarding.Step2.TrayActionBody": "Se estiver oculto, abra primeiro Mostrar ícones ocultos na barra de tarefas",
+    "Onboarding.Step2.RightClick": "Botão direito",
+    "Onboarding.Step2.NewWidgetTitle": "Novo widget",
+    "Onboarding.Step2.NewWidgetBody": "Reúna arquivos arrastados da área de trabalho",
+    "Onboarding.Step2.ConnectFolderTitle": "Mapeamento de pasta",
+    "Onboarding.Step2.ConnectFolderBody": "Mostre o conteúdo de uma pasta existente",
+    "Onboarding.Step2.FeatureHint": "Ative Tarefas, Captura Rápida e outros widgets de funções conforme necessário nas Configurações",
     "Onboarding.Step2.FeatureListTitle": "Widgets de funções opcionais",
     "Onboarding.Step2.FeatureList": "Tarefas · Captura Rápida · Música · Clima · Busca Global",
     "Onboarding.Step2.FeatureListDescription": "Adicione apenas o que precisar depois de se familiarizar com os widgets de arquivos.",
@@ -1284,9 +1280,9 @@
     "Onboarding.Step4.AutoLocationSubOption": "Detectar automaticamente minha localização",
     "Onboarding.Step5.Eyebrow": "Pronto",
     "Onboarding.Step5.Title": "Tudo pronto",
-  "Onboarding.Step5.Body": "Um widget de arquivos vazio está pronto no lado direito da tela. Arraste alguns arquivos para experimentá-lo.",
+    "Onboarding.Step5.Body": "Um widget de arquivos vazio está pronto no lado direito da tela. Arraste alguns arquivos para experimentá-lo.",
     "Onboarding.Step5.Hint1": "Arraste arquivos do desktop para um widget para organizar rapidamente",
-  "Onboarding.Step5.Hint2": "Para adicionar outro, clique com o botão direito no ícone do DeskBox e escolha Novo widget",
+    "Onboarding.Step5.Hint2": "Para adicionar outro, clique com o botão direito no ícone do DeskBox e escolha Novo widget",
     "Onboarding.Step5.HotkeyTitle": "Tecla de atalho global",
     "Onboarding.Step5.HotkeyDescription": "Pressione a tecla de atalho para mostrar ou ocultar rapidamente todos os Widgets",
     "Onboarding.Step5.HotkeyChange": "Alterar",
@@ -1850,22 +1846,16 @@
     "Settings.Search.Everything.Detect": "Detectar automaticamente",
     "Settings.Search.Everything.Launch": "Iniciar Everything",
     "Settings.Search.Everything.Browse": "Escolher Everything.exe",
-    "Settings.Search.Everything.Download": "Baixar Everything",
-
+    "Settings.Search.Everything.Download": "Abrir o site oficial do Everything para baixar",
     "Settings.Search.Everything.About.Button": "Sobre o Everything",
-
     "Settings.Search.Everything.About.Title": "Sobre a integração do Everything",
-
     "Settings.Search.Everything.About.P1": "A pesquisa de arquivos e pastas no DeskBox é alimentada pelo Everything, um mecanismo de busca de desktop gratuito de terceiros. O DeskBox consulta o índice existente do Everything para resultados instantâneos e os combina com o conteúdo do DeskBox — notas, tarefas e configurações — na mesma janela de pesquisa.",
-
     "Settings.Search.Everything.About.P3": "O Everything é desenvolvido pela voidtools e não vem incluído com o DeskBox. A pesquisa de arquivos exige que o Everything esteja instalado e em execução; quando ausente, o DeskBox mostra um lembrete em vez de falhar.",
     "Settings.Search.Everything.SetupHelp": "Ajuda de configuração",
     "Settings.Search.Everything.Status.Unknown": "O Everything ainda não foi verificado.",
     "Settings.Search.Everything.Status.Checking": "Verificando a instalação e a conexão locais do Everything…",
     "Settings.Search.Everything.Status.NotConfirmed": "O Everything foi encontrado. Confirme abaixo o compartilhamento do índice local.",
     "Settings.Search.Everything.Status.NotInstalled": "Everything não foi encontrado. Baixe e instale a partir de www.voidtools.com e execute a detecção automática novamente.",
-
-    "Settings.Search.Everything.Download": "Abrir o site oficial do Everything para baixar",
     "Settings.Search.Everything.Status.NotRunning": "O Everything está instalado, mas não está em execução. Inicie-o antes de pesquisar arquivos.",
     "Settings.Search.Everything.Status.PermissionMismatch": "Everything e DeskBox estão em níveis de permissão diferentes. Mantenha o DeskBox como usuário padrão e execute o cliente Everything normalmente; o serviço pode ser elevado.",
     "Settings.Search.Everything.Status.IpcUnavailable": "O Everything está em execução, mas o IPC local não está disponível. Verifique o IPC e a instância padrão do Everything.",
@@ -2386,178 +2376,182 @@
     "Onboarding.Task.SkipPractice": "Pular prática",
     "Onboarding.Task.Continue": "Continuar",
     "Onboarding.Task.Step3.StatusCompleted": "Concluído: o arquivo foi movido para o widget de armazenamento.",
-    "Onboarding.Task.Step4.StatusCompleted": "Concluído: você ocultou os widgets e os exibiu novamente."
-    ,"Settings.WidgetGroups.Overview.Description": "Mantenha vários widgets no mesmo lugar e alterne pela barra de título"
-    ,"Settings.WidgetGroups.Overview.Ready": "{0} · Pronto para agrupar"
-    ,"Settings.WidgetGroups.Overview.Summary": "{0} grupos · {1}"
-    ,"Settings.WidgetGroups.PageDescription": "Mantenha vários widgets no mesmo lugar e alterne pela barra de título. O conteúdo de cada widget continua separado."
-    ,"Settings.WidgetGroups.FollowDefaultWithValue": "Seguir padrão ({0})"
-    ,"Settings.WidgetGroups.Existing.SummaryDefault": "{0} · {1} · Seguindo padrões"
-    ,"Settings.WidgetGroups.Existing.SummaryCustom": "{0} · {1} · Personalizado"
-    ,"Settings.WidgetGroups.Existing.Name.Title": "Nome do grupo"
-    ,"Settings.WidgetGroups.GroupChrome.Title": "Altura da barra de título"
-    ,"Settings.WidgetGroups.GroupChrome.Description": "Os grupos mantêm uma barra de título visível para alternar widgets"
-    ,"Settings.WidgetGroups.GroupDisplay.Title": "Modo de exibição"
-    ,"Settings.WidgetGroups.GroupDisplay.Description": "Mantenha o grupo expandido ou expanda ao clicar ou passar o ponteiro"
-    ,"Settings.WidgetGroups.Existing.Members.Title": "Widgets deste grupo"
-    ,"Settings.WidgetGroups.Existing.Member.MoveUp": "Mover para antes"
-    ,"Settings.WidgetGroups.Existing.Member.MoveDown": "Mover para depois"
-    ,"Settings.WidgetGroups.Existing.Member.Remove": "Remover do grupo"
-    ,"Settings.WidgetGroups.DissolveDialog.Title": "Desagrupar estes widgets?"
-    ,"Settings.WidgetGroups.DissolveDialog.Confirm": "Desagrupar"
-    ,"Settings.WidgetGroups.DissolveDialog.Description": "Nenhum conteúdo será excluído. Os widgets voltarão a ser independentes."
-    ,"Glance.Title": "Glance"
-    ,"Glance.Instances.Title": "Widgets Glance"
-    ,"Glance.Instances.Description": "Gerencie {0} widget(s) Glance separadamente"
-    ,"Glance.Instances.MasterOff": "O controle geral está desligado; todos os widgets Glance estão desativados."
-    ,"Glance.Instances.Empty": "Nenhum widget Glance"
-    ,"Glance.Instances.Enable": "Ativar este widget"
-    ,"Glance.Instances.Add": "Adicionar widget Glance"
-    ,"Glance.Instances.More": "Mais ações"
-    ,"Glance.Instances.Locate": "Mostrar na área de trabalho"
-    ,"Glance.Instances.Duplicate": "Duplicar widget"
-    ,"Glance.Instances.RenamePlaceholder": "Digite um nome"
-    ,"Glance.Instances.RenameTitle": "Renomear widget Glance"
-    ,"Glance.Instances.DeleteTitle": "Excluir “{0}”?"
-    ,"Glance.Instances.DeleteDescription": "Somente este widget Glance e suas configurações serão excluídos. Os outros não serão afetados."
-    ,"WidgetContent.Glance.StatusLabel": "Glance"
-    ,"WidgetContent.Glance.StatusDescription": "Veja suas fotos, a hora e a data de relance"
-    ,"Glance.Settings.Title": "Glance"
-    ,"Glance.Settings.Description": "Crie um cantinho tranquilo com fotos, hora e data"
-    ,"Glance.Display.Title": "Exibição"
-    ,"Glance.Display.Description": "Escolha o que aparece no widget"
-    ,"Glance.Display.PhotoOnly": "Somente foto"
-    ,"Glance.Display.Separator": ", "
-    ,"Glance.Display.Time": "Hora"
-    ,"Glance.Display.Date": "Data"
-    ,"Glance.Display.Year": "Ano"
-    ,"Glance.Display.Weekday": "Dia da semana"
-    ,"Glance.Display.Calendar": "Calendário"
-    ,"Glance.Layout.Title": "Layout"
-    ,"Glance.LayoutGroup.Title": "Layout e tipografia"
-    ,"Glance.LayoutGroup.Description": "Layout, calendário e tipografia da hora"
-    ,"Glance.Layout.Immersive": "Imersivo"
-    ,"Glance.Layout.Centered": "Centralizado"
-    ,"Glance.Layout.Editorial": "Editorial"
-    ,"Glance.Layout.Calendar": "Calendário"
-    ,"Glance.CalendarMaterial.Title": "Material do calendário"
-    ,"Glance.CalendarMaterial.Description": "Escolha como o cartão do calendário se integra à área de trabalho"
-    ,"Glance.CalendarMaterial.FollowSystem": "Seguir o sistema"
-    ,"Glance.CalendarMaterial.FollowImage": "Seguir as cores da imagem"
-    ,"Glance.CalendarMaterial.Transparency": "Transparência"
-    ,"Glance.CalendarMaterial.TransparencyDescription": "Afeta apenas o fundo do calendário; 100% fica totalmente transparente"
-    ,"Glance.TraditionalCalendar.Title": "Calendário tradicional"
-    ,"Glance.TraditionalCalendar.Description": "Siga automaticamente o idioma do DeskBox, escolha um calendário ou desative"
-    ,"Glance.Festivals.Title": "Festivais tradicionais chineses"
-    ,"Glance.Festivals.Description": "Mostra o Festival da Primavera, o Festival do Meio do Outono e outros na linha lunar"
-    ,"Glance.TraditionalCalendar.Auto": "Automático ({0})"
-    ,"Glance.TraditionalCalendar.None": "Desativado"
-    ,"Glance.TraditionalCalendar.ChineseLunar": "Lunar chinês"
-    ,"Glance.TraditionalCalendar.UmAlQura": "Umm al-Qura"
-    ,"Glance.TraditionalCalendar.Hijri": "Hijri"
-    ,"Glance.TraditionalCalendar.IndianSaka": "Nacional indiano (Saka)"
-    ,"Glance.TraditionalCalendar.JapaneseEra": "Era japonesa (Wareki)"
-    ,"Glance.TraditionalCalendar.Bangla": "Bangla"
-    ,"Glance.TraditionalCalendar.Julian": "Juliano"
-    ,"Glance.TraditionalCalendar.Hebrew": "Hebraico"
-    ,"Glance.TraditionalCalendar.Persian": "Persa"
-    ,"Glance.TraditionalCalendar.ThaiBuddhist": "Budista tailandês"
-    ,"Glance.Background.Title": "Imagem de fundo"
-    ,"Glance.BackgroundGroup.Description": "Fonte de imagens, rotação e cache"
-    ,"Glance.Background.Transparency.Title": "Transparência da imagem"
-    ,"Glance.Background.Transparency.Description": "Ajusta apenas a imagem de fundo; o texto e os controles permanecem inalterados"
-    ,"Glance.Background.Online": "Wikimedia Commons"
-    ,"Glance.Background.Files": "Imagens locais"
-    ,"Glance.Background.Folder": "Pasta de imagens"
-    ,"Glance.Background.Bing": "Papel de parede diário do Bing"
-    ,"Glance.Background.ChooseFiles": "Escolher imagens"
-    ,"Glance.Background.ChooseFolder": "Escolher pasta"
-    ,"Glance.Background.ClearSelection": "Limpar"
-    ,"Glance.Background.LocalSummary": "{0} imagens locais adicionadas"
-    ,"Glance.Background.Category.Title": "Categoria de imagens online"
-    ,"Glance.Background.Category.Description": "Escolha um tema. Novas imagens são carregadas automaticamente após a troca."
-    ,"Glance.Background.Category.Featured": "Destaques"
-    ,"Glance.Background.Category.Landscapes": "Paisagens"
-    ,"Glance.Background.Category.Cities": "Cidades"
-    ,"Glance.Background.Category.Architecture": "Arquitetura"
-    ,"Glance.Background.Category.Animals": "Animais"
-    ,"Glance.Background.Category.Plants": "Plantas"
-    ,"Glance.Background.Category.Astronomy": "Espaço"
-    ,"Glance.Background.Category.People": "Pessoas"
-    ,"Glance.Rotation.Title": "Rotação"
-    ,"Glance.Rotation.Manual": "Manual"
-    ,"Glance.Rotation.10Seconds": "A cada 10 segundos"
-    ,"Glance.Rotation.30Seconds": "A cada 30 segundos"
-    ,"Glance.Rotation.60Seconds": "A cada 60 segundos"
-    ,"Glance.Rotation.2Minutes": "A cada 2 minutos"
-    ,"Glance.Rotation.5Minutes": "A cada 5 minutos"
-    ,"Glance.Rotation.10Minutes": "A cada 10 minutos"
-    ,"Glance.Rotation.30Minutes": "A cada 30 minutos"
-    ,"Glance.Rotation.1Hour": "A cada hora"
-    ,"Glance.Rotation.6Hours": "A cada 6 horas"
-    ,"Glance.Rotation.Daily": "Diariamente"
-    ,"Glance.Rotation.Random": "Ordem aleatória"
-    ,"Glance.Transition.Title": "Transição"
-    ,"Glance.AppearanceGroup.Title": "Aparência e animação"
-    ,"Glance.AppearanceGroup.Description": "Transições de imagem e legibilidade do conteúdo"
-    ,"Glance.Transition.None": "Nenhuma"
-    ,"Glance.Transition.CrossFade": "Fusão cruzada"
-    ,"Glance.Transition.SlideFade": "Deslizar e esmaecer"
-    ,"Glance.Transition.ZoomFade": "Zoom e esmaecer"
-    ,"Glance.Speed.Fast": "Rápida"
-    ,"Glance.Speed.Standard": "Padrão"
-    ,"Glance.Speed.Relaxed": "Suave"
-    ,"Glance.Typography.Title": "Tamanho da fonte"
-    ,"Glance.Typography.Font": "Fonte"
-    ,"Glance.Speed.Title": "Velocidade da transição"
-    ,"Glance.Typography.SystemDefault": "Padrão do sistema"
-    ,"Glance.Readability.Title": "Legibilidade"
-    ,"Glance.Readability.None": "Nenhuma"
-    ,"Glance.Readability.Soft": "Suave"
-    ,"Glance.Readability.Strong": "Forte"
-    ,"Glance.PhotoControls.Title": "Mostrar controles da foto"
-    ,"Glance.PhotoControls.Description": "Mostra pausa, próxima e informações ao passar o ponteiro"
-    ,"Glance.Actions.Next": "Próxima foto"
-    ,"Glance.Actions.Pause": "Pausar rotação"
-    ,"Glance.Actions.Resume": "Retomar rotação"
-    ,"Glance.Actions.PhotoInfo": "Informações da foto"
-    ,"Glance.Actions.OpenSource": "Abrir origem da foto"
-    ,"Glance.Actions.ShowInExplorer": "Mostrar no Explorador de Arquivos"
-    ,"Glance.Status.Loading": "Carregando imagem…"
-    ,"Glance.Status.OnlineFallback": "Usando imagem alternativa"
-    ,"Glance.Status.NoLocalImages": "Nenhuma imagem local adicionada"
-    ,"Glance.Cache.Title": "Cache de imagens"
-    ,"Glance.Cache.Clear": "Limpar cache"
-    ,"Glance.Cache.Cleared": "Cache limpo"
-    ,"Settings.Windows10VisualCompatibility.Title": "Compatibilidade visual com o Windows 10"
-    ,"Settings.Windows10VisualCompatibility.Message": "Mica e cantos de janela do sistema exigem o Windows 11. O Windows 10 usa Acrylic ou cor sólida com janelas quadradas.",
-  "Settings.Dialog.QuickAccessOperationFailedBody": "O DeskBox não conseguiu atualizar o Acesso Rápido do Explorador de Arquivos. Tente novamente mais tarde.",
-  "DesktopOrganization.Result.FailedBody": "Não foi possível concluir a organização da área de trabalho. Tente novamente mais tarde.",
-  "DesktopOrganization.Undo.FailedBody": "Não foi possível desfazer a organização da área de trabalho. Tente novamente mais tarde.",
-  "Common.OperationFailedRetry": "Não foi possível concluir a operação. Tente novamente.",
-  "Settings.WidgetForeground.Title": "Primeiro plano do widget",
-  "Settings.WidgetForeground.Description": "Escolha a cor do texto e dos controles monocromáticos sem alterar imagens ou ícones coloridos.",
-  "Settings.WidgetForeground.FollowTheme": "Seguir o tema do aplicativo",
-  "Settings.WidgetForeground.Light": "Primeiro plano claro",
-  "Settings.WidgetForeground.Dark": "Primeiro plano escuro",
-  "Settings.WidgetForeground.Custom": "Personalizado",
-  "Settings.WidgetForeground.CustomColor.Title": "Cor de texto personalizada",
-  "Settings.WidgetForeground.CustomColor.Description": "Usada no texto e nos controles monocromáticos.",
-  "Widget.Foreground.Menu": "Texto e legibilidade",
-  "Widget.Foreground.UseGlobal": "Usar configuração global",
-  "Widget.Foreground.CustomColor": "Cor personalizada…",
-  "Settings.DropAction.System": "Usar padrão do Windows",
-  "Widget.RunAsAdministrator": "Executar como administrador",
-  "Widget.RunAsAdministrator.AlreadyRunning": "Este aplicativo já está em execução sem privilégios de administrador. Feche-o completamente e tente novamente.",
-  "Widget.RunAsAdministrator.NotElevated": "O Windows não conseguiu criar um processo de administrador. Verifique as configurações do UAC e tente novamente.",
-  "Widget.CreateShortcut": "Criar atalho",
-  "Widget.MoreSystemOperations": "Mais operações do sistema",
-  "Settings.ManagedPath.DesktopShortcut.Title": "Manter um atalho do armazenamento na área de trabalho",
-  "Settings.ManagedPath.DesktopShortcut.Description": "Abre diretamente a pasta de armazenamento atual e continua funcionando após desinstalar o DeskBox",
+    "Onboarding.Task.Step4.StatusCompleted": "Concluído: você ocultou os widgets e os exibiu novamente.",
+    "Settings.WidgetGroups.Overview.Description": "Mantenha vários widgets no mesmo lugar e alterne pela barra de título",
+    "Settings.WidgetGroups.Overview.Ready": "{0} · Pronto para agrupar",
+    "Settings.WidgetGroups.Overview.Summary": "{0} grupos · {1}",
+    "Settings.WidgetGroups.PageDescription": "Mantenha vários widgets no mesmo lugar e alterne pela barra de título. O conteúdo de cada widget continua separado.",
+    "Settings.WidgetGroups.FollowDefaultWithValue": "Seguir padrão ({0})",
+    "Settings.WidgetGroups.Existing.SummaryDefault": "{0} · {1} · Seguindo padrões",
+    "Settings.WidgetGroups.Existing.SummaryCustom": "{0} · {1} · Personalizado",
+    "Settings.WidgetGroups.Existing.Name.Title": "Nome do grupo",
+    "Settings.WidgetGroups.GroupChrome.Title": "Altura da barra de título",
+    "Settings.WidgetGroups.GroupChrome.Description": "Os grupos mantêm uma barra de título visível para alternar widgets",
+    "Settings.WidgetGroups.GroupDisplay.Title": "Modo de exibição",
+    "Settings.WidgetGroups.GroupDisplay.Description": "Mantenha o grupo expandido ou expanda ao clicar ou passar o ponteiro",
+    "Settings.WidgetGroups.Existing.Members.Title": "Widgets deste grupo",
+    "Settings.WidgetGroups.Existing.Member.MoveUp": "Mover para antes",
+    "Settings.WidgetGroups.Existing.Member.MoveDown": "Mover para depois",
+    "Settings.WidgetGroups.Existing.Member.Remove": "Remover do grupo",
+    "Settings.WidgetGroups.DissolveDialog.Title": "Desagrupar estes widgets?",
+    "Settings.WidgetGroups.DissolveDialog.Confirm": "Desagrupar",
+    "Settings.WidgetGroups.DissolveDialog.Description": "Nenhum conteúdo será excluído. Os widgets voltarão a ser independentes.",
+    "Glance.Title": "Glance",
+    "Glance.Instances.Title": "Widgets Glance",
+    "Glance.Instances.Description": "Gerencie {0} widget(s) Glance separadamente",
+    "Glance.Instances.MasterOff": "O controle geral está desligado; todos os widgets Glance estão desativados.",
+    "Glance.Instances.Empty": "Nenhum widget Glance",
+    "Glance.Instances.Enable": "Ativar este widget",
+    "Glance.Instances.Add": "Adicionar widget Glance",
+    "Glance.Instances.More": "Mais ações",
+    "Glance.Instances.Locate": "Mostrar na área de trabalho",
+    "Glance.Instances.Duplicate": "Duplicar widget",
+    "Glance.Instances.RenamePlaceholder": "Digite um nome",
+    "Glance.Instances.RenameTitle": "Renomear widget Glance",
+    "Glance.Instances.DeleteTitle": "Excluir “{0}”?",
+    "Glance.Instances.DeleteDescription": "Somente este widget Glance e suas configurações serão excluídos. Os outros não serão afetados.",
+    "WidgetContent.Glance.StatusLabel": "Glance",
+    "WidgetContent.Glance.StatusDescription": "Veja suas fotos, a hora e a data de relance",
+    "Glance.Settings.Title": "Glance",
+    "Glance.Settings.Description": "Crie um cantinho tranquilo com fotos, hora e data",
+    "Glance.Display.Title": "Exibição",
+    "Glance.Display.Description": "Escolha o que aparece no widget",
+    "Glance.Display.PhotoOnly": "Somente foto",
+    "Glance.Display.Separator": ", ",
+    "Glance.Display.Time": "Hora",
+    "Glance.Display.Date": "Data",
+    "Glance.Display.Year": "Ano",
+    "Glance.Display.Weekday": "Dia da semana",
+    "Glance.Display.Calendar": "Calendário",
+    "Glance.Layout.Title": "Layout",
+    "Glance.LayoutGroup.Title": "Layout e tipografia",
+    "Glance.LayoutGroup.Description": "Layout, calendário e tipografia da hora",
+    "Glance.Layout.Immersive": "Imersivo",
+    "Glance.Layout.Centered": "Centralizado",
+    "Glance.Layout.Editorial": "Editorial",
+    "Glance.Layout.Calendar": "Calendário",
+    "Glance.CalendarMaterial.Title": "Material do calendário",
+    "Glance.CalendarMaterial.Description": "Escolha como o cartão do calendário se integra à área de trabalho",
+    "Glance.CalendarMaterial.FollowSystem": "Seguir o sistema",
+    "Glance.CalendarMaterial.FollowImage": "Seguir as cores da imagem",
+    "Glance.CalendarMaterial.Transparency": "Transparência",
+    "Glance.CalendarMaterial.TransparencyDescription": "Afeta apenas o fundo do calendário; 100% fica totalmente transparente",
+    "Glance.TraditionalCalendar.Title": "Calendário tradicional",
+    "Glance.TraditionalCalendar.Description": "Siga automaticamente o idioma do DeskBox, escolha um calendário ou desative",
+    "Glance.Festivals.Title": "Festivais tradicionais chineses",
+    "Glance.Festivals.Description": "Mostra o Festival da Primavera, o Festival do Meio do Outono e outros na linha lunar",
+    "Glance.TraditionalCalendar.Auto": "Automático ({0})",
+    "Glance.TraditionalCalendar.None": "Desativado",
+    "Glance.TraditionalCalendar.ChineseLunar": "Lunar chinês",
+    "Glance.TraditionalCalendar.UmAlQura": "Umm al-Qura",
+    "Glance.TraditionalCalendar.Hijri": "Hijri",
+    "Glance.TraditionalCalendar.IndianSaka": "Nacional indiano (Saka)",
+    "Glance.TraditionalCalendar.JapaneseEra": "Era japonesa (Wareki)",
+    "Glance.TraditionalCalendar.Bangla": "Bangla",
+    "Glance.TraditionalCalendar.Julian": "Juliano",
+    "Glance.TraditionalCalendar.Hebrew": "Hebraico",
+    "Glance.TraditionalCalendar.Persian": "Persa",
+    "Glance.TraditionalCalendar.ThaiBuddhist": "Budista tailandês",
+    "Glance.Background.Title": "Imagem de fundo",
+    "Glance.BackgroundGroup.Description": "Fonte de imagens, rotação e cache",
+    "Glance.Background.Transparency.Title": "Transparência da imagem",
+    "Glance.Background.Transparency.Description": "Ajusta apenas a imagem de fundo; o texto e os controles permanecem inalterados",
+    "Glance.Background.Online": "Wikimedia Commons",
+    "Glance.Background.Files": "Imagens locais",
+    "Glance.Background.Folder": "Pasta de imagens",
+    "Glance.Background.Bing": "Papel de parede diário do Bing",
+    "Glance.Background.ChooseFiles": "Escolher imagens",
+    "Glance.Background.ChooseFolder": "Escolher pasta",
+    "Glance.Background.ClearSelection": "Limpar",
+    "Glance.Background.LocalSummary": "{0} imagens locais adicionadas",
+    "Glance.Background.Category.Title": "Categoria de imagens online",
+    "Glance.Background.Category.Description": "Escolha um tema. Novas imagens são carregadas automaticamente após a troca.",
+    "Glance.Background.Category.Featured": "Destaques",
+    "Glance.Background.Category.Landscapes": "Paisagens",
+    "Glance.Background.Category.Cities": "Cidades",
+    "Glance.Background.Category.Architecture": "Arquitetura",
+    "Glance.Background.Category.Animals": "Animais",
+    "Glance.Background.Category.Plants": "Plantas",
+    "Glance.Background.Category.Astronomy": "Espaço",
+    "Glance.Background.Category.People": "Pessoas",
+    "Glance.Rotation.Title": "Rotação",
+    "Glance.Rotation.Manual": "Manual",
+    "Glance.Rotation.10Seconds": "A cada 10 segundos",
+    "Glance.Rotation.30Seconds": "A cada 30 segundos",
+    "Glance.Rotation.60Seconds": "A cada 60 segundos",
+    "Glance.Rotation.2Minutes": "A cada 2 minutos",
+    "Glance.Rotation.5Minutes": "A cada 5 minutos",
+    "Glance.Rotation.10Minutes": "A cada 10 minutos",
+    "Glance.Rotation.30Minutes": "A cada 30 minutos",
+    "Glance.Rotation.1Hour": "A cada hora",
+    "Glance.Rotation.6Hours": "A cada 6 horas",
+    "Glance.Rotation.Daily": "Diariamente",
+    "Glance.Rotation.Random": "Ordem aleatória",
+    "Glance.Transition.Title": "Transição",
+    "Glance.AppearanceGroup.Title": "Aparência e animação",
+    "Glance.AppearanceGroup.Description": "Transições de imagem e legibilidade do conteúdo",
+    "Glance.Transition.None": "Nenhuma",
+    "Glance.Transition.CrossFade": "Fusão cruzada",
+    "Glance.Transition.SlideFade": "Deslizar e esmaecer",
+    "Glance.Transition.ZoomFade": "Zoom e esmaecer",
+    "Glance.Speed.Fast": "Rápida",
+    "Glance.Speed.Standard": "Padrão",
+    "Glance.Speed.Relaxed": "Suave",
+    "Glance.Typography.Title": "Tamanho da fonte",
+    "Glance.Typography.Font": "Fonte",
+    "Glance.Speed.Title": "Velocidade da transição",
+    "Glance.Typography.SystemDefault": "Padrão do sistema",
+    "Glance.Readability.Title": "Legibilidade",
+    "Glance.Readability.None": "Nenhuma",
+    "Glance.Readability.Soft": "Suave",
+    "Glance.Readability.Strong": "Forte",
+    "Glance.PhotoControls.Title": "Mostrar controles da foto",
+    "Glance.PhotoControls.Description": "Mostra pausa, próxima e informações ao passar o ponteiro",
+    "Glance.Actions.Next": "Próxima foto",
+    "Glance.Actions.Pause": "Pausar rotação",
+    "Glance.Actions.Resume": "Retomar rotação",
+    "Glance.Actions.PhotoInfo": "Informações da foto",
+    "Glance.Actions.OpenSource": "Abrir origem da foto",
+    "Glance.Actions.ShowInExplorer": "Mostrar no Explorador de Arquivos",
+    "Glance.Status.Loading": "Carregando imagem…",
+    "Glance.Status.OnlineFallback": "Usando imagem alternativa",
+    "Glance.Status.NoLocalImages": "Nenhuma imagem local adicionada",
+    "Glance.Cache.Title": "Cache de imagens",
+    "Glance.Cache.Clear": "Limpar cache",
+    "Glance.Cache.Cleared": "Cache limpo",
+    "Settings.Windows10VisualCompatibility.Title": "Compatibilidade visual com o Windows 10",
+    "Settings.Windows10VisualCompatibility.Message": "Mica e cantos de janela do sistema exigem o Windows 11. O Windows 10 usa Acrylic ou cor sólida com janelas quadradas.",
+    "Settings.Dialog.QuickAccessOperationFailedBody": "O DeskBox não conseguiu atualizar o Acesso Rápido do Explorador de Arquivos. Tente novamente mais tarde.",
+    "DesktopOrganization.Result.FailedBody": "Não foi possível concluir a organização da área de trabalho. Tente novamente mais tarde.",
+    "DesktopOrganization.Undo.FailedBody": "Não foi possível desfazer a organização da área de trabalho. Tente novamente mais tarde.",
+    "Common.OperationFailedRetry": "Não foi possível concluir a operação. Tente novamente.",
+    "Settings.WidgetForeground.Title": "Primeiro plano do widget",
+    "Settings.WidgetForeground.Description": "Escolha a cor do texto e dos controles monocromáticos sem alterar imagens ou ícones coloridos.",
+    "Settings.WidgetForeground.FollowTheme": "Seguir o tema do aplicativo",
+    "Settings.WidgetForeground.Light": "Primeiro plano claro",
+    "Settings.WidgetForeground.Dark": "Primeiro plano escuro",
+    "Settings.WidgetForeground.Custom": "Personalizado",
+    "Settings.WidgetForeground.CustomColor.Title": "Cor de texto personalizada",
+    "Settings.WidgetForeground.CustomColor.Description": "Usada no texto e nos controles monocromáticos.",
+    "Widget.Foreground.Menu": "Texto e legibilidade",
+    "Widget.Foreground.UseGlobal": "Usar configuração global",
+    "Widget.Foreground.CustomColor": "Cor personalizada…",
+    "Settings.DropAction.System": "Usar padrão do Windows",
+    "Widget.RunAsAdministrator": "Executar como administrador",
+    "Widget.RunAsAdministrator.AlreadyRunning": "Este aplicativo já está em execução sem privilégios de administrador. Feche-o completamente e tente novamente.",
+    "Widget.RunAsAdministrator.NotElevated": "O Windows não conseguiu criar um processo de administrador. Verifique as configurações do UAC e tente novamente.",
+    "Widget.CreateShortcut": "Criar atalho",
+    "Widget.MoreSystemOperations": "Mais operações do sistema",
+    "Settings.ManagedPath.DesktopShortcut.Title": "Manter um atalho do armazenamento na área de trabalho",
+    "Settings.ManagedPath.DesktopShortcut.Description": "Abre diretamente a pasta de armazenamento atual e continua funcionando após desinstalar o DeskBox",
     "Settings.Animation.FrameRate.Title": "Taxa de quadros da animação",
     "Settings.Animation.FrameRate.Description": "Cadência de expansão/recolhimento das cápsulas; a taxa efetiva é a de atualização dividida pelo nível e nunca a excede",
     "Settings.QuickCapture.RecordColors.Title": "Cores dos registros",
     "Settings.QuickCapture.RecordColors.Description": "Cores de texto e de fundo dos registros da área de transferência; pares de baixo contraste são rejeitados",
     "Settings.QuickCapture.RecordColors.Background.Title": "Cor de fundo dos registros",
-    "Settings.QuickCapture.RecordColors.Background.Description": "Abre o seletor de cores; entrada HEX incluída"
+    "Settings.QuickCapture.RecordColors.Background.Description": "Abre o seletor de cores; entrada HEX incluída",
+    "Settings.Animation.FrameRate.Tier.Low": "Baixa (30 fps)",
+    "Settings.Animation.FrameRate.Tier.Medium": "Média (60 fps)",
+    "Settings.Animation.FrameRate.Tier.High": "Alta (90 fps)",
+    "Settings.Animation.FrameRate.Tier.Max": "Máxima (120 fps)"
 }

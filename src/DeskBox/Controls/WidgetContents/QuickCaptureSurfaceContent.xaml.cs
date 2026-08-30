@@ -208,6 +208,15 @@ public sealed partial class QuickCaptureSurfaceContent :
                     ? backgroundColor
                     : themeCardBrush.Color;
         }
+
+        // The background override also outranks per-record material presets;
+        // repaint already-realized cards now instead of waiting for their
+        // next Loaded/DataContextChanged pass.
+        if (QuickCaptureClipboardColorSettings.GetBackgroundModeOverride(ViewModel.Config) ==
+                QuickCaptureClipboardColorSettings.ModeCustom)
+        {
+            RefreshItemMaterialSurfaces();
+        }
     }
 
     private Windows.UI.Color ResolveClipboardThemeSecondaryTextColor()
@@ -3176,6 +3185,23 @@ public sealed partial class QuickCaptureSurfaceContent :
         Border border,
         QuickCaptureItemViewModel? item)
     {
+        // A user-selected clipboard record background outranks the per-record
+        // material preset: without this gate the per-item material pass runs
+        // on Loaded/DataContextChanged and repaints every record card back to
+        // its material color, which is exactly why custom background colors
+        // appeared to "not take effect".
+        if (QuickCaptureClipboardColorSettings.GetBackgroundModeOverride(ViewModel.Config) ==
+                QuickCaptureClipboardColorSettings.ModeCustom &&
+            QuickCaptureClipboardColorSettings.TryGetBackgroundColorOverride(ViewModel.Config, out Windows.UI.Color backgroundOverride) &&
+            Resources.TryGetValue(
+                "QuickCaptureClipboardItemBackgroundBrush",
+                out object? backgroundBrushObject) &&
+            backgroundBrushObject is SolidColorBrush customBackgroundBrush)
+        {
+            border.Background = customBackgroundBrush;
+            return;
+        }
+
         if (item is null)
         {
             border.Background = ResolveMaterialBrush(

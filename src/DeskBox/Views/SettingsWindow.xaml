@@ -794,9 +794,8 @@ svc:Localized.DescriptionKey="Settings.DefaultWidth.Description"
                                     svc:Localized.HeaderKey="Settings.Animation.FrameRate.Title">
                                     <ComboBox
                                         MinWidth="{StaticResource SettingsControlMinWidth}"
-                                        SelectedValuePath="Value"
-                                        SelectedValue="{Binding SelectedWidgetFrameRate, Mode=TwoWay}"
-                                        ItemsSource="{Binding AvailableWidgetFrameRateOptions}" />
+                                        ItemsSource="{Binding AvailableWidgetFrameRateOptions}"
+                                        controls:SettingsComboBox.Value="{Binding SelectedWidgetFrameRate, Mode=TwoWay}" />
                                 </toolkit:SettingsCard>
 
                                 <toolkit:SettingsCard

@@ -3,6 +3,8 @@ using DeskBox.Helpers;
 using DeskBox.Models;
 using DeskBox.Views;
 using Microsoft.UI.Windowing;
+using System.Collections.Generic;
+using System.Linq;
 using Windows.Graphics;
 
 namespace DeskBox.Services;
@@ -24,6 +26,36 @@ public sealed partial class WidgetManager
                 quickCaptureSurface.ApplyClipboardItemColors();
             }
         }
+    }
+
+    /// <summary>
+    /// Physical rects of every other visible widget window, for the margin
+    /// dialog's "nearest widget" reference geometry. The moving window
+    /// itself is excluded.
+    /// </summary>
+    internal IReadOnlyList<Windows.Graphics.RectInt32> GetOtherVisibleWidgetRects(IntPtr excludeHwnd)
+    {
+        var rects = new List<Windows.Graphics.RectInt32>();
+        foreach (IDesktopWidgetWindow window in GetLoadedDesktopWindows())
+        {
+            IntPtr hwnd = window.WindowHandle;
+            if (hwnd == excludeHwnd ||
+                hwnd == IntPtr.Zero ||
+                !window.Visible ||
+                !Win32Helper.IsWindow(hwnd) ||
+                !Win32Helper.GetWindowRect(hwnd, out Win32Helper.RECT rect))
+            {
+                continue;
+            }
+
+            rects.Add(new Windows.Graphics.RectInt32(
+                rect.Left,
+                rect.Top,
+                Math.Max(1, rect.Right - rect.Left),
+                Math.Max(1, rect.Bottom - rect.Top)));
+        }
+
+        return rects;
     }
 
     /// <summary>
@@ -57,6 +89,33 @@ public sealed partial class WidgetManager
     {
         int applied = 0;
         bool anyChanged = false;
+
+        // Physical rects of all eligible moving windows. Every transform
+        // receives the full snapshot minus its own rect, so the margin
+        // geometry can resolve its "nearest widget" reference per window.
+        var snapshot = new List<(IntPtr Hwnd, RectInt32 Bounds)>();
+        foreach (IDesktopWidgetWindow window in GetLoadedDesktopWindows())
+        {
+            if (!window.Visible)
+            {
+                continue;
+            }
+
+            IntPtr hwnd = window.WindowHandle;
+            if (hwnd == IntPtr.Zero ||
+                !Win32Helper.IsWindow(hwnd) ||
+                !Win32Helper.GetWindowRect(hwnd, out Win32Helper.RECT rect))
+            {
+                continue;
+            }
+
+            snapshot.Add((hwnd, new RectInt32(
+                rect.Left,
+                rect.Top,
+                Math.Max(1, rect.Right - rect.Left),
+                Math.Max(1, rect.Bottom - rect.Top))));
+        }
+
         foreach (IDesktopWidgetWindow window in GetLoadedDesktopWindows())
         {
             if (!window.Visible)
@@ -76,20 +135,18 @@ public sealed partial class WidgetManager
                 continue;
             }
 
-            IntPtr hwnd = window.WindowHandle;
-            if (hwnd == IntPtr.Zero ||
-                !Win32Helper.IsWindow(hwnd) ||
-                !Win32Helper.GetWindowRect(hwnd, out Win32Helper.RECT rect))
+            (IntPtr hwnd, RectInt32 current) = snapshot
+                .FirstOrDefault(entry => entry.Hwnd == window.WindowHandle);
+            if (hwnd == IntPtr.Zero)
             {
                 continue;
             }
 
-            var current = new RectInt32(
-                rect.Left,
-                rect.Top,
-                Math.Max(1, rect.Right - rect.Left),
-                Math.Max(1, rect.Bottom - rect.Top));
-            if (transform(window.Config, current) is not RectInt32 target ||
+            var others = snapshot
+                .Where(entry => entry.Hwnd != window.WindowHandle)
+                .Select(entry => entry.Bounds)
+                .ToArray();
+            if (transform(window.Config, current, others) is not RectInt32 target ||
                 target.X == current.X && target.Y == current.Y)
             {
                 continue;
@@ -130,4 +187,4 @@ public sealed partial class WidgetManager
 /// Returns the new physical bounds for the widget, or null to leave it in
 /// place. Implementations must be pure; the manager applies persistence.
 /// </summary>
-public delegate RectInt32? TransformWidgetBounds(WidgetConfig config, RectInt32 currentBounds);
+public delegate RectInt32? TransformWidgetBounds(WidgetConfig config, RectInt32 currentBounds, IReadOnlyList<RectInt32> otherBounds);

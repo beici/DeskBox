@@ -86,11 +86,25 @@ public partial class SettingsViewModel
     public IReadOnlyList<SettingsOption> AvailableWidgetAnimationSpeedOptions =>
         CreateSelectionOptions(AvailableWidgetAnimationSpeeds, AvailableWidgetAnimationSpeedDisplayNames);
 
-    public IReadOnlyList<SettingsOption> AvailableWidgetFrameRateOptions { get; } =
+    public IReadOnlyList<SettingsOption> AvailableWidgetFrameRateOptions =>
         WidgetCompactFrameSkipPolicy.SelectableFrameRates
-            .Select(rate => new SettingsOption(rate, $"{rate} fps"))
+            .Select(tier => new SettingsOption(tier, GetFrameRateTierDisplayName(tier)))
             .ToArray();
 
+    private string GetFrameRateTierDisplayName(int tier) =>
+        _localizationService.T(tier switch
+        {
+            30 => "Settings.Animation.FrameRate.Tier.Low",
+            90 => "Settings.Animation.FrameRate.Tier.High",
+            120 => "Settings.Animation.FrameRate.Tier.Max",
+            _ => "Settings.Animation.FrameRate.Tier.Medium"
+        });
+
+    /// <summary>
+    /// Selected capsule animation speed tier. Values are the tier's fps
+    /// (30/60/90/120) so the animation core stays numeric; the settings UI
+    /// presents them as 低/中/高/最高.
+    /// </summary>
     public int SelectedWidgetFrameRate
     {
         get => WidgetCompactFrameSkipPolicy.NormalizeFrameRate(

@@ -13,9 +13,9 @@ internal static class WidgetCompactFrameSkipPolicy
     public const int ThirtyFpsLevel = 3;
 
     /// <summary>
-    /// User-selectable animation frame-rate caps (the General settings tab
-    /// exposes exactly these four). 0 means "follow the display refresh
-    /// rate" and maps to the full-rate level.
+    /// User-selectable animation frame-rate tiers in fps (the General
+    /// settings tab exposes exactly these four, labeled 低/中/高/最高 via
+    /// localization).
     /// </summary>
     public static readonly int[] SelectableFrameRates = { 30, 60, 90, 120 };
 
