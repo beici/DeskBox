@@ -175,9 +175,13 @@ public sealed partial class WidgetManager
             // anchor from the same target/workArea the config was written
             // from — the same sequence the single-widget margin path runs —
             // and keep the group-host layout and the topology profile in
-            // step with it. Compact states and locked widgets never reach
-            // this point, so no compact-placement branch is needed here.
+            // step with it. A window in compact expansion geometry must also
+            // re-derive its capsule placement from the new expanded bounds;
+            // otherwise the next collapse resolves the capsule from the stale
+            // placement and snaps back (N1). The guards above ensure locked and
+            // collapsed widgets never reach this point.
             WidgetPositioningService.CaptureAnchor(window.Config, target, workArea);
+            window.RefreshCompactPlacementAfterBoundsMove();
             _settingsService.UpdateWidget(window.Config, notifySubscribers: false);
             SynchronizeGroupLayoutFromMember(window.Config);
             CaptureCurrentTopologyLayout(window.Config);

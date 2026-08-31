@@ -169,18 +169,78 @@ public sealed partial class SearchPopupWindow : Window
 
     /// <summary>
     /// Shows the popup at the correct position and focuses the search box.
+    /// Public entry invoked fire-and-forget by hotkeys and widgets; the
+    /// popup body must stay on the UI thread and a failed open must not
+    /// crash the process through this async void surface (N2).
     /// </summary>
     public async void ShowPopup()
     {
-        await ShowPopupCoreAsync(null);
+        await DispatchShowPopupAsync(null);
     }
 
     /// <summary>
-    /// Shows the popup with a pre-filled query and immediately executes the search.
+    /// Shows the popup with a pre-filled query and immediately executes the
+    /// search. Same protected boundary as ShowPopup (N2).
     /// </summary>
     public async void ShowPopupWithQuery(string query)
     {
-        await ShowPopupCoreAsync(query);
+        await DispatchShowPopupAsync(query);
+    }
+
+    /// <summary>
+    /// Re-hops a fire-and-forget public entry onto the UI thread and runs the
+    /// open pipeline under an exception boundary. Callers may be background
+    /// hotkey callbacks, so the popup body is never executed on the invoking
+    /// thread (N2).
+    /// </summary>
+    private async Task DispatchShowPopupAsync(string? initialQuery)
+    {
+        if (App.UiDispatcherQueue is not { } dispatcherQueue)
+        {
+            return;
+        }
+
+        try
+        {
+            if (dispatcherQueue.HasThreadAccess)
+            {
+                await ShowPopupSafelyAsync(this, initialQuery);
+                return;
+            }
+
+            if (!dispatcherQueue.TryEnqueue(() =>
+                {
+                    _ = ShowPopupSafelyAsync(this, initialQuery);
+                }))
+            {
+                App.Log("[SearchPopup] Open dropped: dispatcher queue not accepting callbacks.");
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[SearchPopup] Open dispatch failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Exception boundary for the whole popup-open pipeline. A failed open is
+    /// logged and the search box refocused instead of escaping an async void
+    /// surface as an unhandled exception (N2).
+    /// </summary>
+    private static async Task ShowPopupSafelyAsync(SearchPopupWindow popup, string? initialQuery)
+    {
+        try
+        {
+            await popup.ShowPopupCoreAsync(initialQuery);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[SearchPopup] Open failed: {ex.Message}");
+            if (popup.IsPopupVisible)
+            {
+                popup.SearchTextBox.Focus(FocusState.Programmatic);
+            }
+        }
     }
 
     private async Task ShowPopupCoreAsync(string? initialQuery)
@@ -2780,6 +2840,13 @@ public sealed partial class SearchPopupWindow : Window
         {
             await dragSource.StartDragAsync(e.GetCurrentPoint(dragSource));
         }
+        catch (Exception ex)
+        {
+            // A rare platform drag failure must not escape the async void
+            // pointer-moved handler as an unhandled exception (N4); the drag
+            // candidate is cleared by the finally below either way.
+            App.Log($"[SearchPopup] Drag failed: {ex.Message}");
+        }
         finally
         {
             dragSource.DragStarting -= handler;
@@ -4173,7 +4240,10 @@ public sealed partial class SearchPopupWindow : Window
         {
             data.SetStorageItems(items);
         }
-        if (fallbackText.Length > 0 && items.Count == 0)
+        // Resolved storage items win, but any path that failed to resolve must
+        // still reach the clipboard: without this the user silently loses the
+        // failed entries when pasting a mixed selection (N3).
+        if (fallbackText.Length > 0)
         {
             data.SetText(fallbackText.ToString().TrimEnd());
         }

@@ -14,6 +14,9 @@ public sealed class ThemeService
     public const string AccentModeCustom = "Custom";
 
     private readonly SettingsService _settingsService;
+    // UI-thread owned: TrackWindow/OnTrackedWindowClosed/ApplyToAllWindows
+    // run on the UI thread by the repo-wide convention (all RefreshAppearance
+    // callers are UI-thread), so this list is never mutated concurrently.
     private readonly List<Window> _trackedWindows = new();
     private readonly Windows.UI.ViewManagement.UISettings _uiSettings = new();
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _appearanceDebounceTimer;

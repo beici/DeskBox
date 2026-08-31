@@ -401,6 +401,7 @@ public abstract partial class WidgetWindowBase
                         width,
                         height,
                         persist: true);
+                    RefreshCompactPlacementAfterBoundsMove();
                 }
 
                 return;
@@ -546,6 +547,7 @@ public abstract partial class WidgetWindowBase
             Win32Helper.SWP_NOZORDER | Win32Helper.SWP_NOACTIVATE);
         CapturePositionAnchor(next.X, next.Y, next.Width, next.Height);
         UpdateConfigBoundsFromPhysical(next.X, next.Y, next.Width, next.Height, persist: true);
+        RefreshCompactPlacementAfterBoundsMove();
     }
 
     private RectInt32 ResolveWorkArea(RectInt32 bounds)

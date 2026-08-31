@@ -473,6 +473,39 @@ public abstract partial class WidgetWindowBase
     }
 
     /// <summary>
+    /// Refreshes the persisted capsule placement after an expanded host was
+    /// moved by a non-interactive path (margin entry — single widget, batch,
+    /// and dialog-cancel restore all route here). Interactive drag/resize
+    /// already keep the capsule pair in step via CompleteExpandedWidgetDrag /
+    /// RecaptureCompactPlacementAfterExpandedResize, so this hook only closes
+    /// the gap left by those other paths. The live HWND bounds are the source
+    /// of truth at this point (the caller has already SetWindowPos'd), so no
+    /// parameters are needed. Without the refresh the next collapse would
+    /// resolve the capsule from the stale placement and snap back to the
+    /// pre-move spot (N1). Expanded-mode hosts with no persisted placement
+    /// need no repair — the first collapse derives the capsule from the new
+    /// bounds anyway.
+    /// </summary>
+    public void RefreshCompactPlacementAfterBoundsMove()
+    {
+        if (!DispatcherQueue.HasThreadAccess)
+        {
+            DispatcherQueue.TryEnqueue(RefreshCompactPlacementAfterBoundsMove);
+            return;
+        }
+
+        if (_targetCollapsed ||
+            IsClosing ||
+            !UsesCompactExpansionGeometry() ||
+            Config.CompactPlacement is null)
+        {
+            return;
+        }
+
+        RefreshCompactPlacementFromExpandedBounds(persist: true);
+    }
+
+    /// <summary>
     /// Rebuilds the compact bounds from the currently visible expanded panel.
     /// Fixed Down keeps the panel's top/title edge; fixed Up keeps its bottom
     /// edge. Auto preserves the active expansion anchor when one exists.

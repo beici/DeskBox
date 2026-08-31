@@ -75,6 +75,14 @@ internal interface IDesktopWidgetWindow
     void ApplyCompactArrangement(Windows.Graphics.RectInt32 bounds, bool constrainSize);
     void ClearCompactArrangementConstraint();
     void PreviewCompactArrangement(Windows.Graphics.RectInt32 bounds);
+    /// <summary>
+    /// Re-derives and persists the capsule placement from the live expanded
+    /// bounds after a non-interactive move (margin entry: single widget,
+    /// batch, and dialog-cancel restore). Manager-driven persist paths call
+    /// this so a later collapse does not snap the capsule back to its stale
+    /// pre-move position.
+    /// </summary>
+    void RefreshCompactPlacementAfterBoundsMove();
     void SetTrayAnimationOffsetOverride(double? offsetX, double? offsetY);
     void CancelTrayAnimationAndRestorePosition();
     void PrepareTrayShowAnimation();
