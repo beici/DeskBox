@@ -19,6 +19,7 @@ public sealed partial class WidgetManager
 
     private DispatcherQueueTimer? _trayLayerRestoreTimer;
     private DispatcherQueueTimer? _trayMouseSamplerTimer;
+    private DispatcherQueueTimer? _interactionLeakWatchdogTimer;
     private bool _widgetsRaisedFromTray;
     private bool _isTogglingWidgetsDesktopLayer;
     private string _lastWidgetLayerMode;
@@ -509,6 +510,67 @@ public sealed partial class WidgetManager
             await Task.Delay(delay);
             TryRestoreRaisedWidgetsAfterInteraction(reason, generation);
         });
+    }
+
+    /// <summary>
+    /// Safety net for interaction-depth leaks ([重要勿删] §4.1 / pitfall #4):
+    /// a Begin without its paired End keeps the depth above zero, which makes
+    /// the raised-state restore monitor skip every tick indefinitely. While a
+    /// leak is live, DeskBox never regains the foreground through its own
+    /// windows, so "depth > 0 with no DeskBox foreground for 10s" can only be
+    /// a leak — real interactions always put a DeskBox window in front.
+    /// Mirrors the watchdog documented in [重要勿删] §8 (D rows) and answers
+    /// DEF-014 / WIN-01, including the log tag the troubleshooting table
+    /// tells maintainers to search for.
+    /// </summary>
+    private void StartInteractionLeakWatchdog()
+    {
+        if (App.UiDispatcherQueue is null)
+        {
+            return;
+        }
+
+        _interactionLeakWatchdogTimer ??= App.UiDispatcherQueue.CreateTimer();
+        _interactionLeakWatchdogTimer.Stop();
+        _interactionLeakWatchdogTimer.Interval = TimeSpan.FromSeconds(10);
+        _interactionLeakWatchdogTimer.Tick -= InteractionLeakWatchdog_Tick;
+        _interactionLeakWatchdogTimer.Tick += InteractionLeakWatchdog_Tick;
+        _interactionLeakWatchdogTimer.Start();
+    }
+
+    private void StopInteractionLeakWatchdog()
+    {
+        if (_interactionLeakWatchdogTimer is not null)
+        {
+            _interactionLeakWatchdogTimer.Stop();
+            _interactionLeakWatchdogTimer.Tick -= InteractionLeakWatchdog_Tick;
+        }
+    }
+
+    private void InteractionLeakWatchdog_Tick(DispatcherQueueTimer sender, object args)
+    {
+        if (!_sessionManager.IsInteractionActive)
+        {
+            StopInteractionLeakWatchdog();
+            return;
+        }
+
+        IntPtr foreground = Win32Helper.GetForegroundWindow();
+        if (foreground != IntPtr.Zero && IsDeskBoxForegroundWindow(foreground))
+        {
+            // A DeskBox window is in front — the depth is legitimately held
+            // by a real interaction. Re-arm and re-check 10s later.
+            return;
+        }
+
+        _sessionManager.ForceResetInteractions("interaction-leak-watchdog");
+        StopInteractionLeakWatchdog();
+        App.Log(
+            "[TrayBatch] Interaction watchdog: interaction depth stayed above zero " +
+            "with no DeskBox foreground for 10s; forced reset. " +
+            $"foreground=0x{(foreground == IntPtr.Zero ? 0 : foreground.ToInt64()):X}");
+        RestoreTemporarilyRaisedWidgetsToDesktopLayer("interaction-leak-watchdog");
+        QueueIdleWidgetZOrderNormalization("interaction-leak-watchdog");
     }
 
     private void TryRestoreRaisedWidgetsAfterInteraction(string reason, long generation)

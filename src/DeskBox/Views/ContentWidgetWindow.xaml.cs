@@ -918,7 +918,12 @@ IsHideAnimationRunning = true;
 
         HoldTemporaryTopMost();
         base.Activate();
-        Win32Helper.SetForegroundWindow(HWnd);
+        bool foregroundSet = Win32Helper.SetForegroundWindow(HWnd);
+        if (!foregroundSet)
+        {
+            App.Log($"[ZOrder] Content ActivateRaisedFromTrayBatch: SetForegroundWindow FAILED hwnd=0x{HWnd.ToInt64():X} (raised-state release will rely on click detection)");
+        }
+
         RootGrid.Focus(FocusState.Programmatic);
         _contentHost.OnActivated();
     }

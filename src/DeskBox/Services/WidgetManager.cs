@@ -1,4 +1,4 @@
-﻿﻿using DeskBox.Models;
+﻿using DeskBox.Models;
 using DeskBox.Helpers;
 using DeskBox.Controls.WidgetContents;
 using DeskBox.ViewModels;
@@ -212,6 +212,11 @@ public sealed partial class WidgetManager
     {
         App.NotifyMemoryCleanupActivity();
         _idlePeerOrderGeneration++;
+        if (!_sessionManager.IsInteractionActive)
+        {
+            StartInteractionLeakWatchdog();
+        }
+
         _sessionManager.BeginInteraction(reason);
     }
 
@@ -220,6 +225,7 @@ public sealed partial class WidgetManager
         _sessionManager.EndInteraction(reason);
         if (!_sessionManager.IsInteractionActive)
         {
+            StopInteractionLeakWatchdog();
             RestoreTemporarilyRaisedWidgetsToDesktopLayer(
                 $"{reason}-interaction-ended");
             QueueIdleWidgetZOrderNormalization(reason);
