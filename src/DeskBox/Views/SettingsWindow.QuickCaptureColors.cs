@@ -33,6 +33,11 @@ public sealed partial class SettingsWindow
         await ShowQuickCaptureRecordColorEditorAsync(isBackground: true);
     }
 
+    private async void QuickCaptureRecordHoverText_Click(object sender, RoutedEventArgs e)
+    {
+        await ShowQuickCaptureRecordColorEditorAsync(isBackground: false, isHoverText: true);
+    }
+
     /// <summary>
     /// Loaded handler for the record-colors expander: fills both button
     /// captions from the effective colors so the entry always reflects the
@@ -43,7 +48,9 @@ public sealed partial class SettingsWindow
         RefreshQuickCaptureRecordColorButtonText();
     }
 
-    private async Task ShowQuickCaptureRecordColorEditorAsync(bool isBackground)
+    private async Task ShowQuickCaptureRecordColorEditorAsync(
+        bool isBackground,
+        bool isHoverText = false)
     {
         if (SettingsRoot.XamlRoot is null ||
             ResolveQuickCaptureWidgetConfig() is not { } config)
@@ -58,7 +65,9 @@ public sealed partial class SettingsWindow
             _localizationService,
             isBackground,
             ResolveQuickCaptureEffectiveTextColor(config),
-            ResolveQuickCaptureEffectiveBackgroundColor(config));
+            ResolveQuickCaptureEffectiveBackgroundColor(config),
+            isHoverText,
+            ResolveQuickCaptureEffectiveHoverTextColor(config));
         App.Current.WidgetManager?.ApplyQuickCaptureClipboardColorsToLoadedWidgets();
         RefreshQuickCaptureRecordColorButtonText();
     }
@@ -93,6 +102,16 @@ public sealed partial class SettingsWindow
             : Windows.UI.Color.FromArgb(0xFF, 0x28, 0x28, 0x28);
     }
 
+    private Windows.UI.Color ResolveQuickCaptureEffectiveHoverTextColor(WidgetConfig config)
+    {
+        return QuickCaptureClipboardColorSettings.GetHoverTextModeOverride(config) ==
+                QuickCaptureClipboardColorSettings.ModeCustom &&
+            QuickCaptureClipboardColorSettings.TryGetHoverTextColorOverride(config, out Windows.UI.Color hoverOverride)
+            ? hoverOverride
+            : QuickCaptureClipboardColorSettings.ResolveAutoHoverTextColor(
+                ResolveQuickCaptureEffectiveBackgroundColor(config));
+    }
+
     private void RefreshQuickCaptureRecordColorButtonText()
     {
         WidgetConfig config = ResolveQuickCaptureWidgetConfig() ?? new WidgetConfig();
@@ -108,6 +127,12 @@ public sealed partial class SettingsWindow
             QuickCaptureRecordBackgroundColorButton.Content =
                 $"#{background.R:X2}{background.G:X2}{background.B:X2}";
         }
+
+        if (QuickCaptureRecordHoverTextButton is not null)
+        {
+            QuickCaptureRecordHoverTextButton.Content =
+                ResolveQuickCaptureRecordHoverTextSummary(config);
+        }
     }
 
     private string ResolveQuickCaptureRecordColorSummary()
@@ -120,6 +145,14 @@ public sealed partial class SettingsWindow
         return QuickCaptureClipboardColorSettings.GetTextModeOverride(config) ==
             QuickCaptureClipboardColorSettings.ModeCustom
             ? _localizationService.T("QuickCapture.ClipboardColor.TextCustom")
+            : _localizationService.T("QuickCapture.ClipboardColor.FollowTheme");
+    }
+
+    private string ResolveQuickCaptureRecordHoverTextSummary(WidgetConfig config)
+    {
+        return QuickCaptureClipboardColorSettings.GetHoverTextModeOverride(config) ==
+            QuickCaptureClipboardColorSettings.ModeCustom
+            ? _localizationService.T("QuickCapture.ClipboardColor.HoverTextCustom")
             : _localizationService.T("QuickCapture.ClipboardColor.FollowTheme");
     }
 }

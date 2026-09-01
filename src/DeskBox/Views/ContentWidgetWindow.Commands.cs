@@ -237,6 +237,7 @@ public sealed partial class ContentWidgetWindow
         {
             quickCaptureSurface.SetClipboardItemFollowTheme(isBackground: false);
             quickCaptureSurface.SetClipboardItemFollowTheme(isBackground: true);
+            quickCaptureSurface.SetClipboardItemHoverTextFollowTheme();
         };
         menu.Items.Add(followTheme);
 
@@ -251,6 +252,18 @@ public sealed partial class ContentWidgetWindow
             _pendingClipboardColorPicker = ClipboardColorPickerTarget.Text;
         };
         menu.Items.Add(textColor);
+
+        var hoverTextColor = new MenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.HoverText"),
+            Icon = new FontIcon { Glyph = "\uE7E6" }
+        };
+        hoverTextColor.Click += (_, _) =>
+        {
+            hideFlyout();
+            _pendingClipboardColorPicker = ClipboardColorPickerTarget.HoverText;
+        };
+        menu.Items.Add(hoverTextColor);
 
         var backgroundColor = new MenuFlyoutItem
         {
@@ -281,6 +294,12 @@ public sealed partial class ContentWidgetWindow
         });
         menu.Items.Add(new ToggleMenuFlyoutItem
         {
+            Text = localization.T("QuickCapture.ClipboardColor.HoverTextCustom"),
+            IsChecked = quickCaptureSurface.IsClipboardItemHoverTextCustom,
+            IsEnabled = false
+        });
+        menu.Items.Add(new ToggleMenuFlyoutItem
+        {
             Text = localization.T("QuickCapture.ClipboardColor.BackgroundCustom"),
             IsChecked = quickCaptureSurface.IsClipboardItemBackgroundCustom,
             IsEnabled = false
@@ -292,7 +311,8 @@ public sealed partial class ContentWidgetWindow
     private enum ClipboardColorPickerTarget
     {
         Text,
-        Background
+        Background,
+        HoverText
     }
 
     private ClipboardColorPickerTarget? _pendingClipboardColorPicker;
@@ -404,14 +424,15 @@ public sealed partial class ContentWidgetWindow
             }
             else if (_pendingClipboardColorPicker.HasValue)
             {
-                bool isBackground =
-                    _pendingClipboardColorPicker.Value == ClipboardColorPickerTarget.Background;
+                ClipboardColorPickerTarget pickerTarget = _pendingClipboardColorPicker.Value;
                 _pendingClipboardColorPicker = null;
                 DispatcherQueue.TryEnqueue(async () =>
                 {
                     if (CurrentContent is QuickCaptureSurfaceContent quickCaptureSurface)
                     {
-                        await quickCaptureSurface.ShowClipboardItemColorPickerAsync(isBackground);
+                        await quickCaptureSurface.ShowClipboardItemColorPickerAsync(
+                            isBackground: pickerTarget == ClipboardColorPickerTarget.Background,
+                            isHoverText: pickerTarget == ClipboardColorPickerTarget.HoverText);
                     }
                 });
             }

@@ -22,6 +22,7 @@
              text color so timestamps stay readable against custom colors. -->
         <SolidColorBrush x:Key="QuickCaptureClipboardItemForegroundBrush" Color="{ThemeResource TextFillColorPrimary}" />
         <SolidColorBrush x:Key="QuickCaptureClipboardItemSecondaryBrush" Color="{ThemeResource TextFillColorSecondary}" />
+        <SolidColorBrush x:Key="QuickCaptureClipboardItemHoverForegroundBrush" Color="{ThemeResource TextFillColorPrimary}" />
         <SolidColorBrush x:Key="QuickCaptureClipboardItemBackgroundBrush" Color="{ThemeResource CardBackgroundFillColorDefault}" />
         <SolidColorBrush x:Key="QuickCaptureClipboardItemCardThemeBrush" Color="{ThemeResource CardBackgroundFillColorDefault}" />
 
@@ -259,6 +260,7 @@
                                         VerticalAlignment="Center"
                                         Spacing="2">
                                         <TextBlock
+                                            x:Name="QuickCaptureItemDisplayText"
                                             FontSize="{Binding TextSize}"
                                             MaxLines="{Binding ElementName=ItemsList, Path=DataContext.ItemPreviewLineCount}"
                                             Text="{Binding DisplayText}"

@@ -1843,6 +1843,15 @@ svc:Localized.DescriptionKey="Settings.DefaultWidth.Description"
                                     </toolkit:SettingsCard>
                                     <toolkit:SettingsCard
                                         HorizontalContentAlignment="Right"
+                                        svc:Localized.DescriptionKey="Settings.QuickCapture.RecordColors.HoverText.Description"
+                                        svc:Localized.HeaderKey="Settings.QuickCapture.RecordColors.HoverText.Title">
+                                        <Button
+                                            x:Name="QuickCaptureRecordHoverTextButton"
+                                            MinWidth="190"
+                                            Click="QuickCaptureRecordHoverText_Click" />
+                                    </toolkit:SettingsCard>
+                                    <toolkit:SettingsCard
+                                        HorizontalContentAlignment="Right"
                                         svc:Localized.HeaderKey="Settings.QuickCapture.RecordColors.Reset.Title">
                                         <Button
                                             MinWidth="190"

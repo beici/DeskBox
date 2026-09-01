@@ -6,7 +6,8 @@ namespace DeskBox.Services;
 
 /// <summary>
 /// Resolves and persists the per-widget Quick Capture clipboard record list
-/// colors (item text color and item card background color).
+/// colors (item text color, item card background color, and hovered-item
+/// text color).
 ///
 /// Values live in <see cref="WidgetConfig.Metadata"/> following the same
 /// override pattern as <see cref="WidgetForegroundSettings"/>, so older
@@ -24,6 +25,8 @@ public static class QuickCaptureClipboardColorSettings
     public const string TextColorOverrideMetadataKey = "QuickCaptureClipboardItemTextColor";
     public const string BackgroundModeOverrideMetadataKey = "QuickCaptureClipboardItemBackgroundMode";
     public const string BackgroundColorOverrideMetadataKey = "QuickCaptureClipboardItemBackgroundColor";
+    public const string HoverTextModeOverrideMetadataKey = "QuickCaptureClipboardItemHoverTextColorMode";
+    public const string HoverTextColorOverrideMetadataKey = "QuickCaptureClipboardItemHoverTextColor";
 
     /// <summary>
     /// Minimum accepted WCAG contrast ratio between the item text color and
@@ -50,11 +53,20 @@ public static class QuickCaptureClipboardColorSettings
     public static bool TryGetBackgroundColorOverride(WidgetConfig config, out Color color) =>
         TryGetColorOverride(config, BackgroundColorOverrideMetadataKey, out color);
 
+    public static string? GetHoverTextModeOverride(WidgetConfig config) =>
+        GetModeOverride(config, HoverTextModeOverrideMetadataKey);
+
+    public static bool TryGetHoverTextColorOverride(WidgetConfig config, out Color color) =>
+        TryGetColorOverride(config, HoverTextColorOverrideMetadataKey, out color);
+
     public static void SetTextModeOverride(WidgetConfig config, string? value) =>
         SetModeOverride(config, TextModeOverrideMetadataKey, value);
 
     public static void SetBackgroundModeOverride(WidgetConfig config, string? value) =>
         SetModeOverride(config, BackgroundModeOverrideMetadataKey, value);
+
+    public static void SetHoverTextModeOverride(WidgetConfig config, string? value) =>
+        SetModeOverride(config, HoverTextModeOverrideMetadataKey, value);
 
     public static void SetTextColorOverride(WidgetConfig config, Color color) =>
         SetColorOverride(config, TextColorOverrideMetadataKey, color);
@@ -62,8 +74,11 @@ public static class QuickCaptureClipboardColorSettings
     public static void SetBackgroundColorOverride(WidgetConfig config, Color color) =>
         SetColorOverride(config, BackgroundColorOverrideMetadataKey, color);
 
+    public static void SetHoverTextColorOverride(WidgetConfig config, Color color) =>
+        SetColorOverride(config, HoverTextColorOverrideMetadataKey, color);
+
     /// <summary>
-    /// Removes all four overrides so the list returns to the follow-theme
+    /// Removes all overrides so the list returns to the follow-theme
     /// appearance ("一键恢复默认配色").
     /// </summary>
     public static void ResetOverrides(WidgetConfig config)
@@ -78,6 +93,8 @@ public static class QuickCaptureClipboardColorSettings
         config.Metadata.Remove(TextColorOverrideMetadataKey);
         config.Metadata.Remove(BackgroundModeOverrideMetadataKey);
         config.Metadata.Remove(BackgroundColorOverrideMetadataKey);
+        config.Metadata.Remove(HoverTextModeOverrideMetadataKey);
+        config.Metadata.Remove(HoverTextColorOverrideMetadataKey);
     }
 
     /// <summary>
@@ -122,9 +139,29 @@ public static class QuickCaptureClipboardColorSettings
 
         changed |= NormalizeModeOverride(config, TextModeOverrideMetadataKey);
         changed |= NormalizeModeOverride(config, BackgroundModeOverrideMetadataKey);
+        changed |= NormalizeModeOverride(config, HoverTextModeOverrideMetadataKey);
         changed |= NormalizeColorOverride(config, TextColorOverrideMetadataKey);
         changed |= NormalizeColorOverride(config, BackgroundColorOverrideMetadataKey);
+        changed |= NormalizeColorOverride(config, HoverTextColorOverrideMetadataKey);
         return changed;
+    }
+
+    /// <summary>
+    /// Picks the readable hover text color for the follow-theme mode: the
+    /// white/black candidate with the higher WCAG contrast ratio against the
+    /// effective card background. The system ListViewItem hover foreground is
+    /// theme-driven only, so on a light (custom or light-theme) card the dark
+    /// panel theme resolved it to white and the hovered text disappeared;
+    /// deriving from the background instead keeps the hover state readable on
+    /// every channel combination.
+    /// </summary>
+    public static Color ResolveAutoHoverTextColor(Color background)
+    {
+        Color white = Color.FromArgb(0xFF, 0xF5, 0xF5, 0xF5);
+        Color black = Color.FromArgb(0xFF, 0x1A, 0x1A, 0x1A);
+        return ContrastRatio(white, background) >= ContrastRatio(black, background)
+            ? white
+            : black;
     }
 
     private static string? GetModeOverride(WidgetConfig config, string key)

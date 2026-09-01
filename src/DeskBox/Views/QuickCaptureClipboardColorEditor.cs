@@ -22,11 +22,39 @@ internal static class QuickCaptureClipboardColorEditor
         LocalizationService localization,
         bool isBackground,
         Windows.UI.Color effectiveTextColor,
-        Windows.UI.Color effectiveBackgroundColor)
+        Windows.UI.Color effectiveBackgroundColor) =>
+        await ShowAsync(
+            config,
+            settingsService,
+            xamlRoot,
+            localization,
+            isBackground,
+            effectiveTextColor,
+            effectiveBackgroundColor,
+            isHoverText: false,
+            effectiveHoverTextColor: effectiveTextColor);
+
+    public static async Task ShowAsync(
+        WidgetConfig config,
+        SettingsService settingsService,
+        XamlRoot xamlRoot,
+        LocalizationService localization,
+        bool isBackground,
+        Windows.UI.Color effectiveTextColor,
+        Windows.UI.Color effectiveBackgroundColor,
+        bool isHoverText,
+        Windows.UI.Color effectiveHoverTextColor)
     {
-        Windows.UI.Color initialColor = isBackground
-            ? effectiveBackgroundColor
-            : effectiveTextColor;
+        string titleKey = isHoverText
+            ? "QuickCapture.ClipboardColor.HoverText"
+            : isBackground
+                ? "QuickCapture.ClipboardColor.Background"
+                : "QuickCapture.ClipboardColor.Text";
+        Windows.UI.Color initialColor = isHoverText
+            ? effectiveHoverTextColor
+            : isBackground
+                ? effectiveBackgroundColor
+                : effectiveTextColor;
         var picker = new ColorPicker
         {
             Color = initialColor,
@@ -36,9 +64,7 @@ internal static class QuickCaptureClipboardColorEditor
         var dialog = new ContentDialog
         {
             XamlRoot = xamlRoot,
-            Title = localization.T(isBackground
-                ? "QuickCapture.ClipboardColor.Background"
-                : "QuickCapture.ClipboardColor.Text"),
+            Title = localization.T(titleKey),
             Content = picker,
             PrimaryButtonText = localization.T("Common.Save"),
             CloseButtonText = localization.T("Common.Cancel"),
@@ -75,7 +101,14 @@ internal static class QuickCaptureClipboardColorEditor
                 return;
             }
 
-            if (isBackground)
+            if (isHoverText)
+            {
+                QuickCaptureClipboardColorSettings.SetHoverTextColorOverride(config, picker.Color);
+                QuickCaptureClipboardColorSettings.SetHoverTextModeOverride(
+                    config,
+                    QuickCaptureClipboardColorSettings.ModeCustom);
+            }
+            else if (isBackground)
             {
                 QuickCaptureClipboardColorSettings.SetBackgroundColorOverride(config, picker.Color);
                 QuickCaptureClipboardColorSettings.SetBackgroundModeOverride(

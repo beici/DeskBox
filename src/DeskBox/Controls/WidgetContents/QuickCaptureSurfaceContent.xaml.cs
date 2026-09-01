@@ -192,6 +192,8 @@ public sealed partial class QuickCaptureSurfaceContent :
                 : ResolveClipboardThemeSecondaryTextColor();
         }
 
+        ApplyHoverTextColor();
+
         if (Resources.TryGetValue(
                 "QuickCaptureClipboardItemBackgroundBrush",
                 out object? backgroundBrushObject) &&
@@ -256,6 +258,61 @@ public sealed partial class QuickCaptureSurfaceContent :
             : Windows.UI.Color.FromArgb(0xCC, 0xFF, 0xFF, 0xFF);
     }
 
+    /// <summary>
+    /// Hovered record text color: the custom channel follows the same
+    /// contrast-validated palette as the static text, and the follow-theme
+    /// channel auto-picks white/black against the effective card background
+    /// so a hover can never dissolve the text into the card (the system
+    /// ListViewItem hover foreground is theme-driven only and did exactly
+    /// that on light cards under the dark panel theme).
+    /// </summary>
+    private void ApplyHoverTextColor()
+    {
+        if (!Resources.TryGetValue(
+                "QuickCaptureClipboardItemHoverForegroundBrush",
+                out object? hoverBrushObject) ||
+            hoverBrushObject is not SolidColorBrush hoverBrush)
+        {
+            return;
+        }
+
+        if (QuickCaptureClipboardColorSettings.GetHoverTextModeOverride(ViewModel.Config) ==
+                QuickCaptureClipboardColorSettings.ModeCustom &&
+            QuickCaptureClipboardColorSettings.TryGetHoverTextColorOverride(
+                ViewModel.Config,
+                out Windows.UI.Color hoverOverride))
+        {
+            hoverBrush.Color = hoverOverride;
+            return;
+        }
+
+        hoverBrush.Color = QuickCaptureClipboardColorSettings.ResolveAutoHoverTextColor(
+            ResolveClipboardItemEffectiveBackgroundColor());
+    }
+
+    /// <summary>
+    /// Reasserts the hovered card's text color while the pointer is over it:
+    /// the container template swaps in the theme hover foreground on
+    /// PointerOver, so the shared hover brush is re-applied on top of that
+    /// state instead of fighting the template's visual state animation.
+    /// </summary>
+    private void RefreshHoveredItemTextColor(DependencyObject? itemRoot)
+    {
+        if (itemRoot is null ||
+            Resources.TryGetValue(
+                "QuickCaptureClipboardItemHoverForegroundBrush",
+                out object? hoverBrushObject) is false ||
+            hoverBrushObject is not SolidColorBrush hoverBrush)
+        {
+            return;
+        }
+
+        if (FindQuickCaptureVisualChild<TextBlock>(itemRoot, "QuickCaptureItemDisplayText") is { } displayText)
+        {
+            displayText.Foreground = hoverBrush;
+        }
+    }
+
     private Windows.UI.Color ResolveClipboardThemeTextColor()
     {
         return Resources.TryGetValue(
@@ -314,7 +371,9 @@ public sealed partial class QuickCaptureSurfaceContent :
             : Microsoft.UI.Colors.Transparent;
     }
 
-    internal async Task ShowClipboardItemColorPickerAsync(bool isBackground)
+    internal async Task ShowClipboardItemColorPickerAsync(
+        bool isBackground,
+        bool isHoverText = false)
     {
         if (XamlRoot is null)
         {
@@ -328,8 +387,21 @@ public sealed partial class QuickCaptureSurfaceContent :
             _localizationService,
             isBackground,
             ResolveClipboardItemEffectiveTextColor(),
-            ResolveClipboardItemEffectiveBackgroundColor());
+            ResolveClipboardItemEffectiveBackgroundColor(),
+            isHoverText,
+            ResolveClipboardItemEffectiveHoverTextColor());
         ApplyClipboardItemColors();
+    }
+
+    private Windows.UI.Color ResolveClipboardItemEffectiveHoverTextColor()
+    {
+        return Resources.TryGetValue(
+                "QuickCaptureClipboardItemHoverForegroundBrush",
+                out object? hoverBrushObject) &&
+            hoverBrushObject is SolidColorBrush hoverBrush
+            ? hoverBrush.Color
+            : QuickCaptureClipboardColorSettings.ResolveAutoHoverTextColor(
+                ResolveClipboardItemEffectiveBackgroundColor());
     }
 
     internal void SetClipboardItemFollowTheme(bool isBackground)
@@ -365,6 +437,19 @@ public sealed partial class QuickCaptureSurfaceContent :
     internal bool IsClipboardItemBackgroundCustom =>
         QuickCaptureClipboardColorSettings.GetBackgroundModeOverride(ViewModel.Config) ==
         QuickCaptureClipboardColorSettings.ModeCustom;
+
+    internal bool IsClipboardItemHoverTextCustom =>
+        QuickCaptureClipboardColorSettings.GetHoverTextModeOverride(ViewModel.Config) ==
+        QuickCaptureClipboardColorSettings.ModeCustom;
+
+    internal void SetClipboardItemHoverTextFollowTheme()
+    {
+        QuickCaptureClipboardColorSettings.SetHoverTextModeOverride(
+            ViewModel.Config,
+            QuickCaptureClipboardColorSettings.ModeFollowTheme);
+        _settingsService.UpdateWidget(ViewModel.Config);
+        ApplyClipboardItemColors();
+    }
 
 
     public QuickCaptureWidgetViewModel ViewModel { get; }
@@ -3102,6 +3187,7 @@ public sealed partial class QuickCaptureSurfaceContent :
         }
 
         SetQuickCaptureItemActionButtonsVisible(border, false);
+        ClearHoveredItemTextColor(border);
         ApplyQuickCaptureItemMaterialSurface(
             border,
             border.DataContext as QuickCaptureItemViewModel);
@@ -3131,11 +3217,26 @@ public sealed partial class QuickCaptureSurfaceContent :
     private void QuickCaptureItem_PointerEntered(object sender, PointerRoutedEventArgs e)
     {
         SetQuickCaptureItemActionButtonsVisible(sender as DependencyObject, true);
+        RefreshHoveredItemTextColor(sender as DependencyObject);
     }
 
     private void QuickCaptureItem_PointerExited(object sender, PointerRoutedEventArgs e)
     {
         SetQuickCaptureItemActionButtonsVisible(sender as DependencyObject, false);
+        ClearHoveredItemTextColor(sender as DependencyObject);
+    }
+
+    private void ClearHoveredItemTextColor(DependencyObject? itemRoot)
+    {
+        if (itemRoot is null)
+        {
+            return;
+        }
+
+        if (FindQuickCaptureVisualChild<TextBlock>(itemRoot, "QuickCaptureItemDisplayText") is { } displayText)
+        {
+            displayText.ClearValue(TextBlock.ForegroundProperty);
+        }
     }
 
     private static void SetQuickCaptureItemActionButtonsVisible(
@@ -3180,6 +3281,7 @@ public sealed partial class QuickCaptureSurfaceContent :
         if (sender is Border border)
         {
             SetQuickCaptureItemActionButtonsVisible(border, false);
+            ClearHoveredItemTextColor(border);
             // ListView virtualizes and reuses this Border. Reapply the
             // material for every new item so clipboard entries cannot inherit
             // a colored record background from the previous DataContext.
