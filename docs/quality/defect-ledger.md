@@ -12,6 +12,7 @@
 | **DEF-034** | WidgetLayerService 双重 lock 竞态窗口期 | **已修复（663c593）** | P1 | 线程同步 | `src/DeskBox/Services/WidgetLayerService.cs:919-927` | 两次 lock(s_desktopLayerLock) 之间无原子保证；TryApplyMinimalWindowMoves 返回 false 后到第二次 lock 前 z-order 可能变化，IsWindowChainAlreadyHighestToLowest 短路未重检查；导致多余 DeferWindowPos 事务，极端下 DWM 微卡顿 | F8 Round 1 task-0 |
 | **DEF-035** | StoreStartupService.GetStartupTask() UI 线程阻塞 | **已修复（663c593+3f2504d）** | P2 | 线程模型/启动性能 | `src/DeskBox/Services/StoreStartupService.cs:123` | StartupTask.GetAsync().AsTask().GetAwaiter().GetResult() 在 UI 线程同步等待 Windows Runtime；Store 构建 + 首次启动时 UI 冻结风险；非 Store 构建不受影响 | F8 Round 1 task-2 |
 | **DEF-036** | Step4StartupToggle_Toggled async void 内同步调用 GetStartupTask | **已修复（cf0fadb+4701b39）** | P2 | 线程模型 | `src/DeskBox/Views/OnboardingWindow.Hotkey.cs:317` | Onboarding 步骤 4 切换自动启动开关时同步调用 StartupService.SetEnabled → Store 路径触发 DEF-035；应改为 async Task + SafeFireAndForget | F8 Round 1 task-2 |
+| **DEF-038** | 刷新代际护栏未覆盖「用户拨动 vs 在途刷新」 | **已修复（917bcf9，Toggled 入口递增代际）** | P2 | 线程模型/UI 时序 | `src/DeskBox/Views/OnboardingWindow.Hotkey.cs:325` | 代际护栏只拦「新刷新 vs 旧刷新」；用户拨动不递增代际，Store 渠道 Pending 收敛窗口内在途回调仍回弹 IsOn+覆写 AutoStart。R2 Round 2 收敛审查（deleg_8d8b2d7b）NO-GO 指出，一行修复后闭环，CI run 917bcf9e 全绿 | F8 Round 2 收敛审查 |
 | **DEF-037** | CancelBackgroundMemoryCleanupDelay 旧 CTS 未 Dispose | **已修复（663c593+4701b39，含 Schedule 路径孪生点）** | P2 | 资源管理/S1 | `src/DeskBox/App.xaml.cs:3111` | Interlocked.Exchange 替换旧 CTS 后仅 Cancel() 未 Dispose；旧 CTS 的 registered wait handles 延迟到 GC 才释放；每次 cancel 泄漏 ~16 bytes + native wait registration | F8 Round 1 task-0 |
 
 ---
@@ -67,6 +68,6 @@
 
 - **待修 P1**：0
 - **待修 P2**：1（DEF-016，位于已删除死宿主，随 DEF-027 跳过）
-- **R2 Round 1 新增 4 项（DEF-034~037）已全部修复**（663c593/cf0fadb/3f2504d/4701b39，CI run 33561624305 全绿；收敛审查 GO 后 2×P2 加固 + 3×P3 注释于 bb708e3 闭环，run bb708e3c 全绿）
+- **R2 新增 5 项（DEF-034~038）已全部修复，第 2 轮收敛辨定达成**（663c593/cf0fadb/3f2504d/4701b39，CI run 33561624305 全绿；收敛审查 GO 后 2×P2 加固 + 3×P3 注释于 bb708e3 闭环，run bb708e3c 全绿）
 - **挂账 P3**：约 25 项（详见台账）
 - **本轮新增**：4 项（1 P1 + 3 P2）
