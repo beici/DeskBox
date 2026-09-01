@@ -17,7 +17,7 @@ public sealed class GlobalHotkeyService : IDisposable
     private const uint ModNoRepeat = 0x4000;
     private static readonly UIntPtr SubclassId = new(0x4442);
 
-    internal readonly record struct HotkeyApplyResult(bool Succeeded, string? Error)
+    public readonly record struct HotkeyApplyResult(bool Succeeded, string? Error)
     {
         public static HotkeyApplyResult Success(string? error) => new(true, error);
         public static HotkeyApplyResult Failure(string? error) => new(false, error);
