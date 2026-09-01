@@ -265,6 +265,12 @@ public partial class App : Application
         {
             directStartupService.TryMigrateLegacyRegistration();
         }
+        else if (StartupService.Current is StoreStartupService storeStartupService)
+        {
+            // Prefetch the StartupTask handle asynchronously to avoid
+            // blocking the UI thread on subsequent GetState/SetEnabled calls.
+            _ = storeStartupService.PrefetchTaskAsync();
+        }
         AppUpdateService.CheckCompleted += OnUpdateCheckCompleted;
         UnhandledException += OnUnhandledException;
         RegisterGlobalExceptionBackstops();
@@ -3118,6 +3124,10 @@ public partial class App : Application
             }
             catch (ObjectDisposedException)
             {
+            }
+            finally
+            {
+                cancellationSource.Dispose();
             }
         }
     }

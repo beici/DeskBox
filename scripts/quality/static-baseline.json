@@ -1,10 +1,10 @@
 {
-  "async_void_count": 222,
+  "async_void_count": 229,
   "clipboard_setcontent": 8,
   "clipboard_marks": 14,
   "clipboard_unpaired": [],
-  "sync_wait_count": 131,
-  "empty_catch_count": 219,
+  "sync_wait_count": 132,
+  "empty_catch_count": 225,
   "reflection_count": 6,
   "contract_hits": 5179,
   "contract_misses": [

@@ -924,6 +924,18 @@ public static class WidgetLayerService
             }
         }
 
+        // Re-check window order after releasing the first lock. The order may
+        // have changed (another thread reordered windows) while we were not
+        // holding the lock, making the expensive DeferWindowPos fallback
+        // unnecessary.
+        if (IsWindowChainAlreadyHighestToLowest(handles, boundary))
+        {
+            App.LogVerbose(
+                $"[ZOrder] Window order re-checked and already correct " +
+                $"reason={reason} count={handles.Count}");
+            return true;
+        }
+
         lock (s_desktopLayerLock)
         {
             IntPtr insertAfter = boundary;

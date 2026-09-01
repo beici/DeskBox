@@ -1,3 +1,4 @@
+using System.Threading.Tasks;
 using Windows.ApplicationModel;
 
 namespace DeskBox.Services;
@@ -6,11 +7,17 @@ public sealed class StoreStartupService : IStartupService
 {
     private const string StartupTaskId = "DeskBoxStartupTask";
 
+    // Cache the StartupTask handle to avoid repeated UI-thread blocking
+    // calls to StartupTask.GetAsync() in sync contexts. Populated lazily
+    // on first access, then reused for all subsequent calls.
+    private StartupTask? _cachedTask;
+    private readonly object _cacheLock = new();
+
     public StartupRegistrationState GetState()
     {
         try
         {
-            var task = GetStartupTask();
+            var task = GetCachedOrFreshTask();
             return task.State switch
             {
                 StartupTaskState.Enabled => StartupRegistrationState.Enabled,
@@ -36,7 +43,7 @@ public sealed class StoreStartupService : IStartupService
     {
         try
         {
-            var task = GetStartupTask();
+            var task = GetCachedOrFreshTask();
             if (task.State is StartupTaskState.Enabled or StartupTaskState.EnabledByPolicy)
             {
                 return new StartupOperationResult(StartupRegistrationState.Enabled);
@@ -91,7 +98,7 @@ public sealed class StoreStartupService : IStartupService
     {
         try
         {
-            var task = GetStartupTask();
+            var task = GetCachedOrFreshTask();
             if (task.State == StartupTaskState.Enabled)
             {
                 task.Disable();
@@ -118,8 +125,49 @@ public sealed class StoreStartupService : IStartupService
         return Disable();
     }
 
-    private static StartupTask GetStartupTask()
+    /// <summary>
+    /// Pre-fetches the StartupTask handle asynchronously so that subsequent
+    /// synchronous callers do not block the UI thread. Should be invoked early
+    /// (e.g., during app startup) on a background thread.
+    /// </summary>
+    internal async System.Threading.Tasks.Task PrefetchTaskAsync()
     {
-        return StartupTask.GetAsync(StartupTaskId).AsTask().GetAwaiter().GetResult();
+        try
+        {
+            var task = await StartupTask.GetAsync(StartupTaskId).AsTask();
+            lock (_cacheLock)
+            {
+                _cachedTask = task;
+            }
+        }
+        catch (Exception ex)
+        {
+            global::DeskBox.App.Log($"[StoreStartupService] Failed to prefetch startup task: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Returns the cached StartupTask if available, otherwise fetches it
+    /// synchronously. The cache is populated by PrefetchTaskAsync() during
+    /// startup; falls back to the blocking call only on first access.
+    /// </summary>
+    private StartupTask GetCachedOrFreshTask()
+    {
+        lock (_cacheLock)
+        {
+            if (_cachedTask is not null)
+            {
+                return _cachedTask;
+            }
+        }
+
+        // Cache miss: fetch synchronously (blocks UI thread, but only on
+        // first access before PrefetchTaskAsync completes).
+        var task = StartupTask.GetAsync(StartupTaskId).AsTask().GetAwaiter().GetResult();
+        lock (_cacheLock)
+        {
+            _cachedTask = task;
+        }
+        return task;
     }
 }

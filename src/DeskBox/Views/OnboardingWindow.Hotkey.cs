@@ -298,20 +298,27 @@ public sealed partial class OnboardingWindow
 
     private void RefreshStartupToggleFromSystem()
     {
-        StartupRegistrationState state = StartupService.GetState();
-        bool enabled = state is
-            StartupRegistrationState.Enabled or
-            StartupRegistrationState.Pending;
+        // Defer to dispatcher idle to avoid blocking the UI thread when
+        // StoreStartupService.GetStartupTask() must wait for the
+        // StartupTask.GetAsync() Windows Runtime call.
+        _ = DispatcherQueue.TryGetDevice()?.EnqueueAsync(
+            Windows.System.DispatcherQueuePriority.Low, () =>
+            {
+                StartupRegistrationState state = StartupService.GetState();
+                bool enabled = state is
+                    StartupRegistrationState.Enabled or
+                    StartupRegistrationState.Pending;
 
-        Step4StartupToggle.Toggled -= Step4StartupToggle_Toggled;
-        Step4StartupToggle.IsOn = enabled;
-        Step4StartupToggle.Toggled += Step4StartupToggle_Toggled;
+                Step4StartupToggle.Toggled -= Step4StartupToggle_Toggled;
+                Step4StartupToggle.IsOn = enabled;
+                Step4StartupToggle.Toggled += Step4StartupToggle_Toggled;
 
-        if (_settingsService.Settings.AutoStart != enabled)
-        {
-            _settingsService.Settings.AutoStart = enabled;
-            _settingsService.SaveDebounced();
-        }
+                if (_settingsService.Settings.AutoStart != enabled)
+                {
+                    _settingsService.Settings.AutoStart = enabled;
+                    _settingsService.SaveDebounced();
+                }
+            });
     }
 
     private async void Step4StartupToggle_Toggled(object sender, RoutedEventArgs e)
