@@ -58,6 +58,12 @@ internal interface IDesktopWidgetWindow
     bool IsRaisedAboveDesktopLayer { get; }
     bool IsCompactArrangementActive { get; }
     /// <summary>
+    /// True while a compact expand/collapse morph is rendering on this host;
+    /// peer z-order normalization defers while any visible window reports
+    /// this so an order batch never lands mid-morph.
+    /// </summary>
+    bool IsCompactAnimationRendering { get; }
+    /// <summary>
     /// True while the host is in the collapsed capsule bounds state —
     /// transient geometry that must never be persisted as resting config.
     /// </summary>

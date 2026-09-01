@@ -311,6 +311,19 @@ public sealed partial class WidgetManager
             return false;
         }
 
+        if (GetLoadedDesktopWindows().Any(window =>
+                window.Visible && window.IsCompactAnimationRendering))
+        {
+            // A morph is rendering somewhere on the bar. Re-apply the batch
+            // after it settles instead of mid-animation: an EndDeferWindowPos
+            // batch forces a DWM recomposition that stalls the morph's next
+            // presentation frame. The generation guard coalesces repeats.
+            QueueIdleWidgetZOrderNormalization(reason, TimeSpan.FromMilliseconds(120));
+            App.LogVerbose(
+                $"[ZOrder] Idle normalize deferred while animating reason={reason}");
+            return false;
+        }
+
         IReadOnlyList<IDesktopWidgetWindow> ordered =
             GetWindowsInIdleHighestFirstOrder(
                 GetLoadedDesktopWindows().Where(window =>

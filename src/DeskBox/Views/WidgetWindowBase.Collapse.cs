@@ -200,6 +200,18 @@ public abstract partial class WidgetWindowBase
 
     public bool IsCompactArrangementActive => _collapseInitialized && _targetCollapsed;
 
+    /// <summary>
+    /// True while a compact expand/collapse morph is rendering on this host.
+    /// Peer z-order normalization defers while any visible window reports
+    /// this: an EndDeferWindowPos batch landing mid-morph forces a DWM
+    /// recomposition that stalls the morph's next presentation frame, which
+    /// users see as the whole bar flashing during rapid hover expansion.
+    /// </summary>
+    public bool IsCompactAnimationRendering =>
+        _compactAnimationFrameTracker is not null ||
+        _isCollapseAnimationRendering ||
+        _isShellTransitionActive;
+
     public bool IsCompactCollapsedState => IsCompactBoundsStateActive;
 
     public void ApplyCompactArrangement(RectInt32 bounds, bool constrainSize)
