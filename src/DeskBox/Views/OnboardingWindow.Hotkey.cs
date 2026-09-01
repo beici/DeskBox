@@ -301,18 +301,30 @@ public sealed partial class OnboardingWindow
         // Defer to dispatcher idle to avoid blocking the UI thread when
         // StoreStartupService.GetState() must wait for the
         // StartupTask.GetAsync() Windows Runtime call (Store builds only).
+        // Each invocation invalidates the previous deferred callback: if the
+        // user toggles the switch in between, the stale snapshot must not
+        // clobber the user's newer choice (deferred-callback/rebind race).
+        int refreshGeneration = ++_startupToggleRefreshGeneration;
         DispatcherQueue.TryEnqueue(
             Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
             () =>
             {
+                if (refreshGeneration != _startupToggleRefreshGeneration)
+                {
+                    return;
+                }
+
                 StartupRegistrationState state = StartupService.GetState();
                 bool enabled = state is
                     StartupRegistrationState.Enabled or
                     StartupRegistrationState.Pending;
 
-                Step4StartupToggle.Toggled -= Step4StartupToggle_Toggled;
-                Step4StartupToggle.IsOn = enabled;
-                Step4StartupToggle.Toggled += Step4StartupToggle_Toggled;
+                if (Step4StartupToggle.IsOn != enabled)
+                {
+                    Step4StartupToggle.Toggled -= Step4StartupToggle_Toggled;
+                    Step4StartupToggle.IsOn = enabled;
+                    Step4StartupToggle.Toggled += Step4StartupToggle_Toggled;
+                }
 
                 if (_settingsService.Settings.AutoStart != enabled)
                 {

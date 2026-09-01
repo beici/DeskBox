@@ -3520,12 +3520,19 @@ public partial class App : Application
         {
             CleanupScope = cleanupScope
         };
-        CancellationToken cancellationToken = cancellationSource.Token;
+        CancellationToken cancellationToken = default;
         string? loggedWaitReason = null;
         int activityBackoffAttempt = 0;
 
         try
         {
+            // Assign (not just read) inside try: if the source was replaced
+            // and disposed between scheduling and this task's first
+            // execution, accessing Token throws ObjectDisposedException.
+            // Keeping the assignment in try lets the dedicated catch below
+            // record it as a cancellation instead of a failure, preserving
+            // the outcome telemetry.
+            cancellationToken = cancellationSource.Token;
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -3768,6 +3775,15 @@ public partial class App : Application
         {
             state.Status = "cancelled";
             state.Detail = "cancellation-requested";
+        }
+        catch (ObjectDisposedException)
+        {
+            // The source was replaced and disposed before this task ran:
+            // semantically a cancellation (the replacement re-arms a new
+            // schedule), and default(CancellationToken) is never requested,
+            // so the OCE filter above could not catch this.
+            state.Status = "cancelled";
+            state.Detail = "source-disposed-before-start";
         }
         catch (Exception ex)
         {

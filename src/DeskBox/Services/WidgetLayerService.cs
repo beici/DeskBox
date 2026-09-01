@@ -924,10 +924,10 @@ public static class WidgetLayerService
             }
         }
 
-        // Re-check window order after releasing the first lock. The order may
-        // have changed (another thread reordered windows) while we were not
-        // holding the lock, making the expensive DeferWindowPos fallback
-        // unnecessary.
+        // Re-check window order after releasing the first lock. The chain
+        // can change in that window — another thread applying a reorder, or
+        // an out-of-lock topmost pulse on this thread — so a chain already
+        // at the target order makes the DeferWindowPos fallback a no-op.
         if (IsWindowChainAlreadyHighestToLowest(handles, boundary))
         {
             App.LogVerbose(

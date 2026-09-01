@@ -42,6 +42,7 @@ public sealed partial class OnboardingWindow : Window
     private Storyboard? _statusFeedbackStoryboard;
     private System.Threading.CancellationTokenSource? _hotkeyDemoCts;
     private int _introGeneration;
+    private int _startupToggleRefreshGeneration;
     private int _stepIndex;
     private bool _hasLoaded;
     private bool _isSubclassInstalled;

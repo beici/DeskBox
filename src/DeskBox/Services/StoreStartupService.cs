@@ -127,8 +127,10 @@ public sealed class StoreStartupService : IStartupService
 
     /// <summary>
     /// Pre-fetches the StartupTask handle asynchronously so that subsequent
-    /// synchronous callers do not block the UI thread. Should be invoked early
-    /// (e.g., during app startup) on a background thread.
+    /// synchronous callers do not block the UI thread. Invoked fire-and-forget
+    /// from the UI thread during startup; the await resumes on the UI thread
+    /// (or the thread pool when no UI context is posted) and only briefly
+    /// takes the cache lock to publish the handle.
     /// </summary>
     internal async Task PrefetchTaskAsync()
     {
