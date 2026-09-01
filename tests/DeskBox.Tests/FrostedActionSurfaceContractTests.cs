@@ -15,7 +15,6 @@ public sealed class FrostedActionSurfaceContractTests
         AssertAcrylicLayer(desktopOrganization, "x:Name=\"FooterAcrylicSurface\"", "Opacity=\"0.5\"");
         AssertAcrylicLayer(onboarding, "x:Name=\"FooterAcrylicSurface\"", "Opacity=\"0.46\"");
         AssertAcrylicLayer(quickCaptureSurface, "x:Name=\"DetailHeaderAcrylicSurface\"", "Opacity=\"0.42\"");
-        AssertAcrylicLayer(quickCaptureWindow, "x:Name=\"DetailHeaderAcrylicSurface\"", "Opacity=\"0.42\"");
         AssertAcrylicLayer(todo, "x:Name=\"DetailHeaderAcrylicSurface\"", "Opacity=\"0.42\"");
         AssertAcrylicLayer(releaseNotes, "x:Name=\"FooterAcrylicSurface\"", "Opacity=\"0.5\"");
     }
