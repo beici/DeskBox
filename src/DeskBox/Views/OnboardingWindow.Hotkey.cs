@@ -302,7 +302,7 @@ public sealed partial class OnboardingWindow
         // StoreStartupService.GetState() must wait for the
         // StartupTask.GetAsync() Windows Runtime call (Store builds only).
         DispatcherQueue.TryEnqueue(
-            DispatcherQueuePriority.Low,
+            Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
             () =>
             {
                 StartupRegistrationState state = StartupService.GetState();

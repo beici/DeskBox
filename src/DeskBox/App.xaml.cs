@@ -3452,6 +3452,10 @@ public partial class App : Application
             catch (ObjectDisposedException)
             {
             }
+            finally
+            {
+                replacedSource.Dispose();
+            }
         }
 
         var dispatcherQueue = UiDispatcherQueue;
