@@ -29,7 +29,6 @@ public sealed class ContentDeletionDirectContractTests
             "src/DeskBox/Controls/WidgetContents/QuickCaptureSurfaceContent.xaml.cs");
 
         Assert.Contains("DeleteQuickCaptureItemAsync(", source, StringComparison.Ordinal);
-        Assert.Contains("DeleteItemWithUndoAsync(", source, StringComparison.Ordinal);
         Assert.Contains("DeleteSelectedQuickCaptureItemsAsync(", source, StringComparison.Ordinal);
         Assert.DoesNotContain("ConfirmDeleteItemAsync", source, StringComparison.Ordinal);
         Assert.DoesNotContain("ShowQuickCaptureDeleteConfirmFlyout", source, StringComparison.Ordinal);

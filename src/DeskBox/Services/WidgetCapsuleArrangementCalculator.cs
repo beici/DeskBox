@@ -84,7 +84,9 @@ public static class WidgetCapsuleArrangementCalculator
             HorizontalMinimumWidth);
         int cursorX = anchorPoint.X;
 
-        for (int index = 0; index < items.Count; index++)
+        // DEF-026: FitPrimarySizes may truncate the tail when even the 1px
+        // floor cannot fit every capsule; iterate only the surviving sizes.
+        for (int index = 0; index < widths.Length; index++)
         {
             WidgetCapsuleArrangementItem item = items[index];
             int width = widths[index];
@@ -116,7 +118,9 @@ public static class WidgetCapsuleArrangementCalculator
             VerticalMinimumHeight);
         int cursorY = anchorPoint.Y;
 
-        for (int index = 0; index < items.Count; index++)
+        // DEF-026: FitPrimarySizes may truncate the tail when even the 1px
+        // floor cannot fit every capsule; iterate only the surviving sizes.
+        for (int index = 0; index < heights.Length; index++)
         {
             WidgetCapsuleArrangementItem item = items[index];
             int height = heights[index];

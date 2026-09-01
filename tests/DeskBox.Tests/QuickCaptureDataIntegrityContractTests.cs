@@ -32,16 +32,21 @@ public sealed class QuickCaptureDataIntegrityContractTests
                 Regex.Escape("_detailContentFormat = _detailItem?.ContentFormat ??"),
                 RegexOptions.None).Count);
 
-        // The old overwrite must be gone from every edit path.
-        Assert.DoesNotContain(
-            "_detailContentFormat = ViewModel.EditorContentFormat;",
-            source.Replace(
+        // The old overwrite must be gone from every edit path. The creation
+        // path (OpenNewDetailAsync, _detailItem = null) legitimately uses the
+        // app-level default, so exactly one residual occurrence is allowed.
+        string withoutKnownGoodEditForms = source.Replace(
                 "_detailContentFormat = _detailItem?.ContentFormat ??\r\n                    ViewModel.EditorContentFormat;",
                 string.Empty, StringComparison.Ordinal)
-                .Replace(
+            .Replace(
                 "_detailContentFormat = _detailItem?.ContentFormat ??\n                    ViewModel.EditorContentFormat;",
-                string.Empty, StringComparison.Ordinal),
-            StringComparison.Ordinal);
+                string.Empty, StringComparison.Ordinal);
+        Assert.Equal(
+            1,
+            Regex.Matches(
+                withoutKnownGoodEditForms,
+                Regex.Escape("_detailContentFormat = ViewModel.EditorContentFormat;"),
+                RegexOptions.None).Count);
     }
 
     [Fact]
@@ -50,10 +55,14 @@ public sealed class QuickCaptureDataIntegrityContractTests
         string source = ReadRepositoryFile("src/DeskBox/Services/QuickCaptureService.cs");
 
         // Register on all three delete exits (single item / recent item /
-        // batch) and release on restore (DEF-012 / QC-03).
+        // batch) and release on restore (DEF-012 / QC-03). The lookbehind
+        // excludes the method definition line itself.
         Assert.Equal(
             3,
-            Regex.Matches(source, Regex.Escape("RegisterUndoWindowImages(")).Count);
+            Regex.Matches(
+                source,
+                "(?<!void )RegisterUndoWindowImages\\(",
+                RegexOptions.None).Count);
         Assert.Contains(
             "UnregisterUndoWindowImages([item]);",
             source,

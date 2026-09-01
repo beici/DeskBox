@@ -86,9 +86,12 @@ public sealed class WindowInteractionSafetyNetContractTests
         Assert.Contains("StartHookRetryTimer();", source, StringComparison.Ordinal);
         Assert.Contains("HookRetryTimer_Tick", source, StringComparison.Ordinal);
 
-        // Dispose releases the retry timer symmetrically.
+        // Dispose releases the retry timer symmetrically (scoped to the
+        // Dispose body: an earlier Start-path Stop() must not satisfy this).
         int disposeStart = IndexOf(source, "public void Dispose()");
-        int retryStop = IndexOf(source, "_hookRetryTimer.Stop();");
+        int retryStop = disposeStart >= 0
+            ? source.IndexOf("_hookRetryTimer.Stop();", disposeStart, StringComparison.Ordinal)
+            : -1;
         Assert.True(disposeStart >= 0 && retryStop > disposeStart,
             "Dispose must stop the hook retry timer");
     }

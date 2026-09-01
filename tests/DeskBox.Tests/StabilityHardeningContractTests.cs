@@ -54,15 +54,18 @@ public sealed class StabilityHardeningContractTests
         string source = ReadRepositoryFile("src/DeskBox/App.xaml.cs");
 
         // DEF-020: phase marker lives outside the try (catch must see it),
-        // advances to widget restoration, and the catch reports it.
+        // advances to widget restoration, and the catch reports it. Anchors
+        // are newline-agnostic (\r?\n) because CI checkouts may be CRLF.
         int marker = source.IndexOf(
             "string startupPhase = \"settings and services\";",
             StringComparison.Ordinal);
-        int tryStart = source.IndexOf("try\n        {\n            string? updateInstallOutcome",
-            StringComparison.Ordinal);
+        int tryStart = Regex.Match(
+            source,
+            "try\r?\n        {\r?\n            string\\? updateInstallOutcome").Index;
         int advance = source.IndexOf("startupPhase = \"widget restoration\";", StringComparison.Ordinal);
-        int catchBlock = source.IndexOf("catch (Exception ex)\n        {\n            // DEF-020",
-            StringComparison.Ordinal);
+        int catchBlock = Regex.Match(
+            source,
+            "catch \\(Exception ex\\)\r?\n        {\r?\n            // DEF-020").Index;
         Assert.True(marker > 0 && tryStart > marker && advance > tryStart && catchBlock > advance,
             "the phase marker must be declared before the try, advanced mid-launch, and read in the catch");
         Assert.Contains("ShowStartupFailureNotification(startupPhase, ex);", source, StringComparison.Ordinal);
@@ -82,10 +85,11 @@ public sealed class StabilityHardeningContractTests
         string body = source[notifyStart..];
 
         // Native toast first, tray balloon fallback, whole method guarded.
+        // Anchors are newline-agnostic (\r?\n) because CI checkouts may be CRLF.
         Assert.Contains("_nativeNotificationService?.TryShow(title, body)", body, StringComparison.Ordinal);
         Assert.Contains("_trayIcon?.ShowNotification(", body, StringComparison.Ordinal);
         Assert.Contains("NotificationIcon.Error", body, StringComparison.Ordinal);
-        int firstTry = body.IndexOf("try\n        {", StringComparison.Ordinal);
+        int firstTry = Regex.Match(body, "try\r?\n        {").Index;
         int finalCatch = body.IndexOf("catch (Exception notifyEx)", StringComparison.Ordinal);
         Assert.True(firstTry >= 0 && finalCatch > firstTry,
             "the notifier must be exception-proof end to end");
