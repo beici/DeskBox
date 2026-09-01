@@ -291,25 +291,34 @@ public sealed partial class QuickCaptureSurfaceContent :
     }
 
     /// <summary>
-    /// Reasserts the hovered card's text color while the pointer is over it:
-    /// the container template swaps in the theme hover foreground on
-    /// PointerOver, so the shared hover brush is re-applied on top of that
-    /// state instead of fighting the template's visual state animation.
+    /// PointerEntered/Exited on the record title TextBlock itself: the text
+    /// carries an explicit Foreground so the ListViewItem template's hover
+    /// state can never repaint it, and swapping between the two shared
+    /// brushes here is the single writer for the hover color. A card-level
+    /// handler raced the template's own state animation for ownership of the
+    /// same property and visibly flickered.
     /// </summary>
-    private void RefreshHoveredItemTextColor(DependencyObject? itemRoot)
+    private void QuickCaptureItemText_PointerEntered(object sender, PointerRoutedEventArgs e)
     {
-        if (itemRoot is null ||
+        if (sender is TextBlock displayText &&
             Resources.TryGetValue(
                 "QuickCaptureClipboardItemHoverForegroundBrush",
-                out object? hoverBrushObject) is false ||
-            hoverBrushObject is not SolidColorBrush hoverBrush)
-        {
-            return;
-        }
-
-        if (FindQuickCaptureVisualChild<TextBlock>(itemRoot, "QuickCaptureItemDisplayText") is { } displayText)
+                out object? hoverBrushObject) &&
+            hoverBrushObject is SolidColorBrush hoverBrush)
         {
             displayText.Foreground = hoverBrush;
+        }
+    }
+
+    private void QuickCaptureItemText_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is TextBlock displayText &&
+            Resources.TryGetValue(
+                "QuickCaptureClipboardItemForegroundBrush",
+                out object? textBrushObject) &&
+            textBrushObject is SolidColorBrush textBrush)
+        {
+            displayText.Foreground = textBrush;
         }
     }
 
@@ -3187,7 +3196,6 @@ public sealed partial class QuickCaptureSurfaceContent :
         }
 
         SetQuickCaptureItemActionButtonsVisible(border, false);
-        ClearHoveredItemTextColor(border);
         ApplyQuickCaptureItemMaterialSurface(
             border,
             border.DataContext as QuickCaptureItemViewModel);
@@ -3217,26 +3225,11 @@ public sealed partial class QuickCaptureSurfaceContent :
     private void QuickCaptureItem_PointerEntered(object sender, PointerRoutedEventArgs e)
     {
         SetQuickCaptureItemActionButtonsVisible(sender as DependencyObject, true);
-        RefreshHoveredItemTextColor(sender as DependencyObject);
     }
 
     private void QuickCaptureItem_PointerExited(object sender, PointerRoutedEventArgs e)
     {
         SetQuickCaptureItemActionButtonsVisible(sender as DependencyObject, false);
-        ClearHoveredItemTextColor(sender as DependencyObject);
-    }
-
-    private void ClearHoveredItemTextColor(DependencyObject? itemRoot)
-    {
-        if (itemRoot is null)
-        {
-            return;
-        }
-
-        if (FindQuickCaptureVisualChild<TextBlock>(itemRoot, "QuickCaptureItemDisplayText") is { } displayText)
-        {
-            displayText.ClearValue(TextBlock.ForegroundProperty);
-        }
     }
 
     private static void SetQuickCaptureItemActionButtonsVisible(
@@ -3281,7 +3274,6 @@ public sealed partial class QuickCaptureSurfaceContent :
         if (sender is Border border)
         {
             SetQuickCaptureItemActionButtonsVisible(border, false);
-            ClearHoveredItemTextColor(border);
             // ListView virtualizes and reuses this Border. Reapply the
             // material for every new item so clipboard entries cannot inherit
             // a colored record background from the previous DataContext.

@@ -76,19 +76,23 @@ public class QuickCaptureHoverTextContrastTests
         string code = File.ReadAllText(TestPaths.FromRepository(
             "src/DeskBox/Controls/WidgetContents/QuickCaptureSurfaceContent.xaml.cs"));
 
-        // The dedicated hover brush exists and the display TextBlock is
-        // addressable so code-behind can override the template's theme-driven
-        // PointerOver foreground.
+        // The dedicated hover brush exists and the display TextBlock owns an
+        // explicit Foreground plus its own pointer handlers so the hover
+        // color has a single writer and the ListViewItem template's hover
+        // state can never repaint the text (the earlier card-level handler
+        // raced the template state animation and flickered).
         Assert.Contains("QuickCaptureClipboardItemHoverForegroundBrush", xaml);
         Assert.Contains("x:Name=\"QuickCaptureItemDisplayText\"", xaml);
+        Assert.Matches(
+            new Regex(@"x:Name=""QuickCaptureItemDisplayText""[\s\S]{0,400}?Foreground=""\{StaticResource QuickCaptureClipboardItemForegroundBrush\}""[\s\S]{0,400}?PointerEntered=""QuickCaptureItemText_PointerEntered""[\s\S]{0,400}?PointerExited=""QuickCaptureItemText_PointerExited"""),
+            xaml);
 
-        // Hover enter applies the resolved hover color; hover exit and the
-        // virtualization reuse paths clear the local value so the resolved
-        // (or theme) color is re-inherited instead of leaking between items.
-        Assert.Contains("RefreshHoveredItemTextColor(sender as DependencyObject);", code);
-        Assert.Contains("ClearHoveredItemTextColor(sender as DependencyObject);", code);
-        Assert.Contains("ClearHoveredItemTextColor(border);", code);
-        Assert.Contains("displayText.ClearValue(TextBlock.ForegroundProperty);", code);
+        // The text-level handlers swap between the two shared brushes; the
+        // card-level race path (Refresh/ClearHoveredItemTextColor) is gone.
+        Assert.Contains("QuickCaptureItemText_PointerEntered", code);
+        Assert.Contains("QuickCaptureItemText_PointerExited", code);
+        Assert.DoesNotContain("RefreshHoveredItemTextColor", code);
+        Assert.DoesNotContain("ClearHoveredItemTextColor", code);
 
         // Follow-theme resolution derives from the effective card background
         // via the shared auto-contrast resolver (never a fixed white).

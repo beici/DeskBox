@@ -262,7 +262,10 @@
                                         <TextBlock
                                             x:Name="QuickCaptureItemDisplayText"
                                             FontSize="{Binding TextSize}"
+                                            Foreground="{StaticResource QuickCaptureClipboardItemForegroundBrush}"
                                             MaxLines="{Binding ElementName=ItemsList, Path=DataContext.ItemPreviewLineCount}"
+                                            PointerEntered="QuickCaptureItemText_PointerEntered"
+                                            PointerExited="QuickCaptureItemText_PointerExited"
                                             Text="{Binding DisplayText}"
                                             TextTrimming="CharacterEllipsis"
                                             TextWrapping="Wrap"
