@@ -395,11 +395,11 @@ public sealed class GlobalHotkeyService : IDisposable
         {
             if (shouldBeActive && !IsRegistered)
             {
-                HotkeyApplyResult result = await RefreshRegistrationAsync();
+                HotkeyApplyResult refreshResult = await RefreshRegistrationAsync();
                 if (!IsRegistered)
                 {
-                    return result.Error is not null
-                        ? HotkeyApplyResult.Failure(result.Error)
+                    return refreshResult.Error is not null
+                        ? HotkeyApplyResult.Failure(refreshResult.Error)
                         : HotkeyApplyResult.Failure(_localizationService.T("Settings.GlobalHotkey.Status.Unavailable"));
                 }
             }

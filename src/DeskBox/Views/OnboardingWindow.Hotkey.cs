@@ -128,7 +128,7 @@ public sealed partial class OnboardingWindow
             return;
         }
 
-        if (!await hotkeyService.TryApplyGestureAsync(gesture))
+        if (!(await hotkeyService.TryApplyGestureAsync(gesture)).Succeeded)
         {
             if (RootGrid.XamlRoot is not null)
             {

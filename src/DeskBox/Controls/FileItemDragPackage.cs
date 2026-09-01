@@ -238,7 +238,7 @@ public static class FileItemDragPackage
 
         result = new FileItemDragPackageResult(
             sourcePaths,
-            hasStorageItems: true,
+            HasStorageItems: true,
             usesNativeShellDataObject);
         return true;
     }
