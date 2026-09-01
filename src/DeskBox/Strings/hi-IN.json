@@ -2553,5 +2553,9 @@
     "Settings.Animation.FrameRate.Tier.Low": "कम (30 fps)",
     "Settings.Animation.FrameRate.Tier.Medium": "मध्यम (60 fps)",
     "Settings.Animation.FrameRate.Tier.High": "उच्च (90 fps)",
-    "Settings.Animation.FrameRate.Tier.Max": "अधिकतम (120 fps)"
+    "Settings.Animation.FrameRate.Tier.Max": "अधिकतम (120 fps)",
+    "Startup.Failure.Title": "DeskBox पूरी तरह शुरू नहीं हुआ",
+    "Startup.Failure.Body": "\"{0}\" चरण में स्टार्टअप विफल रहा। पहले से लागू विजेट और सेटिंग्स सुरक्षित रखी गई हैं। त्रुटि लॉग में दर्ज की गई है।",
+    "Startup.Failure.Phase.Core": "सेटिंग्स और सेवाएँ",
+    "Startup.Failure.Phase.Widgets": "विजेट पुनर्स्थापना"
 }

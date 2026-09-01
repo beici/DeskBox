@@ -2553,5 +2553,9 @@
     "Settings.Animation.FrameRate.Tier.Low": "কম (30 fps)",
     "Settings.Animation.FrameRate.Tier.Medium": "মধ্যম (60 fps)",
     "Settings.Animation.FrameRate.Tier.High": "উচ্চ (90 fps)",
-    "Settings.Animation.FrameRate.Tier.Max": "সর্বোচ্চ (120 fps)"
+    "Settings.Animation.FrameRate.Tier.Max": "সর্বোচ্চ (120 fps)",
+    "Startup.Failure.Title": "DeskBox সম্পূর্ণভাবে শুরু হয়নি",
+    "Startup.Failure.Body": "\"{0}\" ধাপে স্টার্টআপ ব্যর্থ হয়েছে। ইতিমধ্যে প্রয়োগ করা উইজেট ও সেটিংস সংরক্ষিত থাকবে। ত্রুটিটি লগে লেখা হয়েছে।",
+    "Startup.Failure.Phase.Core": "সেটিংস ও সার্ভিস",
+    "Startup.Failure.Phase.Widgets": "উইজেট পুনরুদ্ধার"
 }

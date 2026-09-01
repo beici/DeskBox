@@ -958,11 +958,17 @@ public sealed partial class FileSurfaceContent :
             return;
         }
 
-        if (!FileItemDragPackage.TryPrepare(
+        // DEF-023 (THR-03): the StorageItem broker round-trips are deferred
+        // (SetDataProvider + GetStorageItemsAsync, mirroring
+        // QuickCaptureDragPackage) instead of blocking the UI STA with
+        // GetAwaiter().GetResult() — a slow or network drive used to freeze
+        // the shell for the whole drag-start. The event handler itself stays
+        // fully synchronous, preserving drag-commit semantics.
+        if (!FileItemDragPackage.TryPrepareDeferred(
                 e.Data,
                 selectedItems,
                 WidgetId,
-                paths => _fileService.GetStorageItems(paths),
+                _fileService,
                 paths => paths.Count == 1
                     ? Path.GetFileName(paths[0])
                     : paths.Count.ToString(),

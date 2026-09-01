@@ -2553,5 +2553,9 @@
     "Settings.Animation.FrameRate.Tier.Low": "低（30 fps）",
     "Settings.Animation.FrameRate.Tier.Medium": "中（60 fps）",
     "Settings.Animation.FrameRate.Tier.High": "高（90 fps）",
-    "Settings.Animation.FrameRate.Tier.Max": "最高（120 fps）"
+    "Settings.Animation.FrameRate.Tier.Max": "最高（120 fps）",
+    "Startup.Failure.Title": "DeskBox が完全に起動しませんでした",
+    "Startup.Failure.Body": "「{0}」の段階で起動に失敗しました。適用済みのウィジェットと設定は保持されます。エラーはログに記録されました。",
+    "Startup.Failure.Phase.Core": "設定とサービスの初期化",
+    "Startup.Failure.Phase.Widgets": "ウィジェットの復元"
 }

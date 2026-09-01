@@ -2553,5 +2553,9 @@
     "Settings.Animation.FrameRate.Tier.Low": "Basse (30 i/s)",
     "Settings.Animation.FrameRate.Tier.Medium": "Moyenne (60 i/s)",
     "Settings.Animation.FrameRate.Tier.High": "Haute (90 i/s)",
-    "Settings.Animation.FrameRate.Tier.Max": "Maximale (120 i/s)"
+    "Settings.Animation.FrameRate.Tier.Max": "Maximale (120 i/s)",
+    "Startup.Failure.Title": "DeskBox n'a pas démarré complètement",
+    "Startup.Failure.Body": "Le démarrage a échoué à l'étape « {0} ». Les widgets et paramètres déjà appliqués sont conservés. L'erreur a été consignée dans le journal.",
+    "Startup.Failure.Phase.Core": "paramètres et services",
+    "Startup.Failure.Phase.Widgets": "restauration des widgets"
 }

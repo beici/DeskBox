@@ -2553,5 +2553,9 @@
     "Settings.Animation.FrameRate.Tier.Low": "منخفض (30 إطارًا)",
     "Settings.Animation.FrameRate.Tier.Medium": "متوسط (60 إطارًا)",
     "Settings.Animation.FrameRate.Tier.High": "مرتفع (90 إطارًا)",
-    "Settings.Animation.FrameRate.Tier.Max": "أقصى (120 إطارًا)"
+    "Settings.Animation.FrameRate.Tier.Max": "أقصى (120 إطارًا)",
+    "Startup.Failure.Title": "لم يكتمل تشغيل DeskBox",
+    "Startup.Failure.Body": "فشل بدء التشغيل في مرحلة \"{0}\". يتم الاحتفاظ بالودجات والإعدادات المطبقة بالفعل. تم تسجيل الخطأ في السجل.",
+    "Startup.Failure.Phase.Core": "الإعدادات والخدمات",
+    "Startup.Failure.Phase.Widgets": "استعادة الودجات"
 }

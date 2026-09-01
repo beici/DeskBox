@@ -98,7 +98,7 @@ public sealed class WidgetVisualActivityContractTests
         string compactLive = ExtractSection(
             source,
             "private void StartCompactLiveIndeterminate(bool isFullBleed)",
-            "private DispatcherQueueTimer? _compactLiveBreathingTimer");
+            "private void ApplyFullBleedVisibility(bool visible)");
         string edgeGlow = ExtractSection(
             source,
             "private ScalarKeyFrameAnimation? _edgeGlowPulseAnimation;",

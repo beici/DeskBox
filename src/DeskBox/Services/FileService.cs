@@ -844,44 +844,6 @@ public sealed partial class FileService
         return items;
     }
 
-    public IReadOnlyList<IStorageItem> GetStorageItems(IEnumerable<string> sourcePaths)
-    {
-        var items = new List<IStorageItem>();
-
-        foreach (string path in sourcePaths
-                     .Where(path => !string.IsNullOrWhiteSpace(path))
-                     .Select(Path.GetFullPath)
-                     .Distinct(StringComparer.OrdinalIgnoreCase))
-        {
-            try
-            {
-                string accessPath = ResolveStorageAccessPath(path);
-                if (Directory.Exists(accessPath))
-                {
-                    var folder = TryGetStorageFolder(accessPath);
-                    if (folder is not null)
-                    {
-                        items.Add(folder);
-                    }
-                }
-                else if (File.Exists(accessPath))
-                {
-                    var file = TryGetStorageFile(accessPath);
-                    if (file is not null)
-                    {
-                        items.Add(file);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                App.Log($"[StorageItems] Failed to access '{path}': {ex.Message}");
-            }
-        }
-
-        return items;
-    }
-
     private static string ResolveStorageAccessPath(string path)
     {
         if (!ShortcutHelper.IsShortcutPath(path) &&
@@ -987,73 +949,12 @@ public sealed partial class FileService
         }
     }
 
-    private static StorageFile? TryGetStorageFile(string path)
-    {
-        var originalAttrs = StripBlockingAttributes(path);
-
-        try
-        {
-            return StorageFile.GetFileFromPathAsync(path).AsTask().GetAwaiter().GetResult();
-        }
-        catch (Exception directEx)
-        {
-            try
-            {
-                string? parentPath = Path.GetDirectoryName(path);
-                string fileName = Path.GetFileName(path);
-                if (string.IsNullOrWhiteSpace(parentPath) || string.IsNullOrWhiteSpace(fileName))
-                {
-                    App.Log($"[StorageItems] Failed to access '{path}': {directEx.Message}");
-                    return null;
-                }
-
-                var parentAttrs = StripBlockingAttributes(parentPath);
-                try
-                {
-                    var parent = StorageFolder.GetFolderFromPathAsync(parentPath).AsTask().GetAwaiter().GetResult();
-                    return parent.GetFileAsync(fileName).AsTask().GetAwaiter().GetResult();
-                }
-                finally
-                {
-                    RestoreAttributes(parentPath, parentAttrs);
-                }
-            }
-            catch (Exception parentEx)
-            {
-                App.Log($"[StorageItems] Failed to access '{path}': {directEx.Message}; parent lookup: {parentEx.Message}");
-                return null;
-            }
-        }
-        finally
-        {
-            RestoreAttributes(path, originalAttrs);
-        }
-    }
-
     private static async Task<StorageFolder?> TryGetStorageFolderAsync(string path)
     {
         var originalAttrs = StripBlockingAttributes(path);
         try
         {
             return await StorageFolder.GetFolderFromPathAsync(path);
-        }
-        catch (Exception ex)
-        {
-            App.Log($"[StorageItems] Failed to access folder '{path}': {ex.Message}");
-            return null;
-        }
-        finally
-        {
-            RestoreAttributes(path, originalAttrs);
-        }
-    }
-
-    private static StorageFolder? TryGetStorageFolder(string path)
-    {
-        var originalAttrs = StripBlockingAttributes(path);
-        try
-        {
-            return StorageFolder.GetFolderFromPathAsync(path).AsTask().GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {

@@ -2297,7 +2297,9 @@ public sealed partial class WidgetShell : UserControl
         ApplyEdgeGlow(presentation);
         ApplyParticles(presentation);
         ApplySpectrum(presentation);
-        ApplyShimmer(presentation);
+        // ApplyShimmer removed with DEF-018: it only zeroed the shimmer
+        // opacity and stopped the (deleted) breath-border timer.
+        CompactShimmer.Opacity = 0;
         ApplyConditionalAnimations(presentation);
 
         ApplyCompactLiveState();
@@ -2878,56 +2880,9 @@ public sealed partial class WidgetShell : UserControl
         StartCompactLiveIndeterminate(isFullBleed);
     }
 
-    private DispatcherQueueTimer? _compactLiveBreathingTimer;
     private ScalarKeyFrameAnimation? _compactLiveTranslationAnimation;
     private ScalarKeyFrameAnimation? _compactLiveOpacityAnimation;
     private double _compactLiveIndeterminateSegment;
-    private double _compactLiveBreathingPhase;
-
-    private void StartCompactLiveBreathing()
-    {
-        if (!_isHostVisualActivityEnabled ||
-            !IsLoaded ||
-            !_isCollapsed ||
-            !CompactAmbientAnimationsEnabled() ||
-            !SystemAnimationsEnabled())
-        {
-            StopCompactLiveBreathing();
-            return;
-        }
-
-        if (_compactLiveBreathingTimer is not null)
-        {
-            return;
-        }
-
-        _compactLiveBreathingPhase = 0;
-        _compactLiveBreathingTimer = DispatcherQueue.CreateTimer();
-        _compactLiveBreathingTimer.Interval = TimeSpan.FromMilliseconds(50);
-        _compactLiveBreathingTimer.Tick += CompactLiveBreathingTimer_Tick;
-        PerformanceLogger.RecordTransientUiTimerCreated();
-        _compactLiveBreathingTimer.Start();
-    }
-
-    private void StopCompactLiveBreathing()
-    {
-        if (_compactLiveBreathingTimer is not { } timer)
-        {
-            return;
-        }
-
-        _compactLiveBreathingTimer = null;
-        timer.Stop();
-        timer.Tick -= CompactLiveBreathingTimer_Tick;
-        PerformanceLogger.RecordTransientUiTimerReleased();
-    }
-
-    private void CompactLiveBreathingTimer_Tick(DispatcherQueueTimer sender, object args)
-    {
-        _compactLiveBreathingPhase += 0.06;
-        CompactLiveProgress.Opacity =
-            0.6 + 0.2 * Math.Sin(_compactLiveBreathingPhase);
-    }
 
     private void ApplyFullBleedVisibility(bool visible)
     {
@@ -3383,118 +3338,14 @@ public sealed partial class WidgetShell : UserControl
     }
 
     // ── Bottom glow (music playback) ─────────────────────────
-
-    private DispatcherQueueTimer? _bottomGlowTimer;
-    private double _bottomGlowPhase;
+    // (Removed with DEF-018: the bottom-glow effect was already retired —
+    // ApplySpectrum collapses the element — so the 20Hz CPU timer driving it
+    // was dead weight and is deleted together with the breath-border timer.)
 
     private void ApplySpectrum(WidgetCompactPresentation p)
     {
         // Bottom glow removed - progress bar is sufficient
         CompactBottomGlow.Visibility = Visibility.Collapsed;
-        StopBottomGlow();
-    }
-
-    private void StartBottomGlow()
-    {
-        if (!_isHostVisualActivityEnabled ||
-            !IsLoaded ||
-            !_isCollapsed ||
-            !CompactAmbientAnimationsEnabled() ||
-            !SystemAnimationsEnabled())
-        {
-            StopBottomGlow();
-            CompactBottomGlow.Opacity = 0.6;
-            return;
-        }
-
-        if (_bottomGlowTimer is not null)
-        {
-            return;
-        }
-
-        _bottomGlowPhase = 0;
-        _bottomGlowTimer = DispatcherQueue.CreateTimer();
-        _bottomGlowTimer.Interval = TimeSpan.FromMilliseconds(50);
-        _bottomGlowTimer.Tick += BottomGlowTimer_Tick;
-        PerformanceLogger.RecordTransientUiTimerCreated();
-        _bottomGlowTimer.Start();
-    }
-
-    private void StopBottomGlow()
-    {
-        if (_bottomGlowTimer is not { } timer)
-        {
-            return;
-        }
-
-        _bottomGlowTimer = null;
-        timer.Stop();
-        timer.Tick -= BottomGlowTimer_Tick;
-        PerformanceLogger.RecordTransientUiTimerReleased();
-    }
-
-    private void BottomGlowTimer_Tick(DispatcherQueueTimer sender, object args)
-    {
-        _bottomGlowPhase += 0.035;
-        CompactBottomGlow.Opacity =
-            0.35 + 0.3 * Math.Sin(_bottomGlowPhase);
-    }
-
-    // ── Breathing border (search) ──────────────────────────────
-
-    private DispatcherQueueTimer? _breathBorderTimer;
-    private double _breathBorderPhase;
-
-    private void ApplyShimmer(WidgetCompactPresentation p)
-    {
-        CompactShimmer.Opacity = 0;
-        StopBreathBorder();
-    }
-
-    private void StartBreathBorder()
-    {
-        if (!_isHostVisualActivityEnabled ||
-            !IsLoaded ||
-            !_isCollapsed ||
-            !CompactAmbientAnimationsEnabled() ||
-            !SystemAnimationsEnabled())
-        {
-            StopBreathBorder();
-            CompactEdgeGlow.Opacity = 0.35;
-            return;
-        }
-
-        if (_breathBorderTimer is not null)
-        {
-            return;
-        }
-
-        _breathBorderPhase = 0;
-        _breathBorderTimer = DispatcherQueue.CreateTimer();
-        _breathBorderTimer.Interval = TimeSpan.FromMilliseconds(50);
-        _breathBorderTimer.Tick += BreathBorderTimer_Tick;
-        PerformanceLogger.RecordTransientUiTimerCreated();
-        _breathBorderTimer.Start();
-    }
-
-    private void StopBreathBorder()
-    {
-        if (_breathBorderTimer is not { } timer)
-        {
-            return;
-        }
-
-        _breathBorderTimer = null;
-        timer.Stop();
-        timer.Tick -= BreathBorderTimer_Tick;
-        PerformanceLogger.RecordTransientUiTimerReleased();
-    }
-
-    private void BreathBorderTimer_Tick(DispatcherQueueTimer sender, object args)
-    {
-        _breathBorderPhase += 0.03;
-        CompactEdgeGlow.Opacity =
-            0.35 + 0.15 * Math.Sin(_breathBorderPhase);
     }
 
     // ── Conditional animations (todo flash, capture bounce) ────
@@ -3866,10 +3717,7 @@ public sealed partial class WidgetShell : UserControl
     private void StopCompactVisualTimers()
     {
         StopCompactLiveIndeterminate();
-        StopCompactLiveBreathing();
         StopParticles();
-        StopBottomGlow();
-        StopBreathBorder();
         StopEdgeGlowPulse();
     }
 

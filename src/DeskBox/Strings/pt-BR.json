@@ -2553,5 +2553,9 @@
     "Settings.Animation.FrameRate.Tier.Low": "Baixa (30 fps)",
     "Settings.Animation.FrameRate.Tier.Medium": "Média (60 fps)",
     "Settings.Animation.FrameRate.Tier.High": "Alta (90 fps)",
-    "Settings.Animation.FrameRate.Tier.Max": "Máxima (120 fps)"
+    "Settings.Animation.FrameRate.Tier.Max": "Máxima (120 fps)",
+    "Startup.Failure.Title": "O DeskBox não iniciou completamente",
+    "Startup.Failure.Body": "A inicialização falhou na etapa \"{0}\". Os widgets e as configurações já aplicados são mantidos. O erro foi registrado no log.",
+    "Startup.Failure.Phase.Core": "configurações e serviços",
+    "Startup.Failure.Phase.Widgets": "restauração de widgets"
 }

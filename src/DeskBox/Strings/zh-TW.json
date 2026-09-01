@@ -2553,5 +2553,9 @@
     "Settings.Animation.FrameRate.Tier.Low": "低（30 影格）",
     "Settings.Animation.FrameRate.Tier.Medium": "中（60 影格）",
     "Settings.Animation.FrameRate.Tier.High": "高（90 影格）",
-    "Settings.Animation.FrameRate.Tier.Max": "最高（120 影格）"
+    "Settings.Animation.FrameRate.Tier.Max": "最高（120 影格）",
+    "Startup.Failure.Title": "DeskBox 未能完全啟動",
+    "Startup.Failure.Body": "啟動在「{0}」階段失敗。已套用的格子與設定會保留。錯誤已寫入日誌。",
+    "Startup.Failure.Phase.Core": "設定與服務初始化",
+    "Startup.Failure.Phase.Widgets": "格子還原"
 }

@@ -2553,5 +2553,9 @@
     "Settings.Animation.FrameRate.Tier.Low": "Baja (30 fps)",
     "Settings.Animation.FrameRate.Tier.Medium": "Media (60 fps)",
     "Settings.Animation.FrameRate.Tier.High": "Alta (90 fps)",
-    "Settings.Animation.FrameRate.Tier.Max": "Máxima (120 fps)"
+    "Settings.Animation.FrameRate.Tier.Max": "Máxima (120 fps)",
+    "Startup.Failure.Title": "DeskBox no se inició por completo",
+    "Startup.Failure.Body": "El inicio falló en la fase \"{0}\". Los widgets y ajustes ya aplicados se conservan. El error se registró en el registro.",
+    "Startup.Failure.Phase.Core": "configuración y servicios",
+    "Startup.Failure.Phase.Widgets": "restauración de widgets"
 }

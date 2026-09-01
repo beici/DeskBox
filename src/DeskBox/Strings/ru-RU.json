@@ -2553,5 +2553,9 @@
     "Settings.Animation.FrameRate.Tier.Low": "Низкая (30 к/с)",
     "Settings.Animation.FrameRate.Tier.Medium": "Средняя (60 к/с)",
     "Settings.Animation.FrameRate.Tier.High": "Высокая (90 к/с)",
-    "Settings.Animation.FrameRate.Tier.Max": "Максимальная (120 к/с)"
+    "Settings.Animation.FrameRate.Tier.Max": "Максимальная (120 к/с)",
+    "Startup.Failure.Title": "DeskBox не запустился полностью",
+    "Startup.Failure.Body": "Сбой запуска на этапе «{0}». Уже применённые виджеты и настройки сохранены. Ошибка записана в журнал.",
+    "Startup.Failure.Phase.Core": "настройки и службы",
+    "Startup.Failure.Phase.Widgets": "восстановление виджетов"
 }

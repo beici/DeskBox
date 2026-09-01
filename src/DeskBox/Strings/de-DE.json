@@ -2553,5 +2553,9 @@
     "Settings.Animation.FrameRate.Tier.Low": "Niedrig (30 fps)",
     "Settings.Animation.FrameRate.Tier.Medium": "Mittel (60 fps)",
     "Settings.Animation.FrameRate.Tier.High": "Hoch (90 fps)",
-    "Settings.Animation.FrameRate.Tier.Max": "Maximal (120 fps)"
+    "Settings.Animation.FrameRate.Tier.Max": "Maximal (120 fps)",
+    "Startup.Failure.Title": "DeskBox wurde nicht vollständig gestartet",
+    "Startup.Failure.Body": "Start fehlgeschlagen in der Phase \"{0}\". Bereits angewendete Widgets und Einstellungen bleiben erhalten. Der Fehler wurde im Protokoll vermerkt.",
+    "Startup.Failure.Phase.Core": "Einstellungen und Dienste",
+    "Startup.Failure.Phase.Widgets": "Wiederherstellung der Widgets"
 }

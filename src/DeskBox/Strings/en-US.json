@@ -2553,5 +2553,9 @@
     "Settings.Animation.FrameRate.Tier.Low": "Low (30 fps)",
     "Settings.Animation.FrameRate.Tier.Medium": "Medium (60 fps)",
     "Settings.Animation.FrameRate.Tier.High": "High (90 fps)",
-    "Settings.Animation.FrameRate.Tier.Max": "Max (120 fps)"
+    "Settings.Animation.FrameRate.Tier.Max": "Max (120 fps)",
+    "Startup.Failure.Title": "DeskBox did not start completely",
+    "Startup.Failure.Body": "Startup failed at \"{0}\". Widgets and settings already applied are kept. The error was written to the log.",
+    "Startup.Failure.Phase.Core": "settings and services",
+    "Startup.Failure.Phase.Widgets": "widget restoration"
 }

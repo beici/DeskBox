@@ -270,6 +270,7 @@ public partial class App : Application
         }
         AppUpdateService.CheckCompleted += OnUpdateCheckCompleted;
         UnhandledException += OnUnhandledException;
+        RegisterGlobalExceptionBackstops();
         Log($"Distribution channel={DistributionService.ChannelName} packaged={DistributionService.IsPackaged}");
         Log($"Process integrity {GetProcessIntegrityReport()} pid={Environment.ProcessId} processPath={Environment.ProcessPath ?? "unknown"} baseDir={AppContext.BaseDirectory}");
         Log($"Process parent {GetParentProcessReport()} commandLine={Environment.CommandLine}");
@@ -897,6 +898,10 @@ public partial class App : Application
         Log("OnLaunched start");
         LogBuildIdentity();
 
+        // DEF-020: phase marker for the failure report below; declared outside
+        // the try so the catch can name the stage that failed.
+        string startupPhase = "settings and services";
+
         try
         {
             string? updateInstallOutcome = TryGetUpdateInstallOutcome(Environment.GetCommandLineArgs());
@@ -964,7 +969,10 @@ public partial class App : Application
             DesktopDoubleClickActivationService = new DesktopDoubleClickActivationService(
                 SettingsService,
                 ToggleWidgetsFromDesktopDoubleClickAsync);
-            DesktopDoubleClickActivationService.RefreshRegistration();
+            SafeFireAndForget(async () =>
+            {
+                await DesktopDoubleClickActivationService.RefreshRegistrationAsync();
+            }, "InitializeLifecycleServices");
             _displayTopologyTransitionCoordinator = new DisplayTopologyTransitionCoordinator(
                 UiDispatcherQueue,
                 DisplayAreaWatcherService.CaptureCurrentSignature,
@@ -974,6 +982,7 @@ public partial class App : Application
             InitializeShowDesktopSelfHealWatcher();
 
             // Phase 3: Restore widgets
+            startupPhase = "widget restoration";
             int recoveredDesktopItems = await new DesktopOrganizationTransaction(
                 SettingsService,
                 FileService).RecoverPendingAsync();
@@ -1096,7 +1105,53 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            Log($"Exception in OnLaunched: {ex}");
+            // DEF-020 (EXC-01): a swallowed startup failure left DeskBox
+            // half-launched with no user feedback. Surface the phase that
+            // failed (when localization is already up — it may itself be the
+            // failing stage) and keep the full detail in the log.
+            Log($"Exception in OnLaunched phase={startupPhase}: {ex}");
+            ShowStartupFailureNotification(startupPhase, ex);
+        }
+    }
+
+    /// <summary>
+    /// DEF-020 (EXC-01): best-effort user-visible signal that startup did not
+    /// complete, including the phase that failed. Never throws: notification
+    /// channels (native toast / tray balloon) are tried in order and failures
+    /// are only logged — the process stays alive either way.
+    /// </summary>
+    private void ShowStartupFailureNotification(string startupPhase, Exception ex)
+    {
+        string phaseKey = startupPhase == "widget restoration"
+            ? "Startup.Failure.Phase.Widgets"
+            : "Startup.Failure.Phase.Core";
+        try
+        {
+            string title = LocalizationService?.T("Startup.Failure.Title") ?? "DeskBox startup incomplete";
+            string phase = LocalizationService?.T(phaseKey) ?? startupPhase;
+            string body = LocalizationService is null
+                ? $"Startup failed at \"{startupPhase}\". See log for details."
+                : LocalizationService.Format("Startup.Failure.Body", phase);
+            Log($"[Startup] Failure notification: title={title} phase={phase}");
+            if (_nativeNotificationService?.TryShow(title, body) == true)
+            {
+                return;
+            }
+
+            _trayIcon?.ShowNotification(
+                title,
+                body,
+                NotificationIcon.Error,
+                customIconHandle: null,
+                largeIcon: false,
+                sound: false,
+                respectQuietTime: true,
+                realtime: false,
+                timeout: TimeSpan.FromSeconds(10));
+        }
+        catch (Exception notifyEx)
+        {
+            Log($"[Startup] Failure notification itself failed: {notifyEx.Message}");
         }
     }
 
@@ -1294,15 +1349,25 @@ public partial class App : Application
             reason.Contains("explorer-restart", StringComparison.OrdinalIgnoreCase);
         if (requiresExternalRecovery)
         {
-            try
+            SafeFireAndForget(async () =>
             {
-                GlobalHotkeyService?.RefreshRegistration();
-                DesktopDoubleClickActivationService?.RefreshRegistration();
-            }
-            catch (Exception ex)
-            {
-                Log($"[Lifecycle] Global hotkey recovery failed for {reason}: {ex.Message}");
-            }
+                try
+                {
+                    if (GlobalHotkeyService is not null)
+                    {
+                        await GlobalHotkeyService.RefreshRegistrationAsync();
+                    }
+
+                    if (DesktopDoubleClickActivationService is not null)
+                    {
+                        await DesktopDoubleClickActivationService.RefreshRegistrationAsync();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log($"[Lifecycle] Global hotkey recovery failed for {reason}: {ex.Message}");
+                }
+            }, "OnLifecycleRecoveryRequested");
 
             ScheduleExternalStateRecovery();
             if (_everythingSearchService is not null &&
@@ -3751,6 +3816,30 @@ public partial class App : Application
     {
         Log($"Unhandled exception: {e.Exception}");
         e.Handled = true;
+    }
+
+    /// <summary>
+    /// DEF-021 (EXC-02): diagnostic backstops for exceptions that escape the
+    /// XAML UnhandledException handler — fire-and-forget task faults surface
+    /// only on the finalizer thread via UnobservedTaskException, and
+    /// non-UI-thread exceptions via AppDomain.UnhandledException. Both are
+    /// log-and-leave-trail only: the process outcome is unchanged, and the
+    /// task fault is marked observed so the finalizer does not re-throw it.
+    /// </summary>
+    private void RegisterGlobalExceptionBackstops()
+    {
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            Log($"[Backstop] UnobservedTaskException: {e.Exception}");
+            e.SetObserved();
+        };
+
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            // This fires for exceptions no handler could intercept; keep the
+            // last diagnostic line on disk for the post-mortem either way.
+            Log($"[Backstop] AppDomain.UnhandledException terminating={e.IsTerminating}: {e.ExceptionObject}");
+        };
     }
 
     // ─── Search Services ─────────────────────────────────────────────

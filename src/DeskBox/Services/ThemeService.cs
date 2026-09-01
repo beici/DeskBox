@@ -219,7 +219,36 @@ public sealed class ThemeService
         }
 
         ApplyToAllWindows();
-        AppearanceChanged?.Invoke();
+        RaiseAppearanceChanged();
         App.ScheduleLightMemoryCleanup();
+    }
+
+    /// <summary>
+    /// DEF-019 (EVT-01): broadcast with per-handler exception isolation,
+    /// mirroring LocalizationService.RaiseLanguageChanged. Without the
+    /// snapshot + isolation, one throwing subscriber silently truncated the
+    /// notification for every later subscriber — leaving half the UI on the
+    /// previous theme with no diagnostic trail.
+    /// </summary>
+    private void RaiseAppearanceChanged()
+    {
+        if (AppearanceChanged is null)
+        {
+            return;
+        }
+
+        foreach (var handler in AppearanceChanged.GetInvocationList())
+        {
+            try
+            {
+                ((Action)handler).Invoke();
+            }
+            catch (Exception ex)
+            {
+                App.Log(
+                    "[ThemeService] AppearanceChanged handler " +
+                    $"'{handler.Method.DeclaringType?.Name}.{handler.Method.Name}' threw: {ex.Message}");
+            }
+        }
     }
 }
