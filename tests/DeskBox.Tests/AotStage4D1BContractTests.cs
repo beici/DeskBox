@@ -55,14 +55,15 @@ public sealed class AotStage4D1BContractTests
 
         IReadOnlyDictionary<string, int> usages = ReadLocalizedXamlUsages();
         Assert.Equal(5, usages.Count);
-        // DEF-030: +1 SettingsCard each for the Quick Capture record hover
-        // text color row in SettingsWindow.xaml.
-        Assert.Equal(167, usages["toolkit:SettingsCard|HeaderKey"]);
-        Assert.Equal(137, usages["toolkit:SettingsCard|DescriptionKey"]);
+        // Baselines recomputed on the merged tree (both sides added
+        // localized controls): our Quick Capture hover color SettingsCard
+        // (DEF-030) plus upstream 1.4.9 memory/auto-start settings.
+        Assert.Equal(168, usages["toolkit:SettingsCard|HeaderKey"]);
+        Assert.Equal(138, usages["toolkit:SettingsCard|DescriptionKey"]);
         Assert.Equal(21, usages["toolkit:SettingsExpander|HeaderKey"]);
         Assert.Equal(8, usages["toolkit:SettingsExpander|DescriptionKey"]);
         Assert.Equal(2, usages["TextBox|HeaderKey"]);
-        Assert.Equal(335, usages.Values.Sum());
+        Assert.Equal(337, usages.Values.Sum());
     }
 
     [Fact]
