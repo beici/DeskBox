@@ -73,3 +73,14 @@ Start-Process E:\DeskBox\src\DeskBox\bin\Debug\net10.0-windows10.0.22621.0\DeskB
 ## 后续批次
 
 （无——本轮迭代全部批次已闭环）
+
+## F8 R2 Round 1（Linux Hermes 批次，2026-09-02）
+
+> 对应提交：`663c593` / `cf0fadb` / `3f2504d` / `4701b39`；CI run 33561624305（Build + Test 全绿）已覆盖编译与回归层验证。以下为 CI 无法覆盖的实机项。
+
+| # | 验证项 | 提交 | 预期表现 | 状态 |
+|---|---|---|---|---|
+| F8-1 | 传入任意多窗口场景反复触发格子组唤起/收起（DEF-034 相邻回归） | 4701b39 | z-order 重排正常，无可见闪烁/跳位；日志无 `[ZOrder] Window order re-checked` 异常刷屏（该日志仅在锁竞争真实发生时出现，低频属预期） | 待验证 |
+| F8-2 | Store 构建（如有）：启动 + 设置页自动启动开关 + Onboarding 步骤 4 开关（DEF-035/036） | 4701b39 | UI 无冻结感；开关状态与系统设置一致；首次点击开关响应正常（缓存未命中路径） | 待验证（非 Store 构建不受影响） |
+| F8-3 | 长时间挂机 + 频繁触发后台内存清理调度（DEF-037） | 4701b39 | 日志无 ObjectDisposedException / `[Memory] Background cleanup coordinator failed`；内存平稳 | 待验证 |
+| F8-4 | 常规冒烟：启动 → 桌面格子加载 → 随记/文件/天气各一次交互 | 4701b39 | 全部正常（本批未触碰这些路径，仅回归确认） | 待验证 |
