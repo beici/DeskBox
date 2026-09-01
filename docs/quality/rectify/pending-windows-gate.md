@@ -1,5 +1,7 @@
 # Windows 侧门禁待验证项汇总（pending-windows-gate）
 
+> **2026-09-01 更新：GitHub Actions CI（windows-latest）已全绿——Release x64 Build + 3015/3015 测试通过（run 33477323326）。下表中「构建」「测试」两类自动项已闭环，明细见 `ci-verification-report.md`；「人工验证」项仍需实机执行。**
+>
 > 背景：本轮迭代（F6 批次 A/B/C/D + F7 卫生批次 + 收敛式深度审查）在 Linux 服务器上以纯静态方式进行（代码审查 + 静态门禁脚本），**没有 WinUI3/Windows 编译环境**。所有代码改动都经过 Linux 静态验证（`scripts/quality/static_gate.py`：12 语言键一致、async void/同步等待/空 catch/反射基线对比、剪贴板写配对、契约断言重放），但**全部改动未经编译验证**。
 > 请在每次推送后于 Windows 机按 `AGENTS.md`（见任务附录）执行构建与回归；本文件汇总每批待验证点，验证通过后请标记 ✅ 并注明结果。
 
