@@ -720,6 +720,183 @@ public static class WidgetLayerService
             "idle-peer-order");
     }
 
+    /// <summary>
+    /// True when the HWND chain already equals the target order: each handle
+    /// sits directly below its predecessor and the first handle sits directly
+    /// below the boundary window. Re-applying an unchanged order is not free
+    /// for acrylic-backed widgets - DWM re-samples the backdrop whenever a
+    /// window changes position in the z-order even when nothing visibly
+    /// moves, which users see as an edge flash on every expand, collapse,
+    /// and title click.
+    /// </summary>
+    private static bool IsWindowChainAlreadyHighestToLowest(
+        IReadOnlyList<IntPtr> handles,
+        IntPtr boundary)
+    {
+        if (boundary == Win32Helper.HWND_TOP)
+        {
+            // HWND_TOP is a sentinel rather than a real window, so the anchor
+            // above the first handle cannot be verified; fall through to the
+            // explicit reorder.
+            return false;
+        }
+
+        for (int index = 0; index < handles.Count - 1; index++)
+        {
+            if (Win32Helper.GetWindow(handles[index], Win32Helper.GW_HWNDNEXT) !=
+                handles[index + 1])
+            {
+                return false;
+            }
+        }
+
+        return handles.Count > 0 &&
+               Win32Helper.GetWindow(handles[0], Win32Helper.GW_HWNDPREV) == boundary;
+    }
+
+    /// <summary>
+    /// Applies the target order by moving only the windows that are actually
+    /// out of place. A title release, expand lease, or collapse changes the
+    /// position of a single widget while every peer keeps its relative
+    /// order; re-issuing DeferWindowPos for the untouched peers makes DWM
+    /// re-sample each acrylic backdrop and shows up as an edge flash across
+    /// the whole bar. The longest in-order subsequence of the live chain is
+    /// kept in place and only the remaining windows are moved (bottom to
+    /// top, each anchored below its target predecessor). Returns false when
+    /// the live chain cannot be scanned reliably so the caller can fall back
+    /// to the full reorder.
+    /// </summary>
+    private static bool TryApplyMinimalWindowMoves(
+        IReadOnlyList<IntPtr> handles,
+        IntPtr boundary,
+        string reason)
+    {
+        var handleSet = new HashSet<IntPtr>(handles);
+        List<IntPtr> current = [];
+        IntPtr cursor = FindHighestPeer(handles);
+        while (cursor != IntPtr.Zero)
+        {
+            if (handleSet.Contains(cursor))
+            {
+                current.Add(cursor);
+            }
+
+            cursor = Win32Helper.GetWindow(cursor, Win32Helper.GW_HWNDNEXT);
+        }
+
+        if (current.Count != handles.Count)
+        {
+            return false;
+        }
+
+        int count = handles.Count;
+        var targetIndex = new Dictionary<IntPtr, int>(count);
+        for (int index = 0; index < count; index++)
+        {
+            targetIndex[handles[index]] = index;
+        }
+
+        int[] sequence = new int[current.Count];
+        for (int index = 0; index < current.Count; index++)
+        {
+            sequence[index] = targetIndex[current[index]];
+        }
+
+        // Longest strictly increasing subsequence of the live positions:
+        // those windows are already in correct relative order and stay put.
+        int[] lengths = new int[current.Count];
+        int[] previous = new int[current.Count];
+        int bestEnd = 0;
+        for (int index = 0; index < current.Count; index++)
+        {
+            lengths[index] = 1;
+            previous[index] = -1;
+            for (int prior = 0; prior < index; prior++)
+            {
+                if (sequence[prior] < sequence[index] &&
+                    lengths[prior] + 1 > lengths[index])
+                {
+                    lengths[index] = lengths[prior] + 1;
+                    previous[index] = prior;
+                }
+            }
+
+            if (lengths[index] > lengths[bestEnd])
+            {
+                bestEnd = index;
+            }
+        }
+
+        var keptCurrentIndex = new HashSet<int>();
+        for (int index = bestEnd; index >= 0; index = previous[index])
+        {
+            keptCurrentIndex.Add(index);
+        }
+
+        var currentIndexOf = new Dictionary<IntPtr, int>(current.Count);
+        for (int index = 0; index < current.Count; index++)
+        {
+            currentIndexOf[current[index]] = index;
+        }
+
+        // Collect the movers bottom-to-top so every anchor (the target
+        // predecessor) is already settled when its turn comes: it is either
+        // a kept window or an earlier mover.
+        var movers = new List<IntPtr>();
+        for (int index = count - 1; index >= 0; index--)
+        {
+            IntPtr handle = handles[index];
+            if (!keptCurrentIndex.Contains(currentIndexOf[handle]))
+            {
+                movers.Add(handle);
+            }
+        }
+
+        if (movers.Count == 0)
+        {
+            return true;
+        }
+
+        const uint flags =
+            Win32Helper.SWP_NOMOVE |
+            Win32Helper.SWP_NOSIZE |
+            Win32Helper.SWP_NOACTIVATE |
+            Win32Helper.SWP_NOOWNERZORDER;
+
+        IntPtr deferred = Win32Helper.BeginDeferWindowPos(movers.Count);
+        foreach (IntPtr handle in movers)
+        {
+            int index = targetIndex[handle];
+            IntPtr insertAfter = index == 0
+                ? boundary
+                : handles[index - 1];
+            deferred = Win32Helper.DeferWindowPos(
+                deferred,
+                handle,
+                insertAfter,
+                0,
+                0,
+                0,
+                0,
+                flags);
+            if (deferred == IntPtr.Zero)
+            {
+                break;
+            }
+        }
+
+        if (deferred != IntPtr.Zero && Win32Helper.EndDeferWindowPos(deferred))
+        {
+            App.Log(
+                $"[ZOrder] Window order minimized reason={reason} " +
+                $"total={count} moved={movers.Count} kept={count - movers.Count} " +
+                $"boundary=0x{boundary.ToInt64():X} highest=0x{handles[0].ToInt64():X}");
+            return true;
+        }
+
+        return false;
+    }
+
     private static bool ApplyWindowOrderHighestToLowest(
         IReadOnlyList<IntPtr> handles,
         IntPtr boundary,
@@ -728,6 +905,23 @@ public static class WidgetLayerService
         if (handles.Count == 0)
         {
             return true;
+        }
+
+        if (IsWindowChainAlreadyHighestToLowest(handles, boundary))
+        {
+            App.LogVerbose(
+                $"[ZOrder] Window order already correct reason={reason} " +
+                $"count={handles.Count} boundary=0x{boundary.ToInt64():X} " +
+                $"highest=0x{handles[0].ToInt64():X}");
+            return true;
+        }
+
+        lock (s_desktopLayerLock)
+        {
+            if (TryApplyMinimalWindowMoves(handles, boundary, reason))
+            {
+                return true;
+            }
         }
 
         lock (s_desktopLayerLock)
