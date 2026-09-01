@@ -2557,5 +2557,7 @@
     "Startup.Failure.Title": "DeskBox не запустился полностью",
     "Startup.Failure.Body": "Сбой запуска на этапе «{0}». Уже применённые виджеты и настройки сохранены. Ошибка записана в журнал.",
     "Startup.Failure.Phase.Core": "настройки и службы",
-    "Startup.Failure.Phase.Widgets": "восстановление виджетов"
+    "Startup.Failure.Phase.Widgets": "восстановление виджетов",
+    "Common.Close": "Закрыть",
+    "Common.More": "Ещё"
 }

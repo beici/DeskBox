@@ -2557,5 +2557,7 @@
     "Startup.Failure.Title": "DeskBox wurde nicht vollständig gestartet",
     "Startup.Failure.Body": "Start fehlgeschlagen in der Phase \"{0}\". Bereits angewendete Widgets und Einstellungen bleiben erhalten. Der Fehler wurde im Protokoll vermerkt.",
     "Startup.Failure.Phase.Core": "Einstellungen und Dienste",
-    "Startup.Failure.Phase.Widgets": "Wiederherstellung der Widgets"
+    "Startup.Failure.Phase.Widgets": "Wiederherstellung der Widgets",
+    "Common.Close": "Schließen",
+    "Common.More": "Mehr"
 }

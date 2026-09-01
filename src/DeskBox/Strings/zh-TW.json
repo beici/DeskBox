@@ -2557,5 +2557,7 @@
     "Startup.Failure.Title": "DeskBox 未能完全啟動",
     "Startup.Failure.Body": "啟動在「{0}」階段失敗。已套用的格子與設定會保留。錯誤已寫入日誌。",
     "Startup.Failure.Phase.Core": "設定與服務初始化",
-    "Startup.Failure.Phase.Widgets": "格子還原"
+    "Startup.Failure.Phase.Widgets": "格子還原",
+    "Common.Close": "關閉",
+    "Common.More": "更多"
 }

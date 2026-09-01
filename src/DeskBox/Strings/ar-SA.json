@@ -2557,5 +2557,7 @@
     "Startup.Failure.Title": "لم يكتمل تشغيل DeskBox",
     "Startup.Failure.Body": "فشل بدء التشغيل في مرحلة \"{0}\". يتم الاحتفاظ بالودجات والإعدادات المطبقة بالفعل. تم تسجيل الخطأ في السجل.",
     "Startup.Failure.Phase.Core": "الإعدادات والخدمات",
-    "Startup.Failure.Phase.Widgets": "استعادة الودجات"
+    "Startup.Failure.Phase.Widgets": "استعادة الودجات",
+    "Common.Close": "إغلاق",
+    "Common.More": "المزيد"
 }

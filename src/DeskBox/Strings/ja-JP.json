@@ -2557,5 +2557,7 @@
     "Startup.Failure.Title": "DeskBox が完全に起動しませんでした",
     "Startup.Failure.Body": "「{0}」の段階で起動に失敗しました。適用済みのウィジェットと設定は保持されます。エラーはログに記録されました。",
     "Startup.Failure.Phase.Core": "設定とサービスの初期化",
-    "Startup.Failure.Phase.Widgets": "ウィジェットの復元"
+    "Startup.Failure.Phase.Widgets": "ウィジェットの復元",
+    "Common.Close": "閉じる",
+    "Common.More": "その他"
 }

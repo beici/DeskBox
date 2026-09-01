@@ -2557,5 +2557,7 @@
     "Startup.Failure.Title": "DeskBox সম্পূর্ণভাবে শুরু হয়নি",
     "Startup.Failure.Body": "\"{0}\" ধাপে স্টার্টআপ ব্যর্থ হয়েছে। ইতিমধ্যে প্রয়োগ করা উইজেট ও সেটিংস সংরক্ষিত থাকবে। ত্রুটিটি লগে লেখা হয়েছে।",
     "Startup.Failure.Phase.Core": "সেটিংস ও সার্ভিস",
-    "Startup.Failure.Phase.Widgets": "উইজেট পুনরুদ্ধার"
+    "Startup.Failure.Phase.Widgets": "উইজেট পুনরুদ্ধার",
+    "Common.Close": "বন্ধ করুন",
+    "Common.More": "আরও"
 }

@@ -3,8 +3,8 @@
   "clipboard_setcontent": 8,
   "clipboard_marks": 14,
   "clipboard_unpaired": [],
-  "sync_wait_count": 134,
-  "empty_catch_count": 221,
+  "sync_wait_count": 131,
+  "empty_catch_count": 219,
   "reflection_count": 6,
   "contract_hits": 5179,
   "contract_misses": [

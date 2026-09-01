@@ -313,6 +313,12 @@ public sealed partial class SettingsWindow : Window
 
     private void OnGlobalHotkeyRegistrationChanged()
     {
+        // EVT-04 note: GlobalHotkeyService.RegistrationChanged currently has
+        // no publisher-side subscribers outside this page; the handler is
+        // kept (cheap, self-guarding) so a future publisher can re-wire
+        // without re-deriving the refresh sequence. Hotkey state shown in
+        // this window is additionally refreshed on Loaded and on language
+        // change (see ApplyLocalizedText).
         if (DispatcherQueue.HasThreadAccess)
         {
             ViewModel.RefreshGlobalHotkeyState();

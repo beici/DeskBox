@@ -2557,5 +2557,7 @@
     "Startup.Failure.Title": "O DeskBox não iniciou completamente",
     "Startup.Failure.Body": "A inicialização falhou na etapa \"{0}\". Os widgets e as configurações já aplicados são mantidos. O erro foi registrado no log.",
     "Startup.Failure.Phase.Core": "configurações e serviços",
-    "Startup.Failure.Phase.Widgets": "restauração de widgets"
+    "Startup.Failure.Phase.Widgets": "restauração de widgets",
+    "Common.Close": "Fechar",
+    "Common.More": "Mais"
 }
