@@ -164,9 +164,6 @@ public sealed class WidgetVisualActivityContractTests
     [InlineData(
         "src/DeskBox/Views/ContentWidgetWindow.TrayAnimations.cs",
         "AppWindow.Hide();")]
-    [InlineData(
-        "src/DeskBox/Views/QuickCaptureWidgetWindow.xaml.cs",
-        "_appWindow.Hide();")]
     public void VisualActivity_SuspendsOnlyAfterNativeWindowHide(
         string relativePath,
         string hideCall)
@@ -181,31 +178,10 @@ public sealed class WidgetVisualActivityContractTests
         Assert.True(hideIndex >= 0 && hideIndex < suspendIndex);
     }
 
-    [Fact]
-    public void QuickCaptureShow_ResumesVisualsBeforeRemovingCloak()
-    {
-        string source = Read("src/DeskBox/Views/QuickCaptureWidgetWindow.xaml.cs");
-        string show = ExtractSection(
-            source,
-            "public void ShowPreparedRaisedFromTray(bool persistVisibility = true)",
-            "public void EnsureRaisedFromTrayTopMost()");
-
-        int resumeIndex = show.IndexOf(
-            "NotifyCompactHostVisibilityChanged(true);",
-            StringComparison.Ordinal);
-        int revealIndex = show.IndexOf(
-            "_trayAnimation.RevealWindowForTrayShow();",
-            StringComparison.Ordinal);
-        Assert.True(resumeIndex >= 0 && resumeIndex < revealIndex);
-    }
-
     [Theory]
     [InlineData(
         "src/DeskBox/Views/ContentWidgetWindow.WindowInteraction.cs",
         "generation != _contentVisibilityGeneration")]
-    [InlineData(
-        "src/DeskBox/Views/QuickCaptureWidgetWindow.xaml.cs",
-        "generation != _visibleContentResumeGeneration")]
     public void RevealCompletedBackgroundWork_IsDelayedAndGenerationCancelled(
         string relativePath,
         string generationGuard)

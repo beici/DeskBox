@@ -24,10 +24,13 @@ using WinRT.Interop;
 namespace DeskBox.Views;
 
 /// <summary>
-/// Shared base class for all desktop widget windows (file, content, quick-capture).
+/// Shared base class for all desktop widget windows (file, content,
+/// quick-capture surfaces).
 /// Consolidates window setup, backdrop management, layer/Z-order control,
 /// drag/resize logic, and display-change restoration that was previously
-/// duplicated across ContentWidgetWindow and QuickCaptureWidgetWindow.
+/// duplicated across host implementations. (DEF-027: the dedicated
+/// QuickCaptureWidgetWindow host was removed; QuickCapture runs on the
+/// shared ContentWidgetWindow path.)
 /// </summary>
 public abstract partial class WidgetWindowBase : Window
 {

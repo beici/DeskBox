@@ -27,7 +27,6 @@ public sealed class WidgetCompactTrayVisibilityContractTests
 
     [Theory]
     [InlineData("src/DeskBox/Views/ContentWidgetWindow.xaml.cs")]
-    [InlineData("src/DeskBox/Views/QuickCaptureWidgetWindow.xaml.cs")]
     public void TrayHide_PreparesCapsuleBeforeCapturingAnimationPositionAndStopsHoverRecovery(
         string relativePath)
     {
@@ -54,10 +53,6 @@ public sealed class WidgetCompactTrayVisibilityContractTests
         "src/DeskBox/Views/ContentWidgetWindow.Commands.cs",
         "private void ContentWidgetShell_RightTapped",
         "private void ContentWidgetShell_TitleDoubleTapped")]
-    [InlineData(
-        "src/DeskBox/Views/QuickCaptureWidgetWindow.Menus.cs",
-        "private void QuickCaptureShell_RightTapped",
-        "private MenuFlyout CreateMoreFlyout")]
     public void TrayHide_SuppressesNativeAndRoutedPointerInputUntilHwndIsHidden(
         string relativePath,
         string rightTappedMarker,

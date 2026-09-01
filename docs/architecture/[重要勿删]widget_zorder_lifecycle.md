@@ -32,12 +32,13 @@
 | 前台缺失或为桌面壳 | 回到桌面层 / 普通层级带底部 |
 | DesktopPinned 模式 | 回到 Explorer 桌面 Owner 内，仅做桌面兄弟排序 |
 
-格子窗口有两种宿主类型，**每条唤起/回落路径都有两份平行实现**，改动时必须同步：
+格子窗口只有一种宿主类型（DEF-027 整改后；此前 QuickCapture 曾有专用的 `QuickCaptureWidgetWindow` 平行实现，已随死宿主删除）：
 
 | 宿主类 | 文件 | 用于 |
 |---|---|---|
-| `QuickCaptureWidgetWindow` | `src/DeskBox/Views/QuickCaptureWidgetWindow.*.cs` | 随记格子 |
-| `ContentWidgetWindow` | `src/DeskBox/Views/ContentWidgetWindow.*.cs` | 文件、Todo、音乐、天气、搜索等统一内容格子 |
+| `ContentWidgetWindow` | `src/DeskBox/Views/ContentWidgetWindow.*.cs` | 文件、Todo、音乐、天气、搜索、**随记**等统一内容格子 |
+
+> **改动提示（更新）**：曾经「每条唤起/回落路径都有两份平行实现、改动必须双宿主同步」的时代已结束——QuickCapture 从 RECT-3（B2 配色移植）起走共享 surface，宿主层只剩 `ContentWidgetWindow` 一份实现。但 `UsesDesktopPinnedMode()` 分支仍遍布 Z-order 原语，改动后两种层级模式（Normal / DesktopPinned）都要过。
 
 ---
 
@@ -92,19 +93,19 @@ SetWindowPos(hwnd, HWND_NOTOPMOST, ..., SWP_NOACTIVATE | SWP_SHOWWINDOW);
 1. `_isTogglingWidgetsDesktopLayer = true`（finally 复位，防重入）。
 2. 逐格子 `PrepareWidgetForBatchShowAsync`（异步，可能首次创建窗口）。
 3. 隐藏中的格子 `ShowPreparedRaisedFromTray()`；已可见的格子 `EnsureRaisedFromTrayTopMost()`。
-   - 注意 `EnsureRaisedFromTrayTopMost` 有 `_isAtDesktopLayer` 短路（统一内容宿主与随记宿主均有）：**上一轮已被 restore 的格子会被跳过**，它们的物理浮起实际靠第 6 步的 group 操作兜底。
+   - （WIN-05 校正）`EnsureRaisedFromTrayTopMost` 的 `_isAtDesktopLayer` 短路已随实现演进消失：现行实现是 `!Visible` 早退，已可见的格子每次都会执行 `BringToFront` + `HoldTemporaryTopMost`，随后组操作再全员脉冲——托盘重复唤起的多次带迁移是已知且**有意保留**的行为（台账 DEF-006 结论）。
 4. 记录 `_foregroundAtRaiseTime = GetForegroundWindow()`；设置 `_suppressTrayLayerRestoreUntilUtc = now + 160ms`（防止唤起动画期间的瞬时事件误触发回落）。
 5. `SetWidgetsRaisedFromTray(true)` 进入唤起态。
 6. `QueueTrayRaiseTopMostConfirmation` → `BringGroupTemporarilyToFront`（瞬态置顶再清除，见 §2）。
 7. **`StartTrayLayerRestoreMonitor`：启动 200ms 恢复监视器 + 50ms 鼠标边沿采样器（见 §4）。**
-8. `ActivateLastRaisedWindow` → 两个宿主类的 `ActivateRaisedFromTrayBatch()`：`base.Activate()` + `SetForegroundWindow(hwnd)`。
+8. `ActivateLastRaisedWindow` → `ContentWidgetWindow.ActivateRaisedFromTrayBatch()`（DEF-027 后唯一宿主）：`base.Activate()` + `SetForegroundWindow(hwnd)`。
    - **`SetForegroundWindow` 经常失败**（Windows 前台锁：只有"收到最后一次输入事件"的进程才能抢前台；热键经异步队列 + 窗口准备耗时后，输入事件归属可能已不是 DeskBox；前台是提权进程时 UIPI 也会拒绝）。**返回值必须检查并记日志**（2026-07-24 起已加，日志前缀 `[ZOrder] ... SetForegroundWindow FAILED`）。失败是合法的，系统必须能在"DeskBox 从未获得前台"的情况下正确回落。
 
 ---
 
 ## 4. 回落（Restore）信号体系
 
-**唤起态期间，单窗口的所有自救路径都被显式禁用**（`WidgetWindowBase.Interaction.cs`、`ContentWidgetWindow.WindowInteraction.cs` 与随记宿主的 Deactivated/安全定时器路径都检查 `WidgetsRaisedFromTray: true` 后跳过）。唯一生效的回落路径是管理器侧的 **200ms 恢复监视器**：
+**唤起态期间，单窗口的所有自救路径都被显式禁用**（`WidgetWindowBase.Interaction.cs` 与 `ContentWidgetWindow.WindowInteraction.cs` 的 Deactivated/安全定时器路径都检查 `WidgetsRaisedFromTray: true` 后跳过）。唯一生效的回落路径是管理器侧的 **200ms 恢复监视器**：
 
 `src/DeskBox/Services/WidgetManager.ZOrder.cs` 的 `TrayLayerRestoreTimer_Tick` → `TryRestoreRaisedWidgetsAfterInteraction`（约 93-152 行）。
 
@@ -160,8 +161,7 @@ SetWindowPos(hwnd, HWND_NOTOPMOST, ..., SWP_NOACTIVATE | SWP_SHOWWINDOW);
 | `src/DeskBox/Helpers/Win32Helper.cs` | `BringWindowTemporarilyToFront`（556）、`SetWindowTopMost`（575）、`ClearWindowTopMost`（590）、`IsAnyMouseButtonDown`（约 344）、`GetAsyncKeyState` 封装 |
 | `src/DeskBox/Views/WidgetWindowBase.Interaction.cs` | 基类版本同上 + `ShouldDeferDesktopLayerRestore`（94） |
 | `src/DeskBox/Views/WidgetWindowBase.Collapse.cs` | `RaiseForExpandedState`（1811）：胶囊展开时的层级处理（含"物理浮起但状态已回落"的兼容分支） |
-| `src/DeskBox/Views/ContentWidgetWindow.xaml.cs` | 文件与功能格子的统一宿主；实现唤起/回落/激活和内容切换 |
-| `src/DeskBox/Views/QuickCaptureWidgetWindow.xaml.cs` | 随记宿主的平行唤起/回落/激活实现 |
+| `src/DeskBox/Views/ContentWidgetWindow.xaml.cs` | 文件与功能格子的统一宿主（含随记，DEF-027 后唯一宿主）；实现唤起/回落/激活和内容切换 |
 | `src/DeskBox/App.xaml.cs` | `IsDeskBoxWindow`（562）：按 PID + 已知窗口根判定，**范围宽（本进程所有窗口）** |
 
 ---
@@ -189,8 +189,8 @@ SetWindowPos(hwnd, HWND_NOTOPMOST, ..., SWP_NOACTIVATE | SWP_SHOWWINDOW);
 - 已加看门狗（`WidgetManager.ZOrder.cs` 的 `RunInteractionLeakWatchdog`）：深度 > 0 且 DeskBox 无前台持续 10s → 判定泄漏，强制 reset。真实交互必有 DeskBox 前台，不误伤。
 - **新增任何 Begin 调用点时**：确认所有退出路径（异常、取消、窗口中途隐藏、flyout 轻 dismiss）都有配对 End。
 
-### 坑 #5：修改一条路径，忘了另一类宿主 / 另一种层级模式
-- 两种宿主（QuickCaptureWidgetWindow / ContentWidgetWindow）有平行实现；`UsesDesktopPinnedMode()` 分支遍布所有 Z-order 原语。改动后四象限（2 宿主 × 2 模式）都要过。
+### 坑 #5：修改一条路径，忘了另一种层级模式
+- （DEF-027 更新）宿主已收敛为 `ContentWidgetWindow` 一份实现；但 `UsesDesktopPinnedMode()` 分支仍遍布所有 Z-order 原语。改动后两种层级模式（Normal / DesktopPinned）都要过。
 
 ### 坑 #6：瞬态置顶函数被误当持久置顶用
 - `BringWindowTemporarilyToFront`（先 TOPMOST 再 NOTOPMOST）只保证"浮到普通带顶部"，调用返回后窗口**不是** TopMost。`StartTopMostSafetyTimer` 一进来就查 `IsWindowTopMost`，不是持久置顶会直接退出——安全网对瞬态浮起无效，别指望它兜底。
@@ -262,9 +262,9 @@ SetWindowPos(hwnd, HWND_NOTOPMOST, ..., SWP_NOACTIVATE | SWP_SHOWWINDOW);
 | B 检测可靠化 | `Helpers/Win32Helper.cs` | 新增 `IsAnyMouseButtonDown()`（高位物理状态） |
 | B | `Services/WidgetManager.ZOrder.cs` | 新增 50ms 采样定时器（边沿检测 + 按下瞬间位置过滤）；200ms 监视器改消费 `_outsideMousePressObserved`；`StopTrayLayerRestoreMonitor` 同步停采样器 |
 | B | `Services/WidgetManager.TrayAnimation.cs` | 删除为旧低位机制预充的 `HasMouseButtonActivity()` 调用 |
-| D 可观测 | 两个宿主的 `ActivateRaisedFromTrayBatch` | 检查 `SetForegroundWindow` 返回值并记日志 |
+| D 可观测 | 宿主的 `ActivateRaisedFromTrayBatch`（DEF-027 后唯一宿主；F6 批次 A 已在 Content 宿主补齐） | 检查 `SetForegroundWindow` 返回值并记日志 |
 | D 看门狗 | `Services/WidgetSessionManager.cs` | 新增 `ForceResetInteractions` |
-| D 看门狗 | `Services/WidgetManager.ZOrder.cs` | `RunInteractionLeakWatchdog`：泄漏 >10s 且无 DeskBox 前台 → 强制清零 |
+| D 看门狗 | `Services/WidgetManager.ZOrder.cs` | 交互泄漏看门狗（F6 批次 A 以 `StartInteractionLeakWatchdog`/`InteractionLeakWatchdog_Tick` 落地）：深度 >10s 且无 DeskBox 前台 → `ForceResetInteractions` 强制清零 |
 | C toggle 语义 | — | **不改**：`visible-widgets-behind → raise` 特性经用户确认保留 |
 
 ---

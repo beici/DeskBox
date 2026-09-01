@@ -59,12 +59,11 @@ public sealed class WidgetMoreMenuPlacementContractTests
     [Fact]
     public void MenuConsumers_UseTheExplicitAnchorAndOptionalPointerPosition()
     {
+        // DEF-027: the QuickCapture host consumer was removed with the dead
+        // host; the production consumer lives in ContentWidgetWindow.Commands.
         AssertMenuConsumer(
             "src/DeskBox/Views/ContentWidgetWindow.Commands.cs",
             "ShowFlyoutWithInteraction");
-        AssertMenuConsumer(
-            "src/DeskBox/Views/QuickCaptureWidgetWindow.Menus.cs",
-            "ShowFlyoutWithElevation");
     }
 
     private static void AssertMenuConsumer(string relativePath, string showMethod)

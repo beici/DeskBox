@@ -1,11 +1,11 @@
 {
-  "async_void_count": 263,
-  "clipboard_setcontent": 12,
-  "clipboard_marks": 15,
+  "async_void_count": 222,
+  "clipboard_setcontent": 8,
+  "clipboard_marks": 14,
   "clipboard_unpaired": [],
   "sync_wait_count": 134,
-  "empty_catch_count": 223,
-  "reflection_count": 7,
+  "empty_catch_count": 221,
+  "reflection_count": 6,
   "contract_hits": 5179,
   "contract_misses": [
     "tests/DeskBox.Tests/AotStage4D1AContractTests.cs :: GetProperty(\"Checked\")",

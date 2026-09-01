@@ -5,8 +5,10 @@ public sealed class MultiSelectionKeyboardContractTests
     [Fact]
     public void QuickCaptureDeleteKey_RoutesCustomMultiSelectionToBatchDelete()
     {
+        // DEF-027: the production surface (not the removed host) routes the
+        // Delete key through batch delete.
         string source = ReadRepositoryFile(
-            "src/DeskBox/Views/QuickCaptureWidgetWindow.Items.cs");
+            "src/DeskBox/Controls/WidgetContents/QuickCaptureSurfaceContent.xaml.cs");
 
         Assert.Contains(
             "GetSelectedQuickCaptureItemsInVisibleOrder()",

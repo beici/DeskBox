@@ -64,13 +64,11 @@ public sealed class AotStage4E2ContractTests
     [Fact]
     public void InlineEditorConsumers_SaveAndResetThroughTheTextDependencyProperty()
     {
-        string quickCapture = ReadRepositoryFile(
-            "src/DeskBox/Views/QuickCaptureWidgetWindow.Editing.cs");
+        // DEF-027: the dead-host inline editor was removed; the todo content
+        // pins the same inline-editor contract for the surviving consumer.
         string todo = ReadRepositoryFile(
             "src/DeskBox/Controls/WidgetContents/TodoWidgetContent.EditingAndUndo.cs");
 
-        Assert.Contains("string body = QuickCaptureInlineEditor.Text;", quickCapture, StringComparison.Ordinal);
-        Assert.Contains("QuickCaptureInlineEditor.Text = string.Empty;", quickCapture, StringComparison.Ordinal);
         Assert.Contains("UpdateItemTextAsync(item.Id, TodoInlineEditor.Text)", todo, StringComparison.Ordinal);
         Assert.Contains("TodoInlineEditor.Text = string.Empty;", todo, StringComparison.Ordinal);
     }

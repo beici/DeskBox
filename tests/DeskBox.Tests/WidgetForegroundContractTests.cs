@@ -18,7 +18,6 @@ public sealed class WidgetForegroundContractTests
 
     [Theory]
     [InlineData("src/DeskBox/Views/ContentWidgetWindow.xaml")]
-    [InlineData("src/DeskBox/Views/QuickCaptureWidgetWindow.xaml")]
     public void WidgetRoots_ProvideLocalSemanticBrushesWithoutDetachedShadowHost(string path)
     {
         string xaml = Read(path);
@@ -49,15 +48,13 @@ public sealed class WidgetForegroundContractTests
     }
 
     [Fact]
-    public void BothWidgetMenus_ExposePerWidgetForegroundOverrides()
+    public void WidgetMenu_ExposesPerWidgetForegroundOverrides()
     {
+        // DEF-027: the QuickCapture host's own menu was removed with the dead
+        // host; the production menu lives in ContentWidgetWindow.Commands.
         Assert.Contains(
             "WidgetForegroundMenuBuilder.Create",
             Read("src/DeskBox/Views/ContentWidgetWindow.Commands.cs"),
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "WidgetForegroundMenuBuilder.Create",
-            Read("src/DeskBox/Views/QuickCaptureWidgetWindow.Menus.cs"),
             StringComparison.Ordinal);
     }
 
@@ -81,7 +78,6 @@ public sealed class WidgetForegroundContractTests
 
     [Theory]
     [InlineData("src/DeskBox/Views/ContentWidgetWindow.xaml")]
-    [InlineData("src/DeskBox/Views/QuickCaptureWidgetWindow.xaml")]
     public void WidgetRoots_RedirectDefaultNativeTextStatesToLocalSemanticBrushes(
         string path)
     {
@@ -97,18 +93,18 @@ public sealed class WidgetForegroundContractTests
     [Fact]
     public void CodeGeneratedText_ResolvesTheHostingWidgetResourceScope()
     {
+        // DEF-027: the QuickCapture dead-host consumer was removed; the
+        // production consumers (Markdown view / popover / todo) pin the same
+        // resource-scope contract.
         string markdown = Read("src/DeskBox/Controls/MarkdownDocumentView.cs");
         string stackPopover = Read(
             "src/DeskBox/Controls/WidgetContents/FileSurfaceContent.StackPopover.cs");
-        string quickCapture = Read(
-            "src/DeskBox/Views/QuickCaptureWidgetWindow.Items.cs");
         string todo = Read(
             "src/DeskBox/Controls/WidgetContents/TodoWidgetContent.EditingAndUndo.cs");
 
         Assert.Contains("_contentForeground = Foreground ??", markdown, StringComparison.Ordinal);
         Assert.Contains("element.Resources.TryGetValue(key", markdown, StringComparison.Ordinal);
         Assert.Contains("ApplyStackPopoverForegroundResources(content)", stackPopover, StringComparison.Ordinal);
-        Assert.Contains("RootGrid.Resources.TryGetValue(resourceKey", quickCapture, StringComparison.Ordinal);
         Assert.Contains("element.Resources.TryGetValue(resourceKey", todo, StringComparison.Ordinal);
     }
 

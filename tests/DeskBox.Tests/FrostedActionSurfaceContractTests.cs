@@ -9,7 +9,6 @@ public sealed class FrostedActionSurfaceContractTests
         string desktopOrganization = Read(root, "src/DeskBox/Controls/DesktopOrganizationTaskView.xaml");
         string onboarding = Read(root, "src/DeskBox/Views/OnboardingWindow.xaml");
         string quickCaptureSurface = Read(root, "src/DeskBox/Controls/WidgetContents/QuickCaptureSurfaceContent.xaml");
-        string quickCaptureWindow = Read(root, "src/DeskBox/Views/QuickCaptureWidgetWindow.xaml");
         string todo = Read(root, "src/DeskBox/Controls/WidgetContents/TodoWidgetContent.xaml");
         string releaseNotes = Read(root, "src/DeskBox/Views/ReleaseNotesWindow.xaml");
 
@@ -49,18 +48,14 @@ public sealed class FrostedActionSurfaceContractTests
     {
         string root = FindRepositoryRoot();
         string quickCapture = Read(root, "src/DeskBox/Controls/WidgetContents/QuickCaptureSurfaceContent.xaml");
-        string quickCaptureWindow = Read(root, "src/DeskBox/Views/QuickCaptureWidgetWindow.xaml");
         string todo = Read(root, "src/DeskBox/Controls/WidgetContents/TodoWidgetContent.xaml");
         string quickCaptureViewModel = Read(root, "src/DeskBox/ViewModels/QuickCaptureWidgetViewModel.cs");
         string todoViewModel = Read(root, "src/DeskBox/ViewModels/TodoWidgetViewModel.cs");
 
         Assert.Contains("MinHeight=\"40\"", quickCapture, StringComparison.Ordinal);
-        Assert.Contains("MinHeight=\"40\"", quickCaptureWindow, StringComparison.Ordinal);
         Assert.Contains("Padding=\"4,2\"", quickCapture, StringComparison.Ordinal);
-        Assert.Contains("Padding=\"4,2\"", quickCaptureWindow, StringComparison.Ordinal);
         Assert.Contains("Padding=\"4,2\"", todo, StringComparison.Ordinal);
         Assert.Contains("MinHeight=\"36\" Padding=\"2,0\" ColumnSpacing=\"2\"", quickCapture, StringComparison.Ordinal);
-        Assert.Contains("MinHeight=\"36\" Padding=\"2,0\" ColumnSpacing=\"2\"", quickCaptureWindow, StringComparison.Ordinal);
         Assert.Contains("MinHeight=\"36\" Padding=\"2,0\" ColumnSpacing=\"2\"", todo, StringComparison.Ordinal);
         Assert.Contains("<x:Double x:Key=\"QuickCaptureDetailActionIconSize\">13</x:Double>", quickCapture, StringComparison.Ordinal);
         Assert.Contains("<x:Double x:Key=\"TodoDetailActionIconSize\">13</x:Double>", todo, StringComparison.Ordinal);
@@ -69,7 +64,6 @@ public sealed class FrostedActionSurfaceContractTests
         Assert.Contains("Path=DataContext.DetailPageMargin", todo, StringComparison.Ordinal);
         Assert.Contains("DetailPageMargin => new(0, 6 - RootPadding.Top, 0, 0)", quickCaptureViewModel, StringComparison.Ordinal);
         Assert.Contains("DetailPageMargin => new(0, 6 - RootPadding.Top, 0, 0)", todoViewModel, StringComparison.Ordinal);
-        Assert.DoesNotContain("ScaleTransform ScaleX=\"1.3\" ScaleY=\"1.3\"", quickCaptureWindow, StringComparison.Ordinal);
     }
 
     private static void AssertAcrylicLayer(string xaml, string name, string opacity)

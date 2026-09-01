@@ -666,20 +666,15 @@ public sealed class SettingsCopyAndHierarchyTests
     }
 
     [Fact]
-    public void QuickCapturePreviewLineCount_IsBoundInBothWindowHosts()
+    public void QuickCapturePreviewLineCount_IsBoundInSharedSurface()
     {
+        // DEF-027: the standalone window host was removed; the shared surface
+        // carries the setting.
         string root = FindRepositoryRoot();
-        string standaloneWindow = File.ReadAllText(Path.Combine(
-            root,
-            "src/DeskBox/Views/QuickCaptureWidgetWindow.xaml"));
         string sharedSurface = File.ReadAllText(Path.Combine(
             root,
             "src/DeskBox/Controls/WidgetContents/QuickCaptureSurfaceContent.xaml"));
 
-        Assert.Contains(
-            "MaxLines=\"{Binding ElementName=ItemsListView, Path=DataContext.ItemPreviewLineCount}\"",
-            standaloneWindow,
-            StringComparison.Ordinal);
         Assert.Contains(
             "MaxLines=\"{Binding ElementName=ItemsList, Path=DataContext.ItemPreviewLineCount}\"",
             sharedSurface,
