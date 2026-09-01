@@ -130,7 +130,7 @@ public sealed class StoreStartupService : IStartupService
     /// synchronous callers do not block the UI thread. Should be invoked early
     /// (e.g., during app startup) on a background thread.
     /// </summary>
-    internal async System.Threading.Tasks.Task PrefetchTaskAsync()
+    internal async Task PrefetchTaskAsync()
     {
         try
         {
