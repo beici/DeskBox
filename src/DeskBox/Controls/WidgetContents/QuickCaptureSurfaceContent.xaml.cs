@@ -209,6 +209,36 @@ public sealed partial class QuickCaptureSurfaceContent :
                     : themeCardBrush.Color;
         }
 
+        // DEF-013: a saved pair is only validated at save time; the
+        // follow-theme channel's effective color changes with the theme while
+        // the custom channel stays fixed, so the pair can silently fall below
+        // the readability threshold this feature exists to enforce. Re-check
+        // the effective pair on every application and fall back to
+        // follow-theme for the background channel when it breaks.
+        bool backgroundCustom =
+            QuickCaptureClipboardColorSettings.GetBackgroundModeOverride(ViewModel.Config) ==
+                QuickCaptureClipboardColorSettings.ModeCustom &&
+            QuickCaptureClipboardColorSettings.TryGetBackgroundColorOverride(ViewModel.Config, out _);
+        if (textCustom && backgroundCustom)
+        {
+            double contrastRatio = QuickCaptureClipboardColorSettings.ContrastRatio(
+                ResolveClipboardItemEffectiveTextColor(),
+                ResolveClipboardItemEffectiveBackgroundColor());
+            if (contrastRatio < QuickCaptureClipboardColorSettings.MinimumContrastRatio)
+            {
+                QuickCaptureClipboardColorSettings.SetBackgroundModeOverride(
+                    ViewModel.Config,
+                    QuickCaptureClipboardColorSettings.ModeFollowTheme);
+                _settingsService.UpdateWidget(ViewModel.Config);
+                App.Log(
+                    "[QuickCapture] Clipboard record colors fell below the contrast " +
+                    $"threshold (ratio={contrastRatio:F2}) after a theme change; " +
+                    "background fell back to follow-theme");
+                ApplyClipboardItemColors();
+                return;
+            }
+        }
+
         // The background override also outranks per-record material presets;
         // repaint already-realized cards now instead of waiting for their
         // next Loaded/DataContextChanged pass.
@@ -865,7 +895,11 @@ public sealed partial class QuickCaptureSurfaceContent :
         {
             if (_isDetailEditing && _detailItem?.IsRecent != true)
             {
-                _detailContentFormat = ViewModel.EditorContentFormat;
+                // DEF-011: editing an existing record must keep that record's
+                // own format — the app-level default only applies to records
+                // that have none of their own (creation path).
+                _detailContentFormat = _detailItem?.ContentFormat ??
+                    ViewModel.EditorContentFormat;
                 RefreshDetailPresentation();
             }
             return;
@@ -1210,9 +1244,10 @@ public sealed partial class QuickCaptureSurfaceContent :
             (!_isDualPane || SettingsService.NormalizeQuickCaptureWideOpenMode(
                 _settingsService.Settings.QuickCaptureWideOpenMode) ==
                 SettingsService.QuickCaptureWideOpenEditing);
-        _detailContentFormat = _isDetailEditing
-            ? ViewModel.EditorContentFormat
-            : item.ContentFormat;
+        // DEF-011: opening an existing record keeps the record's own content
+        // format in both read and edit modes; the app-level default is only
+        // for creation (StartDetailCreation), never for existing records.
+        _detailContentFormat = item.ContentFormat;
         _detailEditRevision = 0;
         _detailSavedRevision = 0;
         _detailHasUnsavedChanges = false;
@@ -1360,7 +1395,12 @@ public sealed partial class QuickCaptureSurfaceContent :
             return false;
         }
 
-        _detailContentFormat = ViewModel.EditorContentFormat;
+        // DEF-011: entering edit mode must not silently rewrite the record's
+        // own format with the app-level default (Markdown <-> PlainText
+        // conversion is destructive and has no switch-back UI). The default
+        // applies only when the record carries no format of its own.
+        _detailContentFormat = _detailItem?.ContentFormat ??
+            ViewModel.EditorContentFormat;
         SetDetailEditorText(_detailItem?.Body ?? string.Empty);
         _isDetailEditing = true;
         RefreshDetailPresentation();
