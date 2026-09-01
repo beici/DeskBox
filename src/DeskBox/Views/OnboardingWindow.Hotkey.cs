@@ -341,6 +341,11 @@ public sealed partial class OnboardingWindow
             return;
         }
 
+        // A user interaction supersedes any in-flight deferred refresh: the
+        // queued snapshot must not revert the user's newer choice once the
+        // OS-side enable request (fire-and-forget on Store builds) settles.
+        ++_startupToggleRefreshGeneration;
+
         bool requestedEnabled = toggle.IsOn;
         StartupOperationResult result =
             StartupService.SetEnabled(requestedEnabled);
