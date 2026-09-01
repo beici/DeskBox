@@ -299,10 +299,11 @@ public sealed partial class OnboardingWindow
     private void RefreshStartupToggleFromSystem()
     {
         // Defer to dispatcher idle to avoid blocking the UI thread when
-        // StoreStartupService.GetStartupTask() must wait for the
-        // StartupTask.GetAsync() Windows Runtime call.
-        _ = DispatcherQueue.TryGetDevice()?.EnqueueAsync(
-            Windows.System.DispatcherQueuePriority.Low, () =>
+        // StoreStartupService.GetState() must wait for the
+        // StartupTask.GetAsync() Windows Runtime call (Store builds only).
+        DispatcherQueue.TryEnqueue(
+            DispatcherQueuePriority.Low,
+            () =>
             {
                 StartupRegistrationState state = StartupService.GetState();
                 bool enabled = state is
