@@ -73,7 +73,7 @@
 | `cf0fadb` | ❌ failure | DispatcherQueue API 修正 |
 | `3f2504d` | ❌ failure | async 方法签名修正 |
 
-**注意**：CI 持续失败，但本地静态门禁 PASS。无法通过 API 获取详细编译日志（GitHub API 返回 403）。
+**最终结果**：`4701b39` 修复 CS0104（DispatcherQueuePriority 二义性）→ run 33561624305 全绿；`bb708e3` 收敛审查 2×P2 加固 + 3×P3 注释 → run bb708e3c 全绿。
 
 ---
 
@@ -111,3 +111,20 @@
 | DEF-037 | P2 | ✅ 已修复 | CTS finally Dispose |
 
 **净增缺陷数**：0（本轮修复无新引入问题）
+
+
+---
+
+## 收敛审查处置（deleg_766e0d64，GO）
+
+修复批次独立审查（一票驳回权）结论 **GO**：4/4 文件通过，无 P0/P1。关键定论：`StartupTask.State` 为活属性（每次访问实时查询），`_cachedTask` 缓存语义正确。5 条发现全部同批闭环（`bb708e3`）：
+
+| 级别 | 发现 | 处置 |
+|---|---|---|
+| P2 | 延迟刷新回调可能晚于用户拨动，读旧状态视觉回弹 | 加 `_startupToggleRefreshGeneration` 代际护栏：新刷新使旧回调失效；跳过冗余 IsOn 写入 |
+| P2 | 已 disposed 的 CTS 在任务入口读 Token 抛 ODE，绕过遥测 | Token 赋值移入 try + 专项 ODE catch（status=cancelled / detail=source-disposed-before-start）；声明留 try 外（OCE 过滤器引用） |
+| P3 | z-order 二次检查注释把并发源说窄了 | 注释更正（含锁外 topmost 脉冲） |
+| P3 | PrefetchTaskAsync 注释称后台线程，实际 await 回 UI 线程 | 注释更正 |
+| P3 | 未注册任务缓存永不热 | 维持现状（与基线等代价，仅记录） |
+
+**CI**：run bb708e3c Build + Test success。
