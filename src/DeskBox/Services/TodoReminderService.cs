@@ -350,7 +350,7 @@ public sealed class TodoReminderService : IDisposable
                 // The item may have been completed by an open widget in the
                 // meantime; the store now reflects whichever write landed
                 // first and there is nothing left to do.
-                return itemExists(store, itemId);
+                return await itemExists(store, itemId).ConfigureAwait(false);
             }
 
             App.Log($"[TodoReminder] Completed from notification widget={widgetId} item={itemId}");
