@@ -626,7 +626,9 @@ public sealed partial class WeatherWidgetViewModel
     private string GetWindDirectionText(double direction)
     {
         string[] keys = ["Weather.Wind.N", "Weather.Wind.NE", "Weather.Wind.E", "Weather.Wind.SE", "Weather.Wind.S", "Weather.Wind.SW", "Weather.Wind.W", "Weather.Wind.NW"];
-        int index = (int)Math.Round(direction / 45) % 8;
+        // DEF-046: providers can emit negative or non-finite bearings; the
+        // mapper folds those into a valid index instead of throwing.
+        int index = WeatherWindDirectionMapper.ResolveIndex(direction);
         return _localizationService.T(keys[index]);
     }
 

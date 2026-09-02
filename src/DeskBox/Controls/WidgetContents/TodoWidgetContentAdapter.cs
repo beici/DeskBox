@@ -53,6 +53,24 @@ public sealed class TodoWidgetContentAdapter :
         Config = config;
         ViewModel = viewModel;
         _viewFactory = viewFactory ?? (vm => new TodoWidgetContent(vm));
+        // DEF-043: merge reminder-service store mutations into the live view
+        // model so the next user-driven save cannot revert reminder
+        // bookkeeping or a newly generated recurring occurrence.
+        App.Current.TodoStoreChangedByReminder += OnTodoStoreChangedByReminder;
+    }
+
+    private void OnTodoStoreChangedByReminder(
+        string widgetId,
+        TodoItem? changedItem,
+        TodoItem? insertedItem)
+    {
+        if (_isDisposed ||
+            !string.Equals(widgetId, Config.Id, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ViewModel.ApplyExternalStoreChange(changedItem, insertedItem);
     }
 
     public WidgetConfig Config { get; }
@@ -238,6 +256,7 @@ public sealed class TodoWidgetContentAdapter :
         }
 
         _isDisposed = true;
+        App.Current.TodoStoreChangedByReminder -= OnTodoStoreChangedByReminder;
         if (_view is TodoWidgetContent todoContent)
         {
             todoContent.ReleaseTransientRenderingSubscriptions();

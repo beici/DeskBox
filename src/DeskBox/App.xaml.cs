@@ -89,6 +89,14 @@ public partial class App : Application
     private string? _onboardingRaisedFileWidgetId;
     internal event Action<int>? OnboardingFileImportCompleted;
     internal event Action<bool>? OnboardingWidgetsVisibilityChanged;
+
+    /// <summary>
+    /// Relays TodoReminderService store mutations to open todo widgets
+    /// (DEF-043): the widget view models merge the background change into
+    /// their in-memory state so their next save cannot revert reminder
+    /// bookkeeping or newly generated recurring occurrences.
+    /// </summary>
+    internal event Action<string, TodoItem?, TodoItem?>? TodoStoreChangedByReminder;
     private NativeAppNotificationService? _nativeNotificationService;
     private TodoReminderService? _todoReminderService;
     private DisplayAreaWatcherService? _displayAreaWatcher;
@@ -1498,6 +1506,7 @@ public partial class App : Application
         {
             if (_todoReminderService is not null)
             {
+                _todoReminderService.TodoStoreChanged -= RelayTodoStoreChangedByReminder;
                 _todoReminderService.Dispose();
                 _todoReminderService = null;
                 Log("[TodoReminder] Inactive service released");
@@ -1546,7 +1555,16 @@ public partial class App : Application
             LocalizationService,
             UiDispatcherQueue,
             ShowTodoReminderNotification);
+        _todoReminderService.TodoStoreChanged += RelayTodoStoreChangedByReminder;
         _todoReminderService.Start();
+    }
+
+    private void RelayTodoStoreChangedByReminder(
+        string widgetId,
+        TodoItem? changedItem,
+        TodoItem? insertedItem)
+    {
+        TodoStoreChangedByReminder?.Invoke(widgetId, changedItem, insertedItem);
     }
 
     private void StartNativeNotificationService()

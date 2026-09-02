@@ -38,6 +38,18 @@ public sealed class EverythingSearchService : IDisposable
     private const int MaximumInitialListCapacity = 4_000;
     private const long ConnectedProbeTtlMilliseconds = 30_000;
     private const long FailedProbeTtlMilliseconds = 2_000;
+    // DEF-045: cap on how long a "not installed / not running" detection
+    // result is trusted, so typing in the search box (disabled fast path)
+    // cannot re-run the registry + process scan on every keystroke.
+    private const long DisabledPathTtlMilliseconds = 30_000;
+    // DEF-044: Everything_QueryW blocks until the Everything service answers.
+    // If the process hangs (huge index scan, unresponsive kernel filter),
+    // the synchronous call would hold _nativeGate forever and every later
+    // search would queue behind it. A query that exceeds this budget loses
+    // the race, returns an empty page for this attempt, and leaves the
+    // in-flight work holding the gate so its eventual completion (or the
+    // next Reset) cannot corrupt shared SDK state.
+    private static readonly TimeSpan NativeQueryTimeout = TimeSpan.FromSeconds(3);
 
     private readonly SettingsService _settingsService;
     private readonly SemaphoreSlim _nativeGate = new(1, 1);
@@ -45,6 +57,7 @@ public sealed class EverythingSearchService : IDisposable
     private EverythingConnectionSnapshot _snapshot = EverythingConnectionSnapshot.Unknown;
     private EverythingInstallationSnapshot? _lastInstallation;
     private long _lastProbeTick = long.MinValue;
+    private long _lastDisabledFastPathTick = long.MinValue;
     private bool _isDisposed;
 
     public EverythingSearchService(SettingsService settingsService)
@@ -189,6 +202,21 @@ public sealed class EverythingSearchService : IDisposable
 
         if (!_settingsService.Settings.SearchEverythingEnabled)
         {
+            // DEF-045: the disabled fast path only exists to keep the
+            // connection snapshot honest while the user types. Re-running the
+            // installation detection (registry views + process enumeration)
+            // on every keystroke is wasted work, so reuse the last result
+            // within a short TTL. Explicit refresh paths still bypass this.
+            long nowTick = Environment.TickCount64;
+            long lastTick = _lastDisabledFastPathTick;
+            if (_lastInstallation is not null &&
+                lastTick != long.MinValue &&
+                nowTick - lastTick < DisabledPathTtlMilliseconds)
+            {
+                return SearchFileQueryPage.Empty;
+            }
+
+            _lastDisabledFastPathTick = nowTick;
             await RefreshConnectionAsync(
                 allowIpcProbe: false,
                 cancellationToken).ConfigureAwait(false);
@@ -209,17 +237,53 @@ public sealed class EverythingSearchService : IDisposable
             _settingsService.Settings.SearchEverythingAdvancedSyntaxEnabled);
 
         await _nativeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        Task<SearchFileQueryPage>? inFlightQuery = null;
         try
         {
-            SearchFileQueryPage page = await Task.Run(
-                () => QueryNative(
-                    providerQuery,
-                    query.Trim(),
-                    offset,
-                    resultCount,
-                    cancellationToken),
-                cancellationToken).ConfigureAwait(false);
-            return page;
+            // DEF-044: race the blocking native query against a timeout.
+            // The delegate unconditionally owns releasing _nativeGate (it
+            // acquired nothing but inherited the caller's acquisition), so
+            // exactly one release happens no matter which side of the race
+            // wins. On timeout this caller returns an empty page immediately
+            // instead of wedging every subsequent search behind a hung
+            // Everything service; the in-flight native call keeps the gate
+            // until the OS call finally returns, and the shared SDK state is
+            // never touched by two queries at once.
+            inFlightQuery = Task.Run(
+                async () =>
+                {
+                    try
+                    {
+                        return QueryNative(
+                            providerQuery,
+                            query.Trim(),
+                            offset,
+                            resultCount,
+                            cancellationToken);
+                    }
+                    finally
+                    {
+                        _nativeGate.Release();
+                    }
+                },
+                CancellationToken.None);
+            Task completed = await Task.WhenAny(
+                inFlightQuery,
+                Task.Delay(NativeQueryTimeout, cancellationToken)).ConfigureAwait(false);
+            if (completed != inFlightQuery)
+            {
+                // A canceled user token also completes the delay task first;
+                // distinguish that from a genuine timeout.
+                cancellationToken.ThrowIfCancellationRequested();
+                PublishSnapshot(CurrentSnapshot with
+                {
+                    DiagnosticCode = "query-timeout"
+                });
+                App.Log("[Everything] Query timed out; leaving the in-flight query to finish on its own.");
+                return SearchFileQueryPage.Empty;
+            }
+
+            return await inFlightQuery.ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -252,7 +316,14 @@ public sealed class EverythingSearchService : IDisposable
         }
         finally
         {
-            _nativeGate.Release();
+            // The gate is released by the query delegate itself exactly once
+            // (it always runs - Task.Run was given CancellationToken.None).
+            // The only case where this caller must release is when Task.Run
+            // itself failed to produce a running delegate.
+            if (inFlightQuery is null)
+            {
+                _nativeGate.Release();
+            }
         }
     }
 

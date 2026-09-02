@@ -726,6 +726,74 @@ public sealed partial class TodoWidgetViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref _isInitialized, value);
     }
 
+    /// <summary>
+    /// Merges a store mutation made by TodoReminderService (DEF-043) into the
+    /// in-memory state. Called on the UI thread via the App relay, so this can
+    /// touch observable collections directly. Merging instead of reloading
+    /// keeps user-selected detail/editor state intact while guaranteeing the
+    /// next user-driven save includes the reminder bookkeeping fields.
+    /// </summary>
+    public void ApplyExternalStoreChange(TodoItem? changedItem, TodoItem? insertedItem)
+    {
+        if (_isDisposed || !IsInitialized)
+        {
+            return;
+        }
+
+        bool listChanged = false;
+        if (changedItem is not null)
+        {
+            TodoItemViewModel? match = Items.FirstOrDefault(item =>
+                string.Equals(item.Item.Id, changedItem.Id, StringComparison.Ordinal));
+            if (match is null)
+            {
+                // The user deleted the item after the reminder fired; the
+                // in-memory list is authoritative for deletes, so do not
+                // resurrect it here.
+                return;
+            }
+
+            match.Item.ReminderLastNotifiedAt = changedItem.ReminderLastNotifiedAt;
+            match.Item.ReminderDismissedForDueDate = changedItem.ReminderDismissedForDueDate;
+            match.Item.SnoozedUntil = changedItem.SnoozedUntil;
+            match.Item.SnoozeLastNotifiedAt = changedItem.SnoozeLastNotifiedAt;
+            match.Item.UpdatedAt = changedItem.UpdatedAt;
+
+            if (changedItem.IsCompleted && !match.Item.IsCompleted)
+            {
+                match.Item.IsCompleted = true;
+                match.Item.CompletedAt = changedItem.CompletedAt;
+                match.Item.GeneratedNextItemId = changedItem.GeneratedNextItemId;
+                // The internal setter mirrors the flag onto the wrapped item
+                // and raises every completion-related UI notification.
+                match.IsCompleted = true;
+                listChanged = true;
+            }
+        }
+
+        if (insertedItem is not null &&
+            Items.All(entry => !string.Equals(entry.Item.Id, insertedItem.Id, StringComparison.Ordinal)))
+        {
+            int anchorIndex = changedItem is null
+                ? Items.Count
+                : Items.FindIndex(entry =>
+                    string.Equals(entry.Item.Id, changedItem.Id, StringComparison.Ordinal));
+            var nextViewModel = new TodoItemViewModel(insertedItem, _localizationService);
+            Items.Insert(Math.Clamp(anchorIndex + 1, 0, Items.Count), nextViewModel);
+            listChanged = true;
+        }
+
+        if (listChanged)
+        {
+            RefreshVisibleItems();
+            RefreshCountProperties();
+        }
+        else
+        {
+            OnPropertyChanged(nameof(IsInitialized));
+        }
+    }
+
     public void Dispose()
     {
         if (_isDisposed)
