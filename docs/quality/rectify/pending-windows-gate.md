@@ -84,3 +84,34 @@ Start-Process E:\DeskBox\src\DeskBox\bin\Debug\net10.0-windows10.0.22621.0\DeskB
 | F8-2 | Store 构建（如有）：启动 + 设置页自动启动开关 + Onboarding 步骤 4 开关（DEF-035/036） | 4701b39 | UI 无冻结感；开关状态与系统设置一致；首次点击开关响应正常（缓存未命中路径） | 待验证（非 Store 构建不受影响） |
 | F8-3 | 长时间挂机 + 频繁触发后台内存清理调度（DEF-037） | 4701b39 | 日志无 ObjectDisposedException / `[Memory] Background cleanup coordinator failed`；内存平稳 | 待验证 |
 | F8-4 | 常规冒烟：启动 → 桌面格子加载 → 随记/文件/天气各一次交互 | 4701b39 | 全部正常（本批未触碰这些路径，仅回归确认） | 待验证 |
+
+---
+
+## F9 批次实机验证（DEF-043~046，ca22866，2026-09-02 Windows 侧执行）
+
+> 门禁：HEAD `ca22866` 精确匹配；`dotnet test -p:Platform=x64` **3139/3139 全绿**；Debug 构建 0 错误；实机 `buildTime=2026-09-02 17:59:24` 启动正常。
+> 验证方法：Todo 链路用「存储夹具注入（停机态）→ 真实运行时」驱动；Everything/天气/搜索用实机操作 + 日志锚点。
+
+### F8 遗留项（上一批表）
+- [x] F8-1 多窗口格子组唤起/收起——伴随验证（多格悬停连发 + 交互）无跳位异常，无 `SetForegroundWindow FAILED`
+- [x] F8-3 后台内存清理日志——本会话日志无 `ObjectDisposedException`
+- [x] F8-4 常规冒烟——启动 → 格子加载 → 搜索/随记/待办交互各一次，正常
+- [ ] F8-2 Store 构建（如适用）——本机无 Store 构建，N/A 待有构建时补
+
+### F9 新增项
+- [x] **F9-4（DEF-045）未启用 Everything 快速输入**：`searchEverythingEnabled=false`，搜索框 26 字符 81ms 输入无卡顿，日志零逐击键探测（30s 缓存生效）
+- [x] **F9-5（DEF-044）Everything 3s 超时**：**N/A**——本机未装 Everything 且未启用集成，超时路径由 `EverythingIntegrationTests` 门禁用例覆盖
+- [x] **F9-6（DEF-046）天气**：全程正常渲染（23°C 风速 4.7m/s），无异常日志；负风向防护由 `WeatherWindDirectionMapperTests` 覆盖
+- [x] **F9-1a（DEF-043）外部写入→UI 实时合并**：停机态注入存储 → 启动后列表/计数即时更新，无重载无闪烁（`ApplyExternalStoreChange` 实证）
+- [x] **F9-1b（DEF-043）提醒触发**：3 次夹具任务均准时弹出（`[TodoReminder] Native notification shown` ×3），`reminderLastNotifiedAt` 正确回写存储
+- [x] **F9-2（DEF-043）格子内手动完成**：UI 勾选 → `isCompleted=True` 原子写回（`MutateAsync` 路径门控实证）；「过期通知点完成无害失败」由 `TodoReminderServiceTests` 覆盖
+- [x] **F9-3（DEF-043）贪睡字段存活**：`snoozedUntil` 经应用加载 + 保存周期后磁盘原样保留，未被冲掉
+- [x] **F9-7 Todo 全功能回归**：创建（UI 输入 + Enter）、详情编辑、完成勾选、计数联动（全部/今天/重要/已完成）、外部变更合并——手感正常；通知按钮链路由 `TodoNotificationActivationRouterTests`（8 用例含 complete/snooze/legacy-snooze10）覆盖
+- [ ] **F9-1c 通知按钮人工点击**：横幅被系统勿扰抑制 + toast 未驻留通知中心（见下），合成点击无法安全命中；请人工执行一次：造一条 2 分钟后到期+提醒的任务 → 弹出后点通知「完成」→ 确认格子同步变完成
+- [ ] **F9-3 人工补点**：弹出后点通知「贪睡 10 分钟」→ 格子内编辑其它字段 → 重启 → 确认贪睡时间与编辑共存
+
+### 验证中发现的新问题（立案待评估，未改码）
+- **[新发现] 提醒 toast 未在通知中心驻留**：3 次复现——横幅弹出（勿扰下被抑制）后打开通知中心均为空（「没有新通知」），用户失去未点击提醒的后续处理入口。代码侧未发现程序化移除（`TodoReminderService` 无 Remove 调用）。候选根因：勿扰模式系统行为 vs AppNotification 配置（过期/驻留标志）。**请人工确认一次**：提醒弹出后 1 分钟内打开通知中心检查是否可见；确认缺失再立案修复。
+
+### 日志红线（本会话 6008 行之后）
+`[TodoReminder] Store-changed subscriber failed` = 0；`[TodoReminder] Complete failed` = 0；`[Everything] Query IPC failed` = 0。✅
