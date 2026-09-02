@@ -17,6 +17,20 @@
 | **DEF-040** | StackSurface PropertyChanged 订阅生命周期缝隙：容器销毁路径 Unloaded 不保证触发，WidgetStackItem.PropertyChanged 长期持有 content 实例（ItemVisuals.cs:973-1002，EVT-02 同族新实例）| P3 | R4 收敛审查 | FileSurfaceContent.ItemVisuals.cs:973-1002 | deleg_96eac299 | 📌 挂账（加固即可：handler 内查 XamlRoot/IsLoaded 或弱引用）|
 | **DEF-041** | _stackProjectionTransitionPending 无 Reuse/Dispose 复位点：投影切换入队后 Reuse/Dispose 致标志残留（同一调度循环内自愈，毫秒级窗口）| P3 | R4 收敛审查 | FileSurfaceContent.SelectionAndMenus.cs:1335-1368 | deleg_96eac299 | 📌 挂账（ResetStackInteractionVisuals 补复位）|
 | **DEF-042** | HandleNativeFileDropAsync 前置段（插入点捕获/屏幕坐标/排序数学）位于 try 之外，async void 面（QueueNativeFileDropImport TryEnqueue）残留缝隙；全局兜底 EVT-03 已覆盖 | P3 | R4 收敛审查 | FileSurfaceContent.xaml.cs:2949-3004 | deleg_96eac299 | 📌 挂账（仅记录不处置）|
+| **DEF-043** | Todo 数据双写者无串行化：TodoWidgetViewModel.SaveAsync（29 调用点）与 TodoReminderService（后台 3 写点）并发读改写同一 TodoWidgetStore，旧快照覆盖新数据（勾选回滚/重复提醒）；对照 Glance/Weather/QuickCapture 均有 _gate，唯独 Todo 无 | P1 | F9 从零全量审查 | TodoWidgetViewModel.FilteringAndAppearance.cs:68-75 × TodoReminderService.cs:259/321/417 | 主线亲验实锤 | 🔧 待修复（Store 内置 _gate）|
+| **DEF-044** | Everything_QueryW 同步阻塞无超时，_nativeGate 全程持有；Everything 无响应时搜索子系统挂死且 CT 无效 | P2 | F9 | EverythingSearchService.cs:438/:211 | SA-B 亲验实锤 | 🔧 待修复 |
+| **DEF-045** | 未启用 Everything 时每次击键执行全量安装检测（注册表双视图+进程枚举，无 TTL） | P2 | F9 | EverythingSearchService.cs:190-196/:84-86 | SA-B 亲验实锤 | 🔧 待修复（结果缓存 30s）|
+| **DEF-046** | 天气风向负值负模索引越界（UI 线程，畸形 MSN 响应触发） | P2 | F9 | WeatherWidgetViewModel.DataProcessing.cs:626-630 | SA-B 亲验实锤 | 🔧 待修复（取模修正+NaN 防护）|
+| **DEF-047** | CTS 取消后同步 Dispose 在途注册回调 ODE（日志噪音） | P3 | F9 | SearchPopupViewModel.cs:696-712 | SA-B | 📌 挂账 |
+| **DEF-048** | WeatherCodeMapper 声明小写比较未实现，匹配大小写敏感退化 | P3 | F9 | WeatherCodeMapper.cs:98-99 | SA-B | 📌 挂账 |
+| **DEF-049** | MSN icon 29→29 非法 WMO 码恒等映射笔误 | P3 | F9 | WeatherCodeMapper.cs:207 | SA-B | 📌 挂账 |
+| **DEF-050** | MSN 日期解析失败仍追加空行，UI 错位 | P3 | F9 | WeatherService.cs:498-504/559-566 | SA-B | 📌 挂账 |
+| **DEF-051** | 远程 JSON 无大小上限（Glance/Weather 数处） | P3 | F9 | GlanceImageService.cs:614-620、WeatherService.cs:83 | SA-B | 📌 挂账 |
+| **DEF-052** | FileMetaService LRU 软缺陷：失败 null 永久缓存不重试、在途不淘汰 | P3 | F9 | FileMetaService.cs:236-304 | SA-B | 📌 挂账 |
+| **DEF-053** | DeskBox 内容刷新任务引用竞态（旧 finally 清新引用） | P3 | F9 | SearchEngineService.cs:485-505/553-559 | SA-B | 📌 挂账 |
+| **DEF-054** | Saka/Bangla 历固定起点近似漂移 | P3 | F9 | GlanceTraditionalCalendarService.cs:225-258 | SA-B | 📌 挂账（标注近似或表驱动）|
+| **DEF-055** | 窗口壳层 Closed 后 zombie 回调系统面：SettingsWindow ~20 处 async void 无 _isClosed 复检 + OnboardingWindow.xaml.cs:131 Closed 内同步清理（F7-B5/EVT-03 同族） | P3 | F9 | SettingsWindow.*.cs 全部 | SA-W3+主线证伪降级 | 📌 挂账 |
+| **DEF-056** | Migration_1_To_2 与 Migration_2_To_3 完全重复段 | P3 | F9 | SettingsMigrationService.cs:127-176 | SA-W3 | 📌 挂账 |
 | **DEF-037** | CancelBackgroundMemoryCleanupDelay 旧 CTS 未 Dispose | **已修复（663c593+4701b39，含 Schedule 路径孪生点）** | P2 | 资源管理/S1 | `src/DeskBox/App.xaml.cs:3111` | Interlocked.Exchange 替换旧 CTS 后仅 Cancel() 未 Dispose；旧 CTS 的 registered wait handles 延迟到 GC 才释放；每次 cancel 泄漏 ~16 bytes + native wait registration | F8 Round 1 task-0 |
 
 ---

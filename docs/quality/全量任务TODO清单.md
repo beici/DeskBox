@@ -85,3 +85,9 @@
 - R3：主线亲审（3 subagent 全 429 阵亡后接管），新立案 DEF-039（P2：es-ES/fr-FR/ru-RU 非法日期格式字母 → 时间戳假字，1.3.8 起潜伏），修复 41d70e7 + 新契约测试锁死格式字母白名单，CI 绿（run 4c16e05d）。
 - R4：**收敛判定达成**。主线亲审 9 面（BoundedStaOperationRunner/OpenItem/FileMetaService/ShortcutHelper/IconBitmapQuality/MemoryCleanupPolicy/PerformanceLogger/占位符 arity/RTL）全 GO 零新缺陷；subagent（deleg_96eac299）FileSurfaceContent 大面 GO（五项重点核查全过），挂账 P3×3（DEF-040/041/042）。
 - 终态：HEAD=4c16e05+docs 增量，CI 全绿，4 轮完成（硬上限 5），净减缺陷：P1×1 + P2×4（DEF-034/035/036/037/038/039）。
+
+## 第 19 次循环核验（F9 从零全量审查，2026-09-02）
+- 用户指令「不管之前所有审查结果，从头到尾详细审查一轮」。三波 subagent（Todo+QC 102 调用 / Search+Weather+Glance 68 / Settings+壳层 91）+ 主线三波亲审，所有 P1/P2 候选经主线交叉验证（5 条证伪）。
+- 新立案：DEF-043（P1 Todo 双写者无门控·数据丢失风险）/ DEF-044~046（P2×3：Everything 挂死·击键级安装检测·风向负值越界）/ DEF-047~056（P3×10）。
+- 与台账去重：MEM-02(DEF-031) 不重复、F7-B5 系统债记新实例清单 DEF-055。
+- 报告 docs/quality/rectify/F9-fresh-full-review.md。结论 NO-GO：待修复 DEF-043~046 后再收敛。
