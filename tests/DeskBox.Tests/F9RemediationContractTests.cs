@@ -89,7 +89,8 @@ public sealed class F9RemediationContractTests
         // The relay is subscribed lazily (View/Initialize paths) because the
         // constructor must stay free of App.Current (unit tests have no WinUI
         // COM activation available; touching it there throws REGDB_E_CLASSNOTREG).
-        string constructor = source[..source.IndexOf("private void OnTodoStoreChangedByReminder", StringComparison.Ordinal)];
+        string constructor = source[..source.IndexOf(
+            "private void EnsureReminderRelaySubscribed", StringComparison.Ordinal)];
         Assert.DoesNotContain("App.Current", constructor, StringComparison.Ordinal);
         Assert.Equal(
             1,
