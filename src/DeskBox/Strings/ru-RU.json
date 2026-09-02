@@ -1699,7 +1699,7 @@
     "FileInfo.File": "Файл",
     "FileInfo.Folder": "Папка",
     "FileInfo.FolderItems": "{0} элементов",
-    "FileInfo.FileModified": "{0} · {1:гггг/М/д ЧЧ:мм}",
+    "FileInfo.FileModified": "{0} · {1:dd.MM.yyyy HH:mm}",
     "Weather.Loading": "Загрузка погоды…",
     "Weather.RefreshSuccess": "Погода обновлена",
     "Weather.RefreshFailed": "Обновить не удалось",

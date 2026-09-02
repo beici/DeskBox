@@ -1699,7 +1699,7 @@
     "FileInfo.File": "Archivo",
     "FileInfo.Folder": "Carpeta",
     "FileInfo.FolderItems": "{0} elementos",
-    "FileInfo.FileModified": "{0} · {1:aaaa/M/d HH:mm}",
+    "FileInfo.FileModified": "{0} · {1:dd/MM/yyyy HH:mm}",
     "Weather.Loading": "Cargando clima…",
     "Weather.RefreshSuccess": "Tiempo actualizado",
     "Weather.RefreshFailed": "Error al actualizar",

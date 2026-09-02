@@ -1699,7 +1699,7 @@
     "FileInfo.File": "Fichier",
     "FileInfo.Folder": "Dossier",
     "FileInfo.FolderItems": "{0} éléments",
-    "FileInfo.FileModified": "{0} · {1:aaaa/M/j HH:mm}",
+    "FileInfo.FileModified": "{0} · {1:dd/MM/yyyy HH:mm}",
     "Weather.Loading": "Chargement de la météo…",
     "Weather.RefreshSuccess": "Météo mise à jour",
     "Weather.RefreshFailed": "Échec de l'actualisation",
