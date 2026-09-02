@@ -38,9 +38,13 @@ public sealed class F9RemediationContractTests
         // load/modify/save); direct SaveAsync usage would reopen DEF-043.
         Assert.Equal(3, Regex.Matches(source, @"store\.MutateAsync").Count);
         Assert.DoesNotMatch(new Regex(@"store\.SaveAsync\("), source);
-        Assert.DoesNotMatch(new Regex(@"await store\.LoadAsync\(\);\s*(?!.*Mutate)", source.Replace("\r", "")));
+        Assert.DoesNotMatch(
+            new Regex(@"await store\.LoadAsync\(\);\s*(?!.*Mutate)"),
+            source.Replace("\r", string.Empty));
         // Widgets are told about persisted changes so they can merge them.
-        Assert.Matches(new Regex(@"event Action<string,\s*TodoItem\?,\s*TodoItem\?>\? TodoStoreChanged"), source);
+        Assert.Matches(
+            new Regex(@"event Action<string,\s*TodoItem\?,\s*TodoItem\?>\? TodoStoreChanged"),
+            source);
         Assert.Equal(3, Regex.Matches(source, @"PublishStoreChanged\(widget\.Id").Count);
     }
 
@@ -60,7 +64,9 @@ public sealed class F9RemediationContractTests
         Assert.Matches(new Regex(@"Task\.WhenAny\(\s*inFlightQuery,\s*Task\.Delay\(NativeQueryTimeout"), source);
         // The in-flight delegate owns the release; the caller only releases
         // when the delegate never started.
-        Assert.Matches(new Regex(@"finally\s*\{[^}]*_nativeGate\.Release\(\);[^}]*\}\s*},\s*CancellationToken\.None\)", source.SingleLine()));
+        Assert.Matches(
+            new Regex(@"finally\s*\{[^}]*_nativeGate\.Release\(\);[^}]*\}\s*},\s*CancellationToken\.None\)"),
+            source.SingleLine());
         Assert.Matches(new Regex(@"if \(inFlightQuery is null\)\s*\{\s*_nativeGate\.Release\(\);"), source);
         // The disabled fast path is TTL-gated (DEF-045).
         Assert.Matches(new Regex(@"DisabledPathTtlMilliseconds"), source);
