@@ -53,40 +53,11 @@ public sealed class TodoWidgetContentAdapter :
         Config = config;
         ViewModel = viewModel;
         _viewFactory = viewFactory ?? (vm => new TodoWidgetContent(vm));
-        // DEF-043: merge reminder-service store mutations into the live view
-        // model so the next user-driven save cannot revert reminder
-        // bookkeeping or a newly generated recurring occurrence. The relay is
-        // subscribed lazily (first View/Initialize access) because unit tests
-        // construct adapters without a WinUI Application; touching
-        // App.Current at construction time triggers COM activation.
-        _isRelaySubscribed = false;
-    }
-
-    private bool _isRelaySubscribed;
-
-    private void EnsureReminderRelaySubscribed()
-    {
-        if (_isDisposed || _isRelaySubscribed)
-        {
-            return;
-        }
-
-        _isRelaySubscribed = true;
-        App.Current.TodoStoreChangedByReminder += OnTodoStoreChangedByReminder;
-    }
-
-    private void OnTodoStoreChangedByReminder(
-        string widgetId,
-        TodoItem? changedItem,
-        TodoItem? insertedItem)
-    {
-        if (_isDisposed ||
-            !string.Equals(widgetId, Config.Id, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        ViewModel.ApplyExternalStoreChange(changedItem, insertedItem);
+        // DEF-043: the reminder-relay subscription lives on TodoWidgetContent
+        // (Loaded/Unloaded). Keeping it out of the adapter lets unit tests
+        // construct the adapter without a WinUI Application - touching
+        // App.Current here performs COM activation and throws
+        // REGDB_E_CLASSNOTREG in the test host.
     }
 
     public WidgetConfig Config { get; }
@@ -106,7 +77,6 @@ public sealed class TodoWidgetContentAdapter :
                 {
                     todoContent.FeedbackRequested += TodoContent_FeedbackRequested;
                 }
-                EnsureReminderRelaySubscribed();
             }
 
             return _view;
@@ -128,13 +98,11 @@ public sealed class TodoWidgetContentAdapter :
 
     public Task InitializeAsync()
     {
-        EnsureReminderRelaySubscribed();
         return ViewModel.InitializeAsync();
     }
 
     public Task RefreshAsync()
     {
-        EnsureReminderRelaySubscribed();
         return ViewModel.InitializeAsync();
     }
 
@@ -275,11 +243,6 @@ public sealed class TodoWidgetContentAdapter :
         }
 
         _isDisposed = true;
-        if (_isRelaySubscribed)
-        {
-            App.Current.TodoStoreChangedByReminder -= OnTodoStoreChangedByReminder;
-        }
-
         if (_view is TodoWidgetContent todoContent)
         {
             todoContent.ReleaseTransientRenderingSubscriptions();

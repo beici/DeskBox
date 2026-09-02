@@ -82,31 +82,32 @@ public sealed class F9RemediationContractTests
     }
 
     [Fact]
-    public void Adapter_SubscribesLazilyAndUnsubscribesTheRelay()
+    public void TodoRelaySubscription_LivesOnTheViewNotTheAdapter()
     {
-        string source = Source("src/DeskBox/Controls/WidgetContents/TodoWidgetContentAdapter.cs");
-        // The relay is subscribed lazily (View/Initialize paths) because the
-        // constructor must stay free of App.Current (unit tests have no WinUI
-        // COM activation available; touching it there throws REGDB_E_CLASSNOTREG).
-        string constructor = source[..source.IndexOf(
-            "private void EnsureReminderRelaySubscribed", StringComparison.Ordinal)];
-        // Only code lines count: the constructor's explanatory comment mentions
-        // App.Current by name, which is exactly why it must not execute it.
-        var constructorCodeLines = constructor.Split('\n')
-            .Where(line => !line.TrimStart().StartsWith("//"))
-            .Select(line => line.TrimStart());
-        Assert.DoesNotContain(constructorCodeLines, line => line.Contains("App.Current", StringComparison.Ordinal));
+        // The relay must live on TodoWidgetContent's Loaded/Unloaded: the
+        // adapter is constructed by unit tests without a WinUI Application,
+        // so any App.Current touch there performs COM activation and throws
+        // REGDB_E_CLASSNOTREG in the test host.
+        string adapter = Source("src/DeskBox/Controls/WidgetContents/TodoWidgetContentAdapter.cs");
+        Assert.DoesNotContain("TodoStoreChangedByReminder", adapter, StringComparison.Ordinal);
+
+        string view = Source("src/DeskBox/Controls/WidgetContents/TodoWidgetContent.xaml.cs");
         Assert.Equal(
             1,
-            Regex.Matches(source, @"TodoStoreChangedByReminder \+= OnTodoStoreChangedByReminder").Count);
+            Regex.Matches(view, @"TodoStoreChangedByReminder \+= OnTodoStoreChangedByReminder").Count);
+        // The Unloaded handler unsubscribes, and the Loaded handler uses the
+        // unsubscribe-then-subscribe idiom shared by the other relayed events
+        // there, so two minus-subscriptions are expected in total.
         Assert.Equal(
-            1,
-            Regex.Matches(source, @"TodoStoreChangedByReminder -= OnTodoStoreChangedByReminder").Count);
-        // Subscription is guarded so dispose does not touch App.Current unless
-        // a subscription actually happened.
-        Assert.Matches(new Regex(@"if \(_isRelaySubscribed\)"), source);
-        // The merge handler must bail on disposed adapters and foreign ids.
-        Assert.Matches(new Regex(@"if \(_isDisposed \|\|\s*\r?\n\s*!string\.Equals\(widgetId, Config\.Id"), source);
+            2,
+            Regex.Matches(view, @"TodoStoreChangedByReminder -= OnTodoStoreChangedByReminder").Count);
+        // Subscription happens inside the Loaded handler.
+        int loadedIndex = view.IndexOf("private void TodoWidgetContent_Loaded", StringComparison.Ordinal);
+        int unloadedIndex = view.IndexOf("private void TodoWidgetContent_Unloaded", StringComparison.Ordinal);
+        string loadedBody = view[loadedIndex..unloadedIndex];
+        Assert.Contains("TodoStoreChangedByReminder += OnTodoStoreChangedByReminder", loadedBody, StringComparison.Ordinal);
+        // The merge handler bails when no view model is attached.
+        Assert.Matches(new Regex(@"OnTodoStoreChangedByReminder[\s\S]*?if \(ViewModel is null\)"), view);
     }
 }
 
