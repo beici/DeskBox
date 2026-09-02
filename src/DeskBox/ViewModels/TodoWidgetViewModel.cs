@@ -774,12 +774,21 @@ public sealed partial class TodoWidgetViewModel : ObservableObject, IDisposable
         if (insertedItem is not null &&
             Items.All(entry => !string.Equals(entry.Item.Id, insertedItem.Id, StringComparison.Ordinal)))
         {
-            int anchorIndex = changedItem is null
-                ? Items.Count
-                : Items.FindIndex(entry =>
-                    string.Equals(entry.Item.Id, changedItem.Id, StringComparison.Ordinal));
+            int anchorIndex = -1;
+            if (changedItem is not null)
+            {
+                for (int index = 0; index < Items.Count; index++)
+                {
+                    if (string.Equals(Items[index].Item.Id, changedItem.Id, StringComparison.Ordinal))
+                    {
+                        anchorIndex = index;
+                        break;
+                    }
+                }
+            }
+
             var nextViewModel = new TodoItemViewModel(insertedItem, _localizationService);
-            Items.Insert(Math.Clamp(anchorIndex + 1, 0, Items.Count), nextViewModel);
+            Items.Insert(anchorIndex < 0 ? Items.Count : Math.Clamp(anchorIndex + 1, 0, Items.Count), nextViewModel);
             listChanged = true;
         }
 
