@@ -1,7 +1,6 @@
 using System.Text.RegularExpressions;
 
 namespace DeskBox.Tests;
-
 /// <summary>
 /// Source-anchored contract tests for the F9 remediation batch (DEF-043
 /// through DEF-046). These pin the structural elements that make the fixes
@@ -91,7 +90,12 @@ public sealed class F9RemediationContractTests
         // COM activation available; touching it there throws REGDB_E_CLASSNOTREG).
         string constructor = source[..source.IndexOf(
             "private void EnsureReminderRelaySubscribed", StringComparison.Ordinal)];
-        Assert.DoesNotContain("App.Current", constructor, StringComparison.Ordinal);
+        // Only code lines count: the constructor's explanatory comment mentions
+        // App.Current by name, which is exactly why it must not execute it.
+        var constructorCodeLines = constructor.Split('\n')
+            .Where(line => !line.TrimStart().StartsWith("//"))
+            .Select(line => line.TrimStart());
+        Assert.DoesNotContain(constructorCodeLines, line => line.Contains("App.Current", StringComparison.Ordinal));
         Assert.Equal(
             1,
             Regex.Matches(source, @"TodoStoreChangedByReminder \+= OnTodoStoreChangedByReminder").Count);
