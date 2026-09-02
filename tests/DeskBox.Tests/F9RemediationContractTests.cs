@@ -83,15 +83,23 @@ public sealed class F9RemediationContractTests
     }
 
     [Fact]
-    public void Adapter_SubscribesAndUnsubscribesTheRelay()
+    public void Adapter_SubscribesLazilyAndUnsubscribesTheRelay()
     {
         string source = Source("src/DeskBox/Controls/WidgetContents/TodoWidgetContentAdapter.cs");
+        // The relay is subscribed lazily (View/Initialize paths) because the
+        // constructor must stay free of App.Current (unit tests have no WinUI
+        // COM activation available; touching it there throws REGDB_E_CLASSNOTREG).
+        string constructor = source[..source.IndexOf("private void OnTodoStoreChangedByReminder", StringComparison.Ordinal)];
+        Assert.DoesNotContain("App.Current", constructor, StringComparison.Ordinal);
         Assert.Equal(
             1,
             Regex.Matches(source, @"TodoStoreChangedByReminder \+= OnTodoStoreChangedByReminder").Count);
         Assert.Equal(
             1,
             Regex.Matches(source, @"TodoStoreChangedByReminder -= OnTodoStoreChangedByReminder").Count);
+        // Subscription is guarded so dispose does not touch App.Current unless
+        // a subscription actually happened.
+        Assert.Matches(new Regex(@"if \(_isRelaySubscribed\)"), source);
         // The merge handler must bail on disposed adapters and foreign ids.
         Assert.Matches(new Regex(@"if \(_isDisposed \|\|\s*\r?\n\s*!string\.Equals\(widgetId, Config\.Id"), source);
     }

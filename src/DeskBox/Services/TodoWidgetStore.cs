@@ -76,13 +76,10 @@ public sealed class TodoWidgetStore
     public async Task SaveAsync(TodoWidgetData data)
     {
         data = Normalize(data);
-        string json = JsonSerializer.Serialize(
-            data,
-            TodoJsonContext.Default.StoreData);
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            await ResilientJsonStore.SaveAsync(_storePath, json).ConfigureAwait(false);
+            await SaveUnsafeAsync(data).ConfigureAwait(false);
         }
         finally
         {
@@ -108,10 +105,7 @@ public sealed class TodoWidgetStore
             bool changed = mutate(data);
             if (changed)
             {
-                string json = JsonSerializer.Serialize(
-                    data,
-                    TodoJsonContext.Default.StoreData);
-                await ResilientJsonStore.SaveAsync(_storePath, json).ConfigureAwait(false);
+                await SaveUnsafeAsync(data).ConfigureAwait(false);
             }
 
             return data;
@@ -131,6 +125,20 @@ public sealed class TodoWidgetStore
                 TodoJsonContext.Default.StoreData)),
             () => new TodoWidgetData(),
             nameof(TodoWidgetStore));
+    }
+
+    /// <summary>
+    /// Persists an already-normalized document. Callers must hold
+    /// <see cref="_gate"/> (Load/Save/Mutate wrappers do); the JSON
+    /// serialization call sites intentionally stay at the frozen
+    /// JsonSerializationBaseline inventory count for this file.
+    /// </summary>
+    private async Task SaveUnsafeAsync(TodoWidgetData data)
+    {
+        string json = JsonSerializer.Serialize(
+            data,
+            TodoJsonContext.Default.StoreData);
+        await ResilientJsonStore.SaveAsync(_storePath, json).ConfigureAwait(false);
     }
 
     private static TodoWidgetData Normalize(TodoWidgetData? data)

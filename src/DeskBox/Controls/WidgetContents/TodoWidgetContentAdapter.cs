@@ -55,7 +55,23 @@ public sealed class TodoWidgetContentAdapter :
         _viewFactory = viewFactory ?? (vm => new TodoWidgetContent(vm));
         // DEF-043: merge reminder-service store mutations into the live view
         // model so the next user-driven save cannot revert reminder
-        // bookkeeping or a newly generated recurring occurrence.
+        // bookkeeping or a newly generated recurring occurrence. The relay is
+        // subscribed lazily (first View/Initialize access) because unit tests
+        // construct adapters without a WinUI Application; touching
+        // App.Current at construction time triggers COM activation.
+        _isRelaySubscribed = false;
+    }
+
+    private bool _isRelaySubscribed;
+
+    private void EnsureReminderRelaySubscribed()
+    {
+        if (_isDisposed || _isRelaySubscribed)
+        {
+            return;
+        }
+
+        _isRelaySubscribed = true;
         App.Current.TodoStoreChangedByReminder += OnTodoStoreChangedByReminder;
     }
 
@@ -90,6 +106,7 @@ public sealed class TodoWidgetContentAdapter :
                 {
                     todoContent.FeedbackRequested += TodoContent_FeedbackRequested;
                 }
+                EnsureReminderRelaySubscribed();
             }
 
             return _view;
@@ -111,11 +128,13 @@ public sealed class TodoWidgetContentAdapter :
 
     public Task InitializeAsync()
     {
+        EnsureReminderRelaySubscribed();
         return ViewModel.InitializeAsync();
     }
 
     public Task RefreshAsync()
     {
+        EnsureReminderRelaySubscribed();
         return ViewModel.InitializeAsync();
     }
 
@@ -256,7 +275,11 @@ public sealed class TodoWidgetContentAdapter :
         }
 
         _isDisposed = true;
-        App.Current.TodoStoreChangedByReminder -= OnTodoStoreChangedByReminder;
+        if (_isRelaySubscribed)
+        {
+            App.Current.TodoStoreChangedByReminder -= OnTodoStoreChangedByReminder;
+        }
+
         if (_view is TodoWidgetContent todoContent)
         {
             todoContent.ReleaseTransientRenderingSubscriptions();
