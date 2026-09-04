@@ -115,3 +115,32 @@ Start-Process E:\DeskBox\src\DeskBox\bin\Debug\net10.0-windows10.0.22621.0\DeskB
 
 ### 日志红线（本会话 6008 行之后）
 `[TodoReminder] Store-changed subscriber failed` = 0；`[TodoReminder] Complete failed` = 0；`[Everything] Query IPC failed` = 0。✅
+
+---
+
+## 胶囊动画/层级批次（DEF-056/057/058，2026-09-04 Windows 侧执行）
+
+> 全程在 Windows 实机完成：`DESKBOX_PERF_LOG=1` + `DESKBOX_VERBOSE_LOG=1` 取证 → 修复 → 同法复测。回归 **3202/3202**（3179 基线 + 23 新增用例）。
+
+### 已完成的实机核验
+
+- [x] 展开动画前后对照（`[Perf] CompactAnimation`）：展开 median maxFrameMs **17.5 → 8.8ms**、dropped median **3 → 0**、≥90ms 停顿 **27/160 → 2/10**（仅剩会话内首两次冷展开）；收起路径始终 dropped=0，构成同格子对照实验
+- [x] 展开热路径零 peer-order 批：`Expanded lease acquired` 之前不再出现 `Window order minimized`
+- [x] 空闲整理收敛：每轮固定 `moved=1 kept=11`（修复前 `moved=9→8→7→6` 逐轮递减、永不为 0）；启动后可见 `Window order already correct`（零 SetWindowPos）
+- [x] 标题栏空白单击 ×12：每次仅 `moved=1`，不再连带重排 owner 组
+- [x] 格子可见性：12 个格子 z-order 秩 **3–14 连续**，远高于 `Progman@35`（DEF-058 回归已排除）
+
+### 仍需用户实机观感确认
+
+- [ ] 悬停自动展开的**丝滑度**（165Hz 下几何步进由 55fps 提升到 82fps）
+- [ ] 点击格子标题栏空白处是否还看得到边缘闪烁（残留：被点击的那一个格子约 130ms 后回位 1 次）
+- [ ] 连续快速悬停相邻胶囊（前一个未收完就悬停下一个）是否还有卡顿
+- [ ] **格子收起后不再出现暂时消失/变空白**（DEF-058 验证点，请重点复测）
+- [ ] Win+D「显示桌面」后格子仍在（owner 附着未被标志改动影响）
+- [ ] 拖动格子经过其他应用窗口时格子仍在其之上（抬升路径未被削弱）
+
+### 已知残留（未在本批处理）
+
+- 会话内每个格子**首两次**展开仍有 100–140ms 停顿，来自内容首次实体化 + Debug JIT 分层编译；Release/AOT 下形态不同，需另行测量。
+- 标题栏按下时仍会把被点击格子抬到普通带顶部（`ActivateAllVisibleWidgetsFromTitle` 与 `ElevateForInteraction` 各一次），因此约 130ms 后的空闲整理必然要回位 1 次。归零需把抬升延后到拖拽真正越过阈值，会改变拖拽语义，留作后续专项。
+

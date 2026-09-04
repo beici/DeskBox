@@ -75,9 +75,18 @@ internal static class WidgetCompactFrameSkipPolicy
 
     /// <summary>
     /// Per-tick skip for an explicit frame-rate cap: the HWND resize advances
-    /// only on every N-th tick, delivering refresh/N fps — always at or under
-    /// the target. At 165Hz: 120 → skip 2 (≈82fps, the closest cadence at or
-    /// under 120), 90 → skip 2, 60 → skip 3 (55fps), 30 → skip 6 (27fps).
+    /// only on every N-th tick, delivering refresh/N fps. N is the largest
+    /// divisor that still reaches the selected rate, so the delivered cadence
+    /// is never below what the user asked for.
+    /// <para>
+    /// Rounding the divisor to nearest used to undershoot badly on refresh
+    /// rates that are not a multiple of the tier: at 165Hz the default 60fps
+    /// tier resolved to skip 3 = 55fps, below the tier's own label and below
+    /// the project's 60fps floor, and the capsule geometry then stepped at
+    /// 55Hz while its Composition opacity/scale animations ran at the full
+    /// 165Hz - the visible "not smooth enough" mismatch. At 165Hz the tiers
+    /// now resolve to 33 / 82.5 / 165 / 165 fps.
+    /// </para>
     /// </summary>
     public static int ResolveSkipForFrameRate(int refreshRateHz, int targetFrameRateHz)
     {
@@ -88,7 +97,7 @@ internal static class WidgetCompactFrameSkipPolicy
             return 1;
         }
 
-        return Math.Max(2, (int)Math.Round(rate / (double)target));
+        return Math.Max(1, rate / target);
     }
 
     public static bool IsOverrun(double intervalMs, double frameBudgetMs)

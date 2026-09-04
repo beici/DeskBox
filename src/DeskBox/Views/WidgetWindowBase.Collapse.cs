@@ -3257,7 +3257,6 @@ public abstract partial class WidgetWindowBase
         _collapseAnimationFrom = from;
         _collapseAnimationTo = to;
         _collapseAnimationDurationMs = durationMs;
-        _collapseAnimationStarted = Stopwatch.GetTimestamp();
         int refreshRateHz = Win32Helper.GetDisplayRefreshRateForWindow(HWnd);
         int frameRateCap = WidgetCompactFrameSkipPolicy.NormalizeFrameRate(
             SettingsService.Settings.WidgetAnimationFrameRate);
@@ -3289,10 +3288,6 @@ public abstract partial class WidgetWindowBase
         _collapseAnimationFrameBudgetMs = 1000.0 / Math.Max(1, refreshRateHz);
         _collapseAnimationOverrunTicks = 0;
         _collapseAnimationSampledTicks = 0;
-        _collapseAnimationLastTickTimestamp = _collapseAnimationStarted;
-        _compactAnimationFrameTracker = new WidgetCompactAnimationFrameTracker(
-            _collapseAnimationStarted,
-            refreshRateHz);
         string cornerPreference = WindowsCompatibilityService.ResolveEffectiveWidgetCornerPreference(
             SettingsService.Settings.WidgetCornerPreference);
         string mediaCornerMode = WindowsCompatibilityService.ResolveEffectiveWidgetCompactMediaCornerMode(
@@ -3311,6 +3306,19 @@ public abstract partial class WidgetWindowBase
                 mediaCornerMode,
                 cornerPreference),
             _collapseAnimationVisualProfile);
+
+        // The clock starts here, not before the setup above. PrepareCompactTransition
+        // is what starts the Composition opacity/scale animations, and those run on
+        // the compositor clock from that instant. Timestamping earlier made the
+        // HWND geometry timeline lead the content timeline by the whole setup cost
+        // (refresh-rate query, border visuals, profile resolve, nine
+        // StartAnimation calls), so the compact layer faded slightly ahead of the
+        // window it was supposed to be tracking.
+        _collapseAnimationStarted = Stopwatch.GetTimestamp();
+        _collapseAnimationLastTickTimestamp = _collapseAnimationStarted;
+        _compactAnimationFrameTracker = new WidgetCompactAnimationFrameTracker(
+            _collapseAnimationStarted,
+            refreshRateHz);
         _isCollapseAnimationRendering = true;
         _collapseAnimationFrameRegistration?.Dispose();
         _collapseAnimationFrameRegistration =

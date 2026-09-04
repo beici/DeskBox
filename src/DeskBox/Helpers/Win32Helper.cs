@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -994,14 +994,37 @@ public static partial class Win32Helper
     // ────────────────────────────────────────────────────────────────
 
     /// <summary>
+    /// Shared flag set for same-band Z-order moves that raise a window
+    /// (TOPMOST / NOTOPMOST / TOP). <c>SWP_NOOWNERZORDER</c> is mandatory here:
+    /// resting widgets are owned by Explorer's <c>SHELLDLL_DefView</c> so Win+D
+    /// cannot hide them, and without this flag Windows also repositions that
+    /// shared owner, which drags every other widget of the owner group along.
+    /// The observable damage was a permanently scrambled widget chain
+    /// (peer-order passes reported <c>kept=1</c> of 12) plus a DeferWindowPos
+    /// burst large enough to stall DWM in the middle of a capsule morph.
+    /// <para>
+    /// It must NOT be used for <c>HWND_BOTTOM</c> placement. A raise always
+    /// leaves an owned window above its owner, but sinking one to the bottom
+    /// only stays visible because Windows moves the owner down with it - block
+    /// that and the widget lands underneath the desktop wallpaper and renders
+    /// blank until the next Z-order pass lifts it back.
+    /// </para>
+    /// </summary>
+    private const uint ZOrderRaiseFlags =
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+
+    private const uint ZOrderBottomFlags =
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+
+    /// <summary>
     /// Push a window to the bottom of the Z-order so it sits at desktop level.
     /// </summary>
     public static void SetWindowToBottom(IntPtr hWnd)
     {
         bool r1 = SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            ZOrderRaiseFlags);
         bool r2 = SetWindowPos(hWnd, HWND_BOTTOM, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            ZOrderBottomFlags);
         App.LogVerbose($"[ZOrder] SetWindowToBottom hwnd=0x{hWnd.ToInt64():X} r1={r1} r2={r2}");
     }
 
@@ -1012,7 +1035,7 @@ public static partial class Win32Helper
     public static void SetWindowToDesktopLevel(IntPtr hWnd)
     {
         bool r = SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            ZOrderRaiseFlags);
         App.Log($"[ZOrder] SetWindowToDesktopLevel hwnd=0x{hWnd.ToInt64():X} r={r}");
     }
 
@@ -1022,7 +1045,7 @@ public static partial class Win32Helper
     public static void BringWindowToFront(IntPtr hWnd)
     {
         SetWindowPos(hWnd, HWND_TOP, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            ZOrderRaiseFlags | SWP_SHOWWINDOW);
     }
 
     /// <summary>
@@ -1043,7 +1066,7 @@ public static partial class Win32Helper
         IntPtr hWnd,
         bool showWindow)
     {
-        uint flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+        uint flags = ZOrderRaiseFlags;
         if (showWindow)
         {
             flags |= SWP_SHOWWINDOW;
@@ -1068,7 +1091,7 @@ public static partial class Win32Helper
     /// </summary>
     public static void SetWindowTopMost(IntPtr hWnd, bool showWindow)
     {
-        uint flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+        uint flags = ZOrderRaiseFlags;
         if (showWindow)
         {
             flags |= SWP_SHOWWINDOW;
@@ -1084,7 +1107,7 @@ public static partial class Win32Helper
     public static void ClearWindowTopMost(IntPtr hWnd)
     {
         SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            ZOrderRaiseFlags);
     }
 
     public static bool IsWindowTopMost(IntPtr hWnd)

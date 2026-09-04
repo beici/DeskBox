@@ -369,9 +369,20 @@ public static class WidgetLayerService
     }
 
     /// <summary>
-    /// Applies and verifies an explicit peer order for an expanded capsule.
-    /// A successful SetWindowPos call is not sufficient for windows owned by
-    /// Explorer because Windows may still preserve an older owner-group order.
+    /// Guarantees the expanded capsule owns the top of the widget group, and
+    /// verifies it, because a successful SetWindowPos call is not sufficient
+    /// for windows owned by Explorer - Windows may still preserve an older
+    /// owner-group order.
+    /// <para>
+    /// The escalation is deliberately ordered cheapest-first. This runs
+    /// synchronously on the UI thread one statement before the expand morph
+    /// starts, and a DeferWindowPos batch over the whole group makes DWM
+    /// re-sample every acrylic widget: measured on a 165Hz display it cost a
+    /// 110ms compositor stall and dropped 34 of the morph's 46 frames, while
+    /// the collapse morph - whose peer-order pass is deferred until after the
+    /// animation - stayed at 0 dropped frames. So the full order is only
+    /// re-imposed when raising the active window alone did not achieve it.
+    /// </para>
     /// </summary>
     public static bool EnsurePeerOrderHighestToLowest(
         IReadOnlyList<IntPtr> windowHandles)
@@ -386,7 +397,6 @@ public static class WidgetLayerService
         }
 
         IntPtr activeWindow = handles[0];
-        _ = ApplyPeerOrderHighestToLowest(handles);
         if (IsHighestPeer(activeWindow, handles))
         {
             return true;
@@ -397,6 +407,11 @@ public static class WidgetLayerService
         if (!raised)
         {
             BringAbovePeerWidgets(activeWindow);
+        }
+
+        if (IsHighestPeer(activeWindow, handles))
+        {
+            return true;
         }
 
         bool reapplied = ApplyPeerOrderHighestToLowest(handles);
@@ -733,11 +748,8 @@ public static class WidgetLayerService
         IReadOnlyList<IntPtr> handles,
         IntPtr boundary)
     {
-        if (boundary == Win32Helper.HWND_TOP)
+        if (handles.Count == 0)
         {
-            // HWND_TOP is a sentinel rather than a real window, so the anchor
-            // above the first handle cannot be verified; fall through to the
-            // explicit reorder.
             return false;
         }
 
@@ -750,8 +762,21 @@ public static class WidgetLayerService
             }
         }
 
-        return handles.Count > 0 &&
-               Win32Helper.GetWindow(handles[0], Win32Helper.GW_HWNDPREV) == boundary;
+        // HWND_TOP is a sentinel rather than a real window. It is only chosen
+        // when the highest peer already had nothing above it, so the anchor is
+        // verified by the same condition: no window sits above the first
+        // handle. Returning false here unconditionally used to send every
+        // title release and every capsule expand into an explicit reorder even
+        // when the chain was already correct, and each of those moves makes
+        // DWM re-sample the widget's acrylic backdrop - the edge flash users
+        // reported on title-bar clicks.
+        if (boundary == Win32Helper.HWND_TOP)
+        {
+            return Win32Helper.GetWindow(handles[0], Win32Helper.GW_HWNDPREV) ==
+                IntPtr.Zero;
+        }
+
+        return Win32Helper.GetWindow(handles[0], Win32Helper.GW_HWNDPREV) == boundary;
     }
 
     /// <summary>
@@ -760,11 +785,9 @@ public static class WidgetLayerService
     /// position of a single widget while every peer keeps its relative
     /// order; re-issuing DeferWindowPos for the untouched peers makes DWM
     /// re-sample each acrylic backdrop and shows up as an edge flash across
-    /// the whole bar. The longest in-order subsequence of the live chain is
-    /// kept in place and only the remaining windows are moved (bottom to
-    /// top, each anchored below its target predecessor). Returns false when
-    /// the live chain cannot be scanned reliably so the caller can fall back
-    /// to the full reorder.
+    /// the whole bar. <see cref="WidgetPeerOrderMovePlanner"/> owns the plan.
+    /// Returns false when the live chain cannot be scanned reliably so the
+    /// caller can fall back to the full reorder.
     /// </summary>
     private static bool TryApplyMinimalWindowMoves(
         IReadOnlyList<IntPtr> handles,
@@ -784,72 +807,11 @@ public static class WidgetLayerService
             cursor = Win32Helper.GetWindow(cursor, Win32Helper.GW_HWNDNEXT);
         }
 
-        if (current.Count != handles.Count)
+        IReadOnlyList<WidgetPeerOrderMovePlanner.PeerOrderMove>? movers =
+            WidgetPeerOrderMovePlanner.Plan(handles, current, boundary);
+        if (movers is null)
         {
             return false;
-        }
-
-        int count = handles.Count;
-        var targetIndex = new Dictionary<IntPtr, int>(count);
-        for (int index = 0; index < count; index++)
-        {
-            targetIndex[handles[index]] = index;
-        }
-
-        int[] sequence = new int[current.Count];
-        for (int index = 0; index < current.Count; index++)
-        {
-            sequence[index] = targetIndex[current[index]];
-        }
-
-        // Longest strictly increasing subsequence of the live positions:
-        // those windows are already in correct relative order and stay put.
-        int[] lengths = new int[current.Count];
-        int[] previous = new int[current.Count];
-        int bestEnd = 0;
-        for (int index = 0; index < current.Count; index++)
-        {
-            lengths[index] = 1;
-            previous[index] = -1;
-            for (int prior = 0; prior < index; prior++)
-            {
-                if (sequence[prior] < sequence[index] &&
-                    lengths[prior] + 1 > lengths[index])
-                {
-                    lengths[index] = lengths[prior] + 1;
-                    previous[index] = prior;
-                }
-            }
-
-            if (lengths[index] > lengths[bestEnd])
-            {
-                bestEnd = index;
-            }
-        }
-
-        var keptCurrentIndex = new HashSet<int>();
-        for (int index = bestEnd; index >= 0; index = previous[index])
-        {
-            keptCurrentIndex.Add(index);
-        }
-
-        var currentIndexOf = new Dictionary<IntPtr, int>(current.Count);
-        for (int index = 0; index < current.Count; index++)
-        {
-            currentIndexOf[current[index]] = index;
-        }
-
-        // Collect the movers bottom-to-top so every anchor (the target
-        // predecessor) is already settled when its turn comes: it is either
-        // a kept window or an earlier mover.
-        var movers = new List<IntPtr>();
-        for (int index = count - 1; index >= 0; index--)
-        {
-            IntPtr handle = handles[index];
-            if (!keptCurrentIndex.Contains(currentIndexOf[handle]))
-            {
-                movers.Add(handle);
-            }
         }
 
         if (movers.Count == 0)
@@ -864,16 +826,12 @@ public static class WidgetLayerService
             Win32Helper.SWP_NOOWNERZORDER;
 
         IntPtr deferred = Win32Helper.BeginDeferWindowPos(movers.Count);
-        foreach (IntPtr handle in movers)
+        foreach (WidgetPeerOrderMovePlanner.PeerOrderMove move in movers)
         {
-            int index = targetIndex[handle];
-            IntPtr insertAfter = index == 0
-                ? boundary
-                : handles[index - 1];
             deferred = Win32Helper.DeferWindowPos(
                 deferred,
-                handle,
-                insertAfter,
+                move.Handle,
+                move.InsertAfter,
                 0,
                 0,
                 0,
@@ -889,7 +847,8 @@ public static class WidgetLayerService
         {
             App.Log(
                 $"[ZOrder] Window order minimized reason={reason} " +
-                $"total={count} moved={movers.Count} kept={count - movers.Count} " +
+                $"total={handles.Count} moved={movers.Count} " +
+                $"kept={handles.Count - movers.Count} " +
                 $"boundary=0x{boundary.ToInt64():X} highest=0x{handles[0].ToInt64():X}");
             return true;
         }
@@ -1232,6 +1191,11 @@ public static class WidgetLayerService
             Win32Helper.ClearWindowTopMost(windowHandle);
             if (placeAtBottom)
             {
+                // No SWP_NOOWNERZORDER here. Sinking an owned window to the
+                // bottom only keeps it visible because Windows moves its owner
+                // - Explorer's desktop view - down with it. Blocking that put
+                // the widget underneath the wallpaper, and it rendered blank
+                // until some later Z-order pass lifted it back.
                 uint flags = Win32Helper.SWP_NOMOVE |
                     Win32Helper.SWP_NOSIZE |
                     Win32Helper.SWP_NOACTIVATE;
@@ -1310,7 +1274,8 @@ public static class WidgetLayerService
             0,
             Win32Helper.SWP_NOMOVE |
                 Win32Helper.SWP_NOSIZE |
-                Win32Helper.SWP_NOACTIVATE);
+                Win32Helper.SWP_NOACTIVATE |
+                Win32Helper.SWP_NOOWNERZORDER);
         s_desktopLayerAttachments.Remove(windowHandle);
         App.LogVerbose($"[WidgetLayer] DesktopPinned owner detached hwnd=0x{windowHandle.ToInt64():X}");
     }
