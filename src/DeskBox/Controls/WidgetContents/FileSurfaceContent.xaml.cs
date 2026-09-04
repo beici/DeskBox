@@ -183,6 +183,12 @@ public sealed partial class FileSurfaceContent :
             UIElement.DragLeaveEvent,
             new DragEventHandler(Root_ObserveHandledDragLeave),
             handledEventsToo: true);
+        // Subscribe before the first layout pass: panel realization runs with
+        // a zero viewport and falls back to the measured cell width, and the
+        // 0 -> final-width SizeChanged that follows must be observed or the
+        // uniform slots stay at the fallback width for the widget's lifetime.
+        ItemsGrid.SizeChanged -= ItemsGrid_SizeChanged;
+        ItemsGrid.SizeChanged += ItemsGrid_SizeChanged;
         ItemsGrid.AddHandler(
             UIElement.PreviewKeyDownEvent,
             new KeyEventHandler(ItemsView_PreviewKeyDown),

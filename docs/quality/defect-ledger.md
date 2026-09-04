@@ -24,7 +24,7 @@
 | **DEF-047** | CTS 取消后同步 Dispose 在途注册回调 ODE（日志噪音） | P3 | F9 | SearchPopupViewModel.cs:696-712 | SA-B | 📌 挂账 |
 | **DEF-048** | WeatherCodeMapper 声明小写比较未实现，匹配大小写敏感退化 | P3 | F9 | WeatherCodeMapper.cs:98-99 | SA-B | 📌 挂账 |
 | **DEF-049** | MSN icon 29→29 非法 WMO 码恒等映射笔误 | P3 | F9 | WeatherCodeMapper.cs:207 | SA-B | 📌 挂账 |
-| **DEF-050** | 文件格子图标列数被统一槽宽舍入挤掉（用户报告：右侧出现大片空白，曾 4 列现在 3 列） | P2 | 合并 1.4.9 后实机 | FileSurfaceContent.TextScaling.cs ApplyUniformIconCellSize（上游 ItemsWrapGrid 固定 ItemWidth 机制） | 实机回归 | ✅ 已修复 |
+| **DEF-050** | 文件格子图标列数被统一槽宽机制挤掉（用户报告：右侧大片空白、密度宽松时甚至 1 列） | P2 | 合并 1.4.9 后实机 | 双层根因：①ItemsWrapGrid 面板 realize 早于视口生效（viewport=0），固定槽宽回退后 0→294.4 的 SizeChanged 无订阅者错过重算，部分格子永久卡在窄槽宽；②槽宽用 Ceiling(内容宽) 在临界宽度丢弃最后一列 | 实机回归+仪表日志 | ✅ 已修复 |
 | **DEF-050** | MSN 日期解析失败仍追加空行，UI 错位 | P3 | F9 | WeatherService.cs:498-504/559-566 | SA-B | 📌 挂账 |
 | **DEF-051** | 远程 JSON 无大小上限（Glance/Weather 数处） | P3 | F9 | GlanceImageService.cs:614-620、WeatherService.cs:83 | SA-B | 📌 挂账 |
 | **DEF-052** | FileMetaService LRU 软缺陷：失败 null 永久缓存不重试、在途不淘汰 | P3 | F9 | FileMetaService.cs:236-304 | SA-B | 📌 挂账 |
