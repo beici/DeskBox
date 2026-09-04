@@ -173,13 +173,15 @@ public sealed partial class ContentWidgetWindow
         }
 
         BeginTitleBarClickCollapse(e, ShouldOpenTitleBarFlyout(e.OriginalSource));
-        if (ShouldOpenTitleBarFlyout(e.OriginalSource) &&
-            !Win32Helper.IsKeyPressed(Windows.System.VirtualKey.Control))
-        {
-            App.Current.WidgetManager?.ActivateAllVisibleWidgetsFromTitle(HWnd);
-        }
         if (_config.IsPositionLocked) return;
-        BeginWindowDragCore(e, ContentWidgetShell.TitleBar);
+        // The group raise is part of the drag preparation now (see
+        // BeginWindowDragCore): a click that never moves the widget must not
+        // reorder the desktop layer, because the round trip flickers the
+        // shadows of every neighbour it passes.
+        BeginWindowDragCore(
+            e,
+            ContentWidgetShell.TitleBar,
+            activatesTitleGroup: ShouldOpenTitleBarFlyout(e.OriginalSource));
     }
 
     private bool ShouldOpenTitleBarFlyout(object? originalSource)

@@ -132,6 +132,8 @@ public sealed partial class WidgetShell : UserControl
             true);
     private bool _isShellDragActive;
     private bool _isCompactCompositionTransitionActive;
+    private bool _hasStartedCompactCompositionFades;
+    private bool _pendingCompactCompositionCollapsed;
     private double _lastCompactTransitionCornerRadius = double.NaN;
 
     public void ShowFeedback(WidgetFeedbackRequest request)
@@ -1812,9 +1814,62 @@ public sealed partial class WidgetShell : UserControl
         ApplyCompactInnerCornerRadii();
         SetBackgroundCornerRadius(_transitionOuterCornerRadiusFrom);
         _lastCompactTransitionCornerRadius = _transitionOuterCornerRadiusFrom;
-        _isCompactCompositionTransitionActive =
-            StartCompactCompositionTransition(collapsed);
+        // The fades are armed here but issued by the host from its first
+        // committed geometry frame (StartCompactTransitionFades). Starting them
+        // now would let the compositor clock run while the UI thread is still
+        // paying for the first rasterization of the tree this call just
+        // revealed, and the content would then lead the window.
+        _pendingCompactCompositionCollapsed = collapsed;
+        _hasStartedCompactCompositionFades = false;
+        _isCompactCompositionTransitionActive = CanRunCompactCompositionTransition();
         return true;
+    }
+
+    private bool CanRunCompactCompositionTransition()
+    {
+        return _compactTransitionProfile.IsAnimated &&
+            _compactTransitionProfile.DurationMilliseconds > 0;
+    }
+
+    /// <summary>
+    /// Issues the compositor-owned opacity/scale fades for the armed compact
+    /// transition. Called from the first frame the host actually commits, so
+    /// both timelines share one origin.
+    /// </summary>
+    public void StartCompactTransitionFades()
+    {
+        if (!_isCompactTransitionActive ||
+            !_isCompactCompositionTransitionActive ||
+            _hasStartedCompactCompositionFades)
+        {
+            return;
+        }
+
+        _hasStartedCompactCompositionFades = true;
+        _isCompactCompositionTransitionActive =
+            StartCompactCompositionTransition(_pendingCompactCompositionCollapsed);
+    }
+
+    /// <summary>
+    /// Restarts the armed fades over the span that is still ahead of the
+    /// geometry. Used when the host absorbed a UI-thread stall: the compositor
+    /// ran through it, so without this the content would be further along than
+    /// the window it is supposed to track.
+    /// </summary>
+    public void ResyncCompactTransitionFades(double progress)
+    {
+        if (!_isCompactTransitionActive ||
+            !_isCompactCompositionTransitionActive ||
+            !_hasStartedCompactCompositionFades ||
+            progress <= 0 ||
+            progress >= 1)
+        {
+            return;
+        }
+
+        _isCompactCompositionTransitionActive = StartCompactCompositionTransition(
+            _pendingCompactCompositionCollapsed,
+            progress);
     }
 
     public void SetCompactTransitionProgress(bool collapsed, double progress)
@@ -1910,7 +1965,7 @@ public sealed partial class WidgetShell : UserControl
     private static double Lerp(double start, double end, double progress) =>
         start + ((end - start) * Math.Clamp(progress, 0, 1));
 
-    private bool StartCompactCompositionTransition(bool collapsed)
+    private bool StartCompactCompositionTransition(bool collapsed, double fromProgress = 0)
     {
         if (!_compactTransitionProfile.IsAnimated ||
             _compactTransitionProfile.DurationMilliseconds <= 0)
@@ -1929,25 +1984,32 @@ public sealed partial class WidgetShell : UserControl
             {
                 StartCompactOpacityAnimation(
                     CollapsedChromeLayer,
-                    progress => _compactTransitionProfile.GetCompactSurfaceOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetCompactSurfaceOpacity(collapsed, progress),
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     TitleBarGrid,
-                    progress => _compactTransitionProfile.GetLiveContentOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetLiveContentOpacity(collapsed, progress),
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     ShellContentPresenter,
-                    progress => _compactTransitionProfile.GetLiveContentOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetLiveContentOpacity(collapsed, progress),
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     CompactIdentityHost,
-                    progress => _compactTransitionProfile.GetCompactIdentityOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetCompactIdentityOpacity(collapsed, progress),
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     CompactTextContainer,
-                    progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress),
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     CompactBadge,
-                    progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress),
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     CompactLiveIndicatorHost,
-                    progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress),
+                    fromProgress);
                 started = true;
             }
 
@@ -1957,14 +2019,17 @@ public sealed partial class WidgetShell : UserControl
             {
                 StartCompactScaleAnimation(
                     CompactFullBleedBackground,
-                    progress => ResolveFullBleedTransition(collapsed, progress).Scale);
+                    progress => ResolveFullBleedTransition(collapsed, progress).Scale,
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     CompactFullBleedBackground,
-                    progress => ResolveFullBleedTransition(collapsed, progress).Opacity);
+                    progress => ResolveFullBleedTransition(collapsed, progress).Opacity,
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     CompactFullBleedOverlay,
                     progress => ResolveFullBleedTransition(collapsed, progress).Opacity *
-                        ResolveFullBleedOverlayOpacity());
+                        ResolveFullBleedOverlayOpacity(),
+                    fromProgress);
 
                 started = true;
             }
@@ -1981,17 +2046,20 @@ public sealed partial class WidgetShell : UserControl
 
     private void StartCompactOpacityAnimation(
         FrameworkElement element,
-        Func<double, double> valueSelector)
+        Func<double, double> valueSelector,
+        double fromProgress = 0)
     {
         Visual visual = ElementCompositionPreview.GetElementVisual(element);
         ScalarKeyFrameAnimation animation = visual.Compositor.CreateScalarKeyFrameAnimation();
+        double span = Math.Clamp(1 - fromProgress, 0.01, 1);
         animation.Duration = TimeSpan.FromMilliseconds(
-            _compactTransitionProfile.DurationMilliseconds);
+            _compactTransitionProfile.DurationMilliseconds * span);
         const int sampleCount = 12;
         for (int step = 0; step <= sampleCount; step++)
         {
             double timeProgress = step / (double)sampleCount;
-            double easedProgress = _compactTransitionProfile.EaseProgress(timeProgress);
+            double easedProgress = _compactTransitionProfile.EaseProgress(
+                fromProgress + (timeProgress * span));
             animation.InsertKeyFrame(
                 (float)timeProgress,
                 (float)Math.Clamp(valueSelector(easedProgress), 0, 1));
@@ -2002,18 +2070,21 @@ public sealed partial class WidgetShell : UserControl
 
     private void StartCompactScaleAnimation(
         FrameworkElement element,
-        Func<double, double> valueSelector)
+        Func<double, double> valueSelector,
+        double fromProgress = 0)
     {
         Visual visual = ElementCompositionPreview.GetElementVisual(element);
         visual.CenterPoint = new Vector3(visual.Size.X / 2, visual.Size.Y / 2, 0);
         Vector3KeyFrameAnimation animation = visual.Compositor.CreateVector3KeyFrameAnimation();
+        double span = Math.Clamp(1 - fromProgress, 0.01, 1);
         animation.Duration = TimeSpan.FromMilliseconds(
-            _compactTransitionProfile.DurationMilliseconds);
+            _compactTransitionProfile.DurationMilliseconds * span);
         const int sampleCount = 24;
         for (int step = 0; step <= sampleCount; step++)
         {
             double timeProgress = step / (double)sampleCount;
-            double easedProgress = _compactTransitionProfile.EaseProgress(timeProgress);
+            double easedProgress = _compactTransitionProfile.EaseProgress(
+                fromProgress + (timeProgress * span));
             float scale = (float)valueSelector(easedProgress);
             animation.InsertKeyFrame((float)timeProgress, new Vector3(scale, scale, 1));
         }
@@ -2039,9 +2110,22 @@ public sealed partial class WidgetShell : UserControl
     {
         if (!force && !_isCompactCompositionTransitionActive)
         {
+            _hasStartedCompactCompositionFades = false;
             return;
         }
 
+        // An armed-but-never-issued transition (the host never got a frame to
+        // commit) has nothing to stop, and resolving nine element visuals just
+        // to stop animations that were never started is pure UI-thread cost at
+        // the end of every aborted morph.
+        if (!_hasStartedCompactCompositionFades)
+        {
+            _hasStartedCompactCompositionFades = false;
+            _isCompactCompositionTransitionActive = false;
+            return;
+        }
+
+        _hasStartedCompactCompositionFades = false;
         foreach (FrameworkElement element in new FrameworkElement[]
         {
             CollapsedChromeLayer,

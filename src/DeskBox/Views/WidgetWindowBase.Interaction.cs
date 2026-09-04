@@ -241,30 +241,73 @@ public abstract partial class WidgetWindowBase
 
     protected void BeginWindowDragCore(PointerRoutedEventArgs e, FrameworkElement captureElement)
     {
+        BeginWindowDragCore(e, captureElement, activatesTitleGroup: false);
+    }
+
+    /// <summary>
+    /// Arms a window drag without touching the desktop layer. Pressing a title
+    /// bar used to raise the widget, downgrade its backdrop and open a snap
+    /// session immediately; every one of those is a visible transaction, and a
+    /// click that never moves paid for all of them twice (once on press, once
+    /// when the release restored the resting layer). Neighbouring widgets whose
+    /// drop shadows reach across the gap re-composited on both transitions,
+    /// which is the edge flicker users reported on a plain title click. The
+    /// work now happens in <see cref="EngageWindowDrag"/> once the pointer
+    /// crosses the same 4px threshold that already gated the first move.
+    /// </summary>
+    protected void BeginWindowDragCore(
+        PointerRoutedEventArgs e,
+        FrameworkElement captureElement,
+        bool activatesTitleGroup)
+    {
         CancelPendingTitleBarDragFrame();
         BeginWidgetBoundsInteraction();
         IsDragging = true;
         _deferTitleBarDragConfigUpdates = true;
-        SimplifyBackdropForInteraction();
         HasMovedTitleBarDrag = false;
+        _isWindowDragEngaged = false;
+        _isCoordinatedMoveDrag = false;
+        _windowDragActivatesTitleGroup = activatesTitleGroup;
+        _windowDragRequestsCoordinatedMove =
+            Win32Helper.IsKeyPressed(Windows.System.VirtualKey.Control);
         DisplayChangeWatcher?.SuppressRestore();
         Win32Helper.GetCursorPos(out InitialCursorPt);
         RectInt32 initialBounds = GetActualWindowBounds();
         InitialWindowPos = new PointInt32(initialBounds.X, initialBounds.Y);
         InitialWindowSize = new SizeInt32(initialBounds.Width, initialBounds.Height);
+        DragCaptureElement = captureElement;
+        captureElement.CapturePointer(e.Pointer);
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// Performs the once-per-drag setup that a real move needs. Called from the
+    /// movement-threshold crossing, before the first bounds frame is applied.
+    /// </summary>
+    private void EngageWindowDrag()
+    {
+        if (_isWindowDragEngaged)
+        {
+            return;
+        }
+
+        _isWindowDragEngaged = true;
+        SimplifyBackdropForInteraction();
         _isCoordinatedMoveDrag =
-            Win32Helper.IsKeyPressed(Windows.System.VirtualKey.Control) &&
+            _windowDragRequestsCoordinatedMove &&
             App.Current?.WidgetManager?.TryBeginCoordinatedMove(HWnd) == true;
         if (!_isCoordinatedMoveDrag)
         {
+            if (_windowDragActivatesTitleGroup &&
+                !_windowDragRequestsCoordinatedMove)
+            {
+                App.Current?.WidgetManager?.ActivateAllVisibleWidgetsFromTitle(HWnd);
+            }
+
             ElevateForInteraction();
         }
 
         bool movesCapsuleBar = !_isCoordinatedMoveDrag && BeginCompactArrangementDrag();
-        DragCaptureElement = captureElement;
-        captureElement.CapturePointer(e.Pointer);
-        e.Handled = true;
-
         if (!movesCapsuleBar && !_isCoordinatedMoveDrag)
         {
             App.Current?.ResizeGuideOverlay.BeginDrag(HWnd, RootElement);
@@ -292,6 +335,7 @@ public abstract partial class WidgetWindowBase
             }
 
             HasMovedTitleBarDrag = true;
+            EngageWindowDrag();
             WidgetShellControl.NotifyCompactDragMoved();
         }
 
@@ -380,10 +424,17 @@ public abstract partial class WidgetWindowBase
         _deferTitleBarDragConfigUpdates = false;
         IsDragging = false;
         bool hasMoved = HasMovedTitleBarDrag;
+        bool wasEngaged = _isWindowDragEngaged;
+        _isWindowDragEngaged = false;
+        _windowDragActivatesTitleGroup = false;
+        _windowDragRequestsCoordinatedMove = false;
         DragCaptureElement?.ReleasePointerCapture(e.Pointer);
         DragCaptureElement = null;
 
-        App.Current?.ResizeGuideOverlay.EndDrag();
+        if (wasEngaged)
+        {
+            App.Current?.ResizeGuideOverlay.EndDrag();
+        }
 
         if (_isCoordinatedMoveDrag &&
             App.Current?.WidgetManager?.CompleteCoordinatedMove(HWnd, hasMoved) == true)
@@ -402,15 +453,18 @@ public abstract partial class WidgetWindowBase
         CompleteCompactArrangementDrag();
         RectInt32 finalBounds = GetActualWindowBounds();
         finalBounds = CompleteExpandedWidgetDrag(finalBounds);
-        CapturePositionAnchor(finalBounds.X, finalBounds.Y, finalBounds.Width, finalBounds.Height);
-        UpdateConfigBoundsFromPhysical(finalBounds.X, finalBounds.Y, finalBounds.Width, finalBounds.Height, persist: true);
+        if (hasMoved)
+        {
+            CapturePositionAnchor(finalBounds.X, finalBounds.Y, finalBounds.Width, finalBounds.Height);
+            UpdateConfigBoundsFromPhysical(finalBounds.X, finalBounds.Y, finalBounds.Width, finalBounds.Height, persist: true);
+        }
         EndWidgetBoundsInteraction();
         OnDragEnd(hasMoved);
         if (hasMoved && !IsCompactBoundsStateActive)
         {
             _ = App.Current?.WidgetManager?.CompleteWidgetGroupDragAsync(Config.Id);
         }
-        else
+        else if (wasEngaged)
         {
             App.Current?.WidgetManager?.CancelWidgetGroupDrag(Config.Id);
         }
@@ -418,9 +472,13 @@ public abstract partial class WidgetWindowBase
         DisplayChangeWatcher?.ResumeRestore();
         HasMovedTitleBarDrag = false;
         RestoreBackdropAfterInteraction();
-        QueueBackdropRefresh();
-        App.Current?.WidgetManager?.RestoreTemporarilyRaisedWidgetsToDesktopLayer(
-            "drag-ended");
+        if (wasEngaged)
+        {
+            QueueBackdropRefresh();
+            App.Current?.WidgetManager?.RestoreTemporarilyRaisedWidgetsToDesktopLayer(
+                "drag-ended");
+        }
+
         e.Handled = true;
     }
 

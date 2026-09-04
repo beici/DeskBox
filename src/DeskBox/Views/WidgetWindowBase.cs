@@ -93,6 +93,13 @@ public abstract partial class WidgetWindowBase : Window
     protected SizeInt32 InitialWindowSize;
     protected FrameworkElement? DragCaptureElement;
     private bool _isCoordinatedMoveDrag;
+    // A title-bar or drag-handle press only *arms* a drag. Every side effect
+    // that the shell can see - the Z-order raise, the backdrop downgrade, the
+    // snap-guide session - waits until the pointer actually crosses the move
+    // threshold, so a plain click leaves the whole widget group untouched.
+    private bool _isWindowDragEngaged;
+    private bool _windowDragRequestsCoordinatedMove;
+    private bool _windowDragActivatesTitleGroup;
     private bool _deferTitleBarDragConfigUpdates;
     private bool _deferInteractiveResizeConfigUpdates;
     private PendingTitleBarDragFrame? _pendingTitleBarDragFrame;

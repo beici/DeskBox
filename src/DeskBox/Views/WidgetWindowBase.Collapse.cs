@@ -138,6 +138,28 @@ public abstract partial class WidgetWindowBase
     private int _collapseAnimationSampledTicks;
     private long _collapseAnimationLastTickTimestamp;
     private long _lastCompactExpansionBlockedFeedbackTimestamp;
+
+    // Clamped-delta geometry timeline. See
+    // WidgetCompactTransitionProgressPolicy: raw elapsed time turned any UI
+    // thread stall into a jump, so progress is accumulated from capped frame
+    // steps and the stalled remainder is only reported.
+    private long _collapseAnimationProgressTimestamp;
+    private double _collapseAnimationProgressMs;
+    private double _collapseAnimationStalledMs;
+    private double _collapseAnimationMaximumStepMs;
+    private double _collapseAnimationMaximumStallMs;
+    private bool _hasCommittedCollapseAnimationFrame;
+    private Action? _beginApplyingBoundsCallback;
+    private Action? _endApplyingBoundsCallback;
+    private Action? _pendingBoundsMoveFallbackCallback;
+    private RectInt32 _pendingBoundsMoveFallbackBounds;
+
+    // Transition-start cost, sampled only while performance logging is on. The
+    // setup runs before the animation clock starts, so its cost is invisible to
+    // the frame tracker of its own transition - but a capsule that is already
+    // animating pays for it as a dropped frame.
+    private double _compactTransitionPresentationMs;
+    private double _compactTransitionLayoutResolveMs;
     private bool _isShellTransitionActive;
     private bool _isBoundsInteractionActive;
     private bool _isRaisedForExpandedState;
@@ -2941,7 +2963,12 @@ public abstract partial class WidgetWindowBase
         }
 
         string contentMode = SettingsService.Settings.WidgetCompactContentMode;
+        long presentationStarted = Stopwatch.GetTimestamp();
         RefreshCompactPresentation();
+        _compactTransitionPresentationMs = Stopwatch
+            .GetElapsedTime(presentationStarted)
+            .TotalMilliseconds;
+        _compactTransitionLayoutResolveMs = 0;
 
         if (collapsed == _targetCollapsed && !_isCollapseAnimationRendering)
         {
@@ -3020,11 +3047,15 @@ public abstract partial class WidgetWindowBase
             to = GetCompactBounds(from);
             _stableCompactBounds = to;
 
+            long collapseLayoutStarted = Stopwatch.GetTimestamp();
             WidgetCompactExpansionLayout layout = ResolveCompactExpansionLayout(
                 to,
                 new SizeInt32(from.Width, from.Height),
                 freezeResolvedAnchor: _compactExpansionAnchor is not null,
                 requireFullSize: true);
+            _compactTransitionLayoutResolveMs = Stopwatch
+                .GetElapsedTime(collapseLayoutStarted)
+                .TotalMilliseconds;
             if (layout.CanExpand)
             {
                 _compactExpansionAnchor = layout.Anchor;
@@ -3056,10 +3087,14 @@ public abstract partial class WidgetWindowBase
             else
             {
                 RectInt32 compactBounds = GetStableCompactBounds(from);
+                long expandLayoutStarted = Stopwatch.GetTimestamp();
                 WidgetCompactExpansionLayout layout = preparedExpansionLayout ??
                     ResolveCompactExpansionLayout(
                         compactBounds,
                         requireFullSize: true);
+                _compactTransitionLayoutResolveMs = Stopwatch
+                    .GetElapsedTime(expandLayoutStarted)
+                    .TotalMilliseconds;
                 if (!layout.CanExpand)
                 {
                     // An interrupted transition can reach this branch without
@@ -3227,6 +3262,7 @@ public abstract partial class WidgetWindowBase
     {
         CancelDeferredExpandedLayerRestore();
         StopCollapseAnimation();
+        long setupStarted = Stopwatch.GetTimestamp();
         _collapseAnimationAnchor = expansionAnchor;
         _collapseAnimationPivot = expansionPivot;
         double dpiScale = Win32Helper.GetDpiScaleForWindow(HWnd, RootElement.XamlRoot);
@@ -3257,6 +3293,7 @@ public abstract partial class WidgetWindowBase
         _collapseAnimationFrom = from;
         _collapseAnimationTo = to;
         _collapseAnimationDurationMs = durationMs;
+        long responsiveLayoutDone = Stopwatch.GetTimestamp();
         int refreshRateHz = Win32Helper.GetDisplayRefreshRateForWindow(HWnd);
         int frameRateCap = WidgetCompactFrameSkipPolicy.NormalizeFrameRate(
             SettingsService.Settings.WidgetAnimationFrameRate);
@@ -3288,11 +3325,13 @@ public abstract partial class WidgetWindowBase
         _collapseAnimationFrameBudgetMs = 1000.0 / Math.Max(1, refreshRateHz);
         _collapseAnimationOverrunTicks = 0;
         _collapseAnimationSampledTicks = 0;
+        long refreshRateDone = Stopwatch.GetTimestamp();
         string cornerPreference = WindowsCompatibilityService.ResolveEffectiveWidgetCornerPreference(
             SettingsService.Settings.WidgetCornerPreference);
         string mediaCornerMode = WindowsCompatibilityService.ResolveEffectiveWidgetCompactMediaCornerMode(
             SettingsService.Settings.WidgetCompactMediaCornerMode);
         ApplyCompactBorderVisuals();
+        long borderVisualsDone = Stopwatch.GetTimestamp();
         _collapseAnimationVisualProfile = WidgetCompactTransitionVisualProfile.Resolve(
             SettingsService.Settings.WidgetCompactAnimationEffect,
             durationMs,
@@ -3316,6 +3355,30 @@ public abstract partial class WidgetWindowBase
         // window it was supposed to be tracking.
         _collapseAnimationStarted = Stopwatch.GetTimestamp();
         _collapseAnimationLastTickTimestamp = _collapseAnimationStarted;
+        _collapseAnimationProgressTimestamp = _collapseAnimationStarted;
+        _collapseAnimationProgressMs = 0;
+        _collapseAnimationStalledMs = 0;
+        _hasCommittedCollapseAnimationFrame = false;
+        _collapseAnimationMaximumStepMs =
+            WidgetCompactTransitionProgressPolicy.ResolveMaximumStepMs(
+                _collapseAnimationFrameBudgetMs,
+                _collapseAnimationFrameSkip);
+        _collapseAnimationMaximumStallMs =
+            WidgetCompactTransitionProgressPolicy.ResolveMaximumStallMs(durationMs);
+        if (PerformanceLogger.IsEnabled)
+        {
+            PerformanceLogger.Mark(
+                "CompactTransitionSetup",
+                $"kind={Config.WidgetKind} collapsed={collapsed} " +
+                $"totalMs={Stopwatch.GetElapsedTime(setupStarted, _collapseAnimationStarted).TotalMilliseconds:F1} " +
+                $"presentationMs={_compactTransitionPresentationMs:F1} " +
+                $"layoutResolveMs={_compactTransitionLayoutResolveMs:F1} " +
+                $"freezeMs={Stopwatch.GetElapsedTime(setupStarted, responsiveLayoutDone).TotalMilliseconds:F1} " +
+                $"refreshRateMs={Stopwatch.GetElapsedTime(responsiveLayoutDone, refreshRateDone).TotalMilliseconds:F1} " +
+                $"borderMs={Stopwatch.GetElapsedTime(refreshRateDone, borderVisualsDone).TotalMilliseconds:F1} " +
+                $"prepareMs={Stopwatch.GetElapsedTime(borderVisualsDone, _collapseAnimationStarted).TotalMilliseconds:F1}");
+        }
+
         _compactAnimationFrameTracker = new WidgetCompactAnimationFrameTracker(
             _collapseAnimationStarted,
             refreshRateHz);
@@ -3326,7 +3389,10 @@ public abstract partial class WidgetWindowBase
         SimplifyBackdropForInteraction();
         ScheduleTimer(
             ref _collapseAnimationWatchdogTimer,
-            Math.Max(300, durationMs + 320),
+            // The clamped timeline may legitimately stretch a morph by up to
+            // the stall budget, so the watchdog has to allow for it or it would
+            // snap exactly the transitions the clamp is smoothing out.
+            Math.Max(300, durationMs + 320 + (int)_collapseAnimationMaximumStallMs),
             CompleteBoundsTransitionAfterTimeout);
     }
 
@@ -3365,7 +3431,52 @@ public abstract partial class WidgetWindowBase
         }
 
         double elapsedMs = Stopwatch.GetElapsedTime(_collapseAnimationStarted, frameTimestamp).TotalMilliseconds;
-        double progress = Math.Clamp(elapsedMs / Math.Max(1, _collapseAnimationDurationMs), 0, 1);
+        if (!_hasCommittedCollapseAnimationFrame)
+        {
+            // The content fades start with the first frame the geometry can
+            // actually commit, not when the transition was set up. Revealing
+            // the expanded tree is what forces its first rasterization, and on
+            // a cold widget that blocks the UI thread long enough for a
+            // compositor-clocked fade to run most of the way to completion
+            // before the window has moved a single pixel.
+            _hasCommittedCollapseAnimationFrame = true;
+            _collapseAnimationProgressTimestamp = frameTimestamp;
+            WidgetShellControl.StartCompactTransitionFades();
+            if (elapsedMs >= WidgetCompactTransitionProgressPolicy.StallRecoveryThresholdMs)
+            {
+                App.LogVerbose(
+                    $"[Compact] First morph frame recovered kind={Config.WidgetKind} " +
+                    $"id={Config.Id} collapsed={_targetCollapsed} " +
+                    $"stalledMs={elapsedMs:F1}");
+            }
+        }
+
+        double rawStepMs = Stopwatch
+            .GetElapsedTime(_collapseAnimationProgressTimestamp, frameTimestamp)
+            .TotalMilliseconds;
+        _collapseAnimationProgressTimestamp = frameTimestamp;
+        double stepMs = _collapseAnimationStalledMs < _collapseAnimationMaximumStallMs
+            ? WidgetCompactTransitionProgressPolicy.ClampStepMs(
+                rawStepMs,
+                _collapseAnimationMaximumStepMs)
+            : rawStepMs;
+        _collapseAnimationProgressMs += stepMs;
+        double absorbedMs = rawStepMs - stepMs;
+        _collapseAnimationStalledMs += absorbedMs;
+        double progress = Math.Clamp(
+            _collapseAnimationProgressMs / Math.Max(1, _collapseAnimationDurationMs),
+            0,
+            1);
+        if (WidgetCompactTransitionProgressPolicy.ShouldReportStall(absorbedMs) &&
+            progress < 1)
+        {
+            // The compositor kept running through the stall this frame just
+            // absorbed, so the content fades are now ahead of the geometry.
+            // Re-issue them over the remaining span to put both timelines back
+            // on the same clock.
+            WidgetShellControl.ResyncCompactTransitionFades(progress);
+        }
+
         double eased = _collapseAnimationVisualProfile.EaseProgress(progress);
         RectInt32 bounds = _collapseAnimationAnchor is { } expansionAnchor
             ? WidgetCompactExpansionCalculator.InterpolateAnchoredBounds(
@@ -4013,13 +4124,17 @@ public abstract partial class WidgetWindowBase
             flags |= Win32Helper.SWP_NOREDRAW | Win32Helper.SWP_NOCOPYBITS;
         }
 
+        // Cached callbacks: this runs on every animation frame, and fresh
+        // closures here allocated four objects per frame per animating widget.
+        _pendingBoundsMoveFallbackBounds = bounds;
         if (WidgetCompactAnimationCoordinator.TryQueueBoundsMove(
             HWnd,
             bounds,
             flags,
-            beforeCommit: () => IsApplyingBounds = true,
-            afterCommit: () => IsApplyingBounds = false,
-            fallback: () => AppWindow.MoveAndResize(bounds)))
+            beforeCommit: _beginApplyingBoundsCallback ??= () => IsApplyingBounds = true,
+            afterCommit: _endApplyingBoundsCallback ??= () => IsApplyingBounds = false,
+            fallback: _pendingBoundsMoveFallbackCallback ??=
+                () => AppWindow.MoveAndResize(_pendingBoundsMoveFallbackBounds)))
         {
             return;
         }
@@ -4087,6 +4202,8 @@ public abstract partial class WidgetWindowBase
             $"refreshHz={summary.RefreshRateHz} frames={summary.FrameCount} " +
             $"dropped={summary.EstimatedDroppedFrames} " +
             $"maxFrameMs={summary.MaximumFrameIntervalMilliseconds:F1} " +
+            $"firstFrameMs={summary.FirstFrameMilliseconds:F1} " +
+            $"stalledMs={_collapseAnimationStalledMs:F1} " +
             $"budgetMs={summary.FrameBudgetMilliseconds:F1} " +
             $"elapsedMs={summary.ElapsedMilliseconds:F1}";
         PerformanceLogger.Mark("CompactAnimation", details);
