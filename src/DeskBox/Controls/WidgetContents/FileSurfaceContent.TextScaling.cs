@@ -7,6 +7,8 @@ namespace DeskBox.Controls.WidgetContents;
 
 public sealed partial class FileSurfaceContent
 {
+    private const double LayoutSlackPixels = 1;
+
     private void FileSurfaceContent_TextScaleLoaded(
         object sender,
         RoutedEventArgs e)
@@ -89,16 +91,15 @@ public sealed partial class FileSurfaceContent
     /// <summary>
     /// Sizes the uniform icon slots. The upstream uniform-slot mechanism is
     /// kept (a first-realized item must never dictate the cell), but the
-    /// column count is decided from the UNCEILED content width
-    /// (tile + margins) against the grid's actual viewport, and the leftover
-    /// fraction is distributed across every slot. Deciding on the ceiled
-    /// cell width instead discards up to a near-full column: measured
-    /// cellW=74 against a 294.4px viewport is 3.98 columns, so the fourth
-    /// column disappeared and left a blank gutter even though four
-    /// 73.07px content widths fit with room to spare (4.03). With the
-    /// content width as the divisor, slot width = viewport/columns is
-    /// never smaller than the content by construction, so no tolerance
-    /// constant is needed and nothing clips.
+    /// column count is derived from the panel's own arrangement width and the
+    /// uncEiled content width (tile + margins), with the leftover fraction
+    /// spread across every slot. Two measured behaviors force this shape:
+    /// the ceiled cell width dropped a column at 294.4 / 74 = 3.98, and
+    /// ItemsWrapGrid wraps the last item when the row is exactly
+    /// columns * ItemWidth wide (verified: itemWidth 73.6 in a 294.4 panel
+    /// arranged items at x = 0, 73.6, 147.2, then wrapped), so a one-pixel
+    /// slack is reserved before dividing. Slot width never falls below the
+    /// content width, so nothing clips.
     /// </summary>
     private void ApplyUniformIconCellSize()
     {
@@ -113,9 +114,15 @@ public sealed partial class FileSurfaceContent
 
         double contentWidth = ViewModel.IconTileWidth +
             ViewModel.IconTileMargin.Left + ViewModel.IconTileMargin.Right;
-        double viewportWidth = ItemsGrid.ActualWidth -
-            ItemsGrid.Padding.Left - ItemsGrid.Padding.Right -
-            ItemsGrid.BorderThickness.Left - ItemsGrid.BorderThickness.Right;
+        // The panel's own layout width is the authoritative arrangement
+        // width: ItemsGrid.ActualWidth still includes the ScrollViewer's
+        // padding and vertical scrollbar gutter, so dividing that instead
+        // pushes the last column behind the scrollbar where it is clipped.
+        double viewportWidth = panel.ActualWidth > 0
+            ? panel.ActualWidth
+            : ItemsGrid.ActualWidth -
+              ItemsGrid.Padding.Left - ItemsGrid.Padding.Right -
+              ItemsGrid.BorderThickness.Left - ItemsGrid.BorderThickness.Right;
         if (contentWidth <= 0 ||
             !double.IsFinite(viewportWidth) ||
             viewportWidth < contentWidth)
@@ -127,7 +134,13 @@ public sealed partial class FileSurfaceContent
             return;
         }
 
-        int columns = Math.Max(1, (int)(viewportWidth / contentWidth));
-        panel.ItemWidth = viewportWidth / columns;
+        // ItemsWrapGrid only accepts a column when the row is strictly wider
+        // than columns * ItemWidth; an exact division (294.4 / 4 x 73.6) makes
+        // it wrap the last item to the next row and leaves a full slot of
+        // blank gutter. Reserve one logical pixel before dividing so the
+        // arrangement is always strictly inside the viewport.
+        double usableWidth = viewportWidth - LayoutSlackPixels;
+        int columns = Math.Max(1, (int)(usableWidth / contentWidth));
+        panel.ItemWidth = Math.Max(contentWidth, usableWidth / columns);
     }
 }
