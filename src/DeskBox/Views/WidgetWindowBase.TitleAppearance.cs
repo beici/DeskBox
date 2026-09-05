@@ -200,6 +200,20 @@ public abstract partial class WidgetWindowBase
         return item;
     }
 
+    /// <summary>
+    /// Room the margin editor asks for: two side columns with their reference
+    /// captions, the mode selector, the hint line and the batch checkbox.
+    /// </summary>
+    private const double MarginEditorContentWidthDips = 380;
+    private const double MarginEditorContentHeightDips = 300;
+
+    /// <summary>
+    /// Idle time after the last keystroke before the margin preview moves the
+    /// widget. Long enough to swallow a typed multi-digit value, short enough to
+    /// still feel like a live preview.
+    /// </summary>
+    private const int MarginPreviewDebounceMilliseconds = 160;
+
     private async Task ShowMarginDialogAsync()
     {
         if (RootElement.XamlRoot is null)
@@ -208,6 +222,14 @@ public abstract partial class WidgetWindowBase
         }
 
         var localization = App.Current.LocalizationService;
+        // The editor gets its own window because the widget cannot host it: a
+        // typical widget is ~313x326 physical pixels, and a ContentDialog in that
+        // XamlRoot was clipped by the host window — the Bottom/Right row was cut
+        // off entirely, which made the entry look Top/Left only. The budget below
+        // therefore comes from the monitor work area.
+        WidgetDialogViewport viewport = ResolveToolDialogViewport(
+            MarginEditorContentWidthDips,
+            MarginEditorContentHeightDips);
         WidgetMarginEdge[] edges = GetCurrentReferenceMarginEdges();
         int left = edges[0].Distance;
         int top = edges[1].Distance;
@@ -223,10 +245,24 @@ public abstract partial class WidgetWindowBase
 
         var modeSelection = new RadioButtons
         {
+            // Side-by-side choices instead of a stacked pair: the vertical space
+            // this frees is what the four side rows need. A host too narrow for
+            // two columns falls back to the stacked layout.
+            MaxColumns = viewport.PrefersSingleColumn ? 1 : 2,
             SelectedIndex = entryMode == WidgetMarginSettings.ModeUniform ? 0 : 1
         };
-        modeSelection.Items.Add(localization.T("Widget.Margin.Uniform"));
-        modeSelection.Items.Add(localization.T("Widget.Margin.PerSide"));
+        // Wrapping labels: the mode names are long in several languages and a
+        // plain string item would be clipped rather than wrapped.
+        modeSelection.Items.Add(new TextBlock
+        {
+            Text = localization.T("Widget.Margin.Uniform"),
+            TextWrapping = TextWrapping.Wrap
+        });
+        modeSelection.Items.Add(new TextBlock
+        {
+            Text = localization.T("Widget.Margin.PerSide"),
+            TextWrapping = TextWrapping.Wrap
+        });
 
         var uniformBox = new TextBox
         {
@@ -235,46 +271,111 @@ public abstract partial class WidgetWindowBase
                 .ToString(System.Globalization.CultureInfo.InvariantCulture)
         };
 
-        var leftBox = new TextBox { Text = left.ToString(System.Globalization.CultureInfo.InvariantCulture) };
-        var topBox = new TextBox { Text = top.ToString(System.Globalization.CultureInfo.InvariantCulture) };
-        var rightBox = new TextBox { Text = right.ToString(System.Globalization.CultureInfo.InvariantCulture) };
-        var bottomBox = new TextBox { Text = bottom.ToString(System.Globalization.CultureInfo.InvariantCulture) };
-        void ApplySideHeaders(WidgetMarginEdge[] sideEdges)
+        // Index order matches GetCurrentReferenceMarginEdges: Left, Top, Right, Bottom.
+        string[] sideKeys =
+        [
+            "Widget.Margin.Left",
+            "Widget.Margin.Top",
+            "Widget.Margin.Right",
+            "Widget.Margin.Bottom"
+        ];
+        int[] sideDistances = [left, top, right, bottom];
+        var sideBoxes = new TextBox[sideKeys.Length];
+        var sideCaptions = new TextBlock[sideKeys.Length];
+        var sideCells = new StackPanel[sideKeys.Length];
+        for (int index = 0; index < sideKeys.Length; index++)
         {
-            leftBox.Header = BuildMarginSideHeader("Widget.Margin.Left", sideEdges[0].Kind);
-            topBox.Header = BuildMarginSideHeader("Widget.Margin.Top", sideEdges[1].Kind);
-            rightBox.Header = BuildMarginSideHeader("Widget.Margin.Right", sideEdges[2].Kind);
-            bottomBox.Header = BuildMarginSideHeader("Widget.Margin.Bottom", sideEdges[3].Kind);
+            sideBoxes[index] = new TextBox
+            {
+                // The side name alone stays on one line at any dialog width; the
+                // reference object rides in the caption under the box, so a long
+                // reference name can no longer double the row height.
+                Header = localization.T(sideKeys[index]),
+                Text = sideDistances[index].ToString(System.Globalization.CultureInfo.InvariantCulture),
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            sideCaptions[index] = new TextBlock
+            {
+                FontSize = 11,
+                Opacity = 0.7,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            sideCells[index] = new StackPanel { Spacing = 2 };
+            sideCells[index].Children.Add(sideBoxes[index]);
+            sideCells[index].Children.Add(sideCaptions[index]);
         }
 
-        ApplySideHeaders(edges);
+        TextBox leftBox = sideBoxes[0];
+        TextBox topBox = sideBoxes[1];
+        TextBox rightBox = sideBoxes[2];
+        TextBox bottomBox = sideBoxes[3];
+
+        void ApplySideReferences(WidgetMarginEdge[] sideEdges)
+        {
+            for (int index = 0; index < sideCells.Length; index++)
+            {
+                WidgetMarginReferenceKind kind = sideEdges[index].Kind;
+                sideCaptions[index].Text = DescribeMarginReference(kind);
+                // The full "side · reference" sentence stays on hover, which is
+                // what an ellipsized caption in a narrow host falls back to.
+                ToolTipService.SetToolTip(
+                    sideCells[index],
+                    BuildMarginSideHeader(sideKeys[index], kind));
+            }
+        }
+
+        ApplySideReferences(edges);
         var referenceHint = new TextBlock
         {
             Text = localization.T("Widget.Margin.ReferenceHint"),
             TextWrapping = TextWrapping.Wrap,
-            Opacity = 0.75
+            FontSize = 12,
+            Opacity = 0.75,
+            // On a short host the four inputs win the space: each side already
+            // names its own reference object, and the full sentence stays in the
+            // per-side tooltips.
+            Visibility = viewport.PrefersCompactText ? Visibility.Collapsed : Visibility.Visible
         };
-        // 2x2 grid: row 0 = Top / Bottom, row 1 = Left / Right, so the four
-        // independent margins read spatially the way they apply.
-        var perSidePanel = new Grid { ColumnSpacing = 10, RowSpacing = 8 };
-        perSidePanel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        perSidePanel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        perSidePanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        perSidePanel.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        void PlaceInGrid(TextBox box, int row, int column)
+        // All four sides have to be reachable in one pass: two columns pair them
+        // spatially (the vertical pair, then the horizontal pair) and a host too
+        // narrow for that stacks them into one scrollable column instead of
+        // pushing the trailing column past the window edge.
+        bool singleColumn = viewport.PrefersSingleColumn;
+        var perSidePanel = new Grid { ColumnSpacing = 12, RowSpacing = 10 };
+        int rowCount = singleColumn ? sideCells.Length : 2;
+        int columnCount = singleColumn ? 1 : 2;
+        for (int row = 0; row < rowCount; row++)
         {
-            box.Header = box.Header;
-            Grid.SetRow(box, row);
-            Grid.SetColumn(box, column);
-            perSidePanel.Children.Add(box);
+            // Auto rows: a star row would divide the dialog's own height budget
+            // and squeeze the second pair into an unreadable sliver.
+            perSidePanel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         }
 
-        PlaceInGrid(topBox, 0, 0);
-        PlaceInGrid(bottomBox, 1, 0);
-        PlaceInGrid(leftBox, 0, 1);
-        PlaceInGrid(rightBox, 1, 1);
+        for (int column = 0; column < columnCount; column++)
+        {
+            perSidePanel.ColumnDefinitions.Add(
+                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        }
 
-        var applyToAll = new CheckBox { Content = localization.T("Widget.Margin.ApplyToAll") };
+        int[] sidePlacementOrder = [1, 3, 0, 2]; // Top, Bottom, Left, Right
+        for (int slot = 0; slot < sidePlacementOrder.Length; slot++)
+        {
+            StackPanel cell = sideCells[sidePlacementOrder[slot]];
+            Grid.SetRow(cell, singleColumn ? slot : slot % 2);
+            Grid.SetColumn(cell, singleColumn ? 0 : slot / 2);
+            perSidePanel.Children.Add(cell);
+        }
+
+        var applyToAll = new CheckBox
+        {
+            // Wrapping content: the batch label is a full sentence in most
+            // languages and would otherwise be cut off in a narrow dialog.
+            Content = new TextBlock
+            {
+                Text = localization.T("Widget.Margin.ApplyToAll"),
+                TextWrapping = TextWrapping.Wrap
+            }
+        };
         var validation = new TextBlock
         {
             Foreground = new SolidColorBrush(Microsoft.UI.Colors.OrangeRed),
@@ -282,13 +383,39 @@ public abstract partial class WidgetWindowBase
             Visibility = Visibility.Collapsed
         };
 
-        var content = new StackPanel { Spacing = 12, MinWidth = 300 };
+        var content = new StackPanel { Spacing = 12 };
         content.Children.Add(modeSelection);
         content.Children.Add(uniformBox);
         content.Children.Add(perSidePanel);
         content.Children.Add(referenceHint);
         content.Children.Add(applyToAll);
         content.Children.Add(validation);
+
+        // WinUI raises TextChanged for programmatic writes as well, and the event
+        // can arrive after the write returns — a plain "suppress" flag therefore
+        // leaks: the live-sync writes came back looking like user edits, marked
+        // their side as edited and moved the widget to satisfy a value nobody
+        // typed. Every value the editor writes itself is remembered so the echo
+        // can be recognised whenever it arrives.
+        var programmaticEntries = new Dictionary<TextBox, string>();
+
+        void WriteEntry(TextBox box, string text)
+        {
+            programmaticEntries[box] = text;
+            box.Text = text;
+        }
+
+        bool IsProgrammaticEcho(TextBox source)
+        {
+            if (programmaticEntries.TryGetValue(source, out string? written) &&
+                string.Equals(written, source.Text, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            programmaticEntries.Remove(source);
+            return false;
+        }
 
         void UpdateModeVisibility()
         {
@@ -302,8 +429,10 @@ public abstract partial class WidgetWindowBase
                 // dialog-open time would be stale and Save would re-apply it.
                 (int liveLeft, int liveTop, int liveRight, int liveBottom) =
                     GetCurrentReferenceMargins();
-                uniformBox.Text = GetNearestEdgeMargin(liveLeft, liveTop, liveRight, liveBottom)
-                    .ToString(System.Globalization.CultureInfo.InvariantCulture);
+                WriteEntry(
+                    uniformBox,
+                    GetNearestEdgeMargin(liveLeft, liveTop, liveRight, liveBottom)
+                        .ToString(System.Globalization.CultureInfo.InvariantCulture));
             }
         }
 
@@ -316,29 +445,58 @@ public abstract partial class WidgetWindowBase
         bool suppressMarginPreview = false;
         var editedSides = new HashSet<string>(StringComparer.Ordinal);
 
+        // Typing is one edit, not one per digit. Applying every keystroke moved
+        // the widget for the leading "1" of "150", persisted settings each time,
+        // and the layout burst could swallow the next keystroke — so the preview
+        // runs once the user pauses.
+        Microsoft.UI.Dispatching.DispatcherQueueTimer previewTimer = DispatcherQueue.CreateTimer();
+        previewTimer.Interval = TimeSpan.FromMilliseconds(MarginPreviewDebounceMilliseconds);
+        previewTimer.IsRepeating = false;
+        TextBox? pendingPreviewSource = null;
+        previewTimer.Tick += (_, _) =>
+        {
+            TextBox? source = pendingPreviewSource;
+            pendingPreviewSource = null;
+            if (source is not null)
+            {
+                ApplyPreview(source);
+            }
+        };
+
         void TryPreview(TextBox source)
         {
-            if (suppressMarginPreview)
+            if (suppressMarginPreview || IsProgrammaticEcho(source))
             {
                 return;
             }
 
             validation.Visibility = Visibility.Collapsed;
-            if (!WidgetMarginSettings.TryParseMargin(source.Text, out int value))
+            if (!WidgetMarginSettings.TryParseMargin(source.Text, out _))
             {
                 validation.Text = string.Format(
                     localization.T("Widget.Margin.Invalid"),
                     WidgetMarginSettings.MinimumMarginPixels,
                     WidgetMarginSettings.MaximumMarginPixels);
                 validation.Visibility = Visibility.Visible;
+                previewTimer.Stop();
+                pendingPreviewSource = null;
                 return;
             }
 
+            // The edited side is recorded immediately: Save must honour it even
+            // when the user commits before the debounce elapses.
             if (ReferenceEquals(source, leftBox)) editedSides.Add("Left");
             else if (ReferenceEquals(source, topBox)) editedSides.Add("Top");
             else if (ReferenceEquals(source, rightBox)) editedSides.Add("Right");
             else if (ReferenceEquals(source, bottomBox)) editedSides.Add("Bottom");
 
+            pendingPreviewSource = source;
+            previewTimer.Stop();
+            previewTimer.Start();
+        }
+
+        void ApplyPreview(TextBox source)
+        {
             ApplyMarginsFromDialog(
                 modeSelection.SelectedIndex == 1,
                 editedSides,
@@ -348,27 +506,52 @@ public abstract partial class WidgetWindowBase
                 rightBox.Text,
                 bottomBox.Text,
                 applyToAll.IsChecked == true);
+
+            // The move changes the gap on every other side too, so the
+            // untouched boxes and their reference captions are re-read from the
+            // live geometry instead of showing pre-move numbers.
+            SyncBoxesFromLiveMargins(source);
         }
 
-        void SyncBoxesFromLiveMargins()
+        /// <summary>
+        /// Rewrites the entry boxes from the live geometry. The box the user is
+        /// typing in is skipped: a preview move can land on a clamped target, and
+        /// rewriting the focused text under the caret would fight the edit.
+        /// </summary>
+        void SyncBoxesFromLiveMargins(TextBox? focused = null)
         {
             suppressMarginPreview = true;
             try
             {
                 WidgetMarginEdge[] liveEdges = GetCurrentReferenceMarginEdges();
-                int newLeft = liveEdges[0].Distance;
-                int newTop = liveEdges[1].Distance;
-                int newRight = liveEdges[2].Distance;
-                int newBottom = liveEdges[3].Distance;
-                leftBox.Text = newLeft.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                topBox.Text = newTop.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                rightBox.Text = newRight.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                bottomBox.Text = newBottom.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                uniformBox.Text = GetNearestEdgeMargin(newLeft, newTop, newRight, newBottom)
-                    .ToString(System.Globalization.CultureInfo.InvariantCulture);
+                for (int index = 0; index < sideBoxes.Length; index++)
+                {
+                    if (ReferenceEquals(sideBoxes[index], focused))
+                    {
+                        continue;
+                    }
+
+                    WriteEntry(
+                        sideBoxes[index],
+                        liveEdges[index].Distance
+                            .ToString(System.Globalization.CultureInfo.InvariantCulture));
+                }
+
+                if (!ReferenceEquals(uniformBox, focused))
+                {
+                    WriteEntry(
+                        uniformBox,
+                        GetNearestEdgeMargin(
+                                liveEdges[0].Distance,
+                                liveEdges[1].Distance,
+                                liveEdges[2].Distance,
+                                liveEdges[3].Distance)
+                            .ToString(System.Globalization.CultureInfo.InvariantCulture));
+                }
+
                 // Moving the widget can change which object each side is
-                // measured against, so the headers are re-resolved with it.
-                ApplySideHeaders(liveEdges);
+                // measured against, so the captions are re-resolved with it.
+                ApplySideReferences(liveEdges);
             }
             finally
             {
@@ -382,16 +565,6 @@ public abstract partial class WidgetWindowBase
         rightBox.TextChanged += (_, _) => TryPreview(rightBox);
         bottomBox.TextChanged += (_, _) => TryPreview(bottomBox);
 
-        var dialog = new ContentDialog
-        {
-            XamlRoot = RootElement.XamlRoot,
-            Title = localization.T("Widget.Margin.Configure"),
-            Content = content,
-            PrimaryButtonText = localization.T("Common.Save"),
-            CloseButtonText = localization.T("Common.Cancel"),
-            DefaultButton = ContentDialogButton.Primary
-        };
-
         // Preview semantics: every valid edit moves the widget immediately so
         // what the user sees is the final layout. Cancel therefore restores
         // the position captured when the dialog opened (single-widget mode
@@ -401,8 +574,17 @@ public abstract partial class WidgetWindowBase
 
         try
         {
-            ContentDialogResult result = await dialog.ShowAsync();
-            if (result != ContentDialogResult.Primary)
+            bool saved = await ShowToolDialogAsync(
+                localization.T("Widget.Margin.Configure"),
+                content,
+                localization.T("Common.Save"),
+                localization.T("Common.Cancel"),
+                viewport);
+            // A debounced preview must never fire after the editor is gone: on
+            // cancel it would move the widget again right after the restore.
+            previewTimer.Stop();
+            pendingPreviewSource = null;
+            if (!saved)
             {
                 cancelledRestorePending = true;
             }
