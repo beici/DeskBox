@@ -372,6 +372,58 @@ public sealed partial class WidgetManager
                 $"{window.Identity.ShortSurfaceId}@{window.RestingAnimationBounds.Top:F0}"));
     }
 
+    /// <summary>
+    /// Places a widget that just finished collapsing back into the resting band
+    /// at the slot the idle order policy gives it, with one owner-preserving
+    /// move. Returns false when no usable peer anchor exists, so the caller can
+    /// fall back to the HWND_BOTTOM sink.
+    /// </summary>
+    internal bool TryReturnWidgetToRestingBand(IntPtr windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero ||
+            WidgetLayerService.UsesDesktopPinnedMode() ||
+            _widgetsRaisedFromTray)
+        {
+            return false;
+        }
+
+        IReadOnlyList<IDesktopWidgetWindow> ordered =
+            GetWindowsInIdleHighestFirstOrder(
+                GetLoadedDesktopWindows().Where(window =>
+                    window.Visible && window.WindowHandle != IntPtr.Zero));
+        if (ordered.Count < 2)
+        {
+            return false;
+        }
+
+        int index = -1;
+        for (int position = 0; position < ordered.Count; position++)
+        {
+            if (ordered[position].WindowHandle == windowHandle)
+            {
+                index = position;
+                break;
+            }
+        }
+
+        if (index < 0)
+        {
+            return false;
+        }
+
+        // The anchor is whatever should sit directly above this widget once it is
+        // resting again: its predecessor in the idle order, or - when it owns the
+        // top of the band - whatever currently sits above the peer that follows
+        // it. Landing straight in the final slot leaves the peer normalization
+        // that runs next with nothing to do.
+        IntPtr anchor = index > 0
+            ? ordered[index - 1].WindowHandle
+            : Win32Helper.GetWindow(
+                ordered[1].WindowHandle,
+                Win32Helper.GW_HWNDPREV);
+        return WidgetLayerService.TryReturnToRestingBandBelow(windowHandle, anchor);
+    }
+
     public void BringAllVisibleWidgetsToFront(IntPtr exceptHwnd = default)
     {
         foreach (var window in GetLoadedDesktopWindows())

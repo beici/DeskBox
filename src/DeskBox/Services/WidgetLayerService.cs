@@ -89,6 +89,61 @@ public static class WidgetLayerService
         Win32Helper.SetWindowToBottom(windowHandle);
     }
 
+    /// <summary>
+    /// Returns a widget to the resting band by inserting it directly below a
+    /// peer that is already resting there, instead of sinking it with
+    /// HWND_BOTTOM.
+    /// <para>
+    /// The sink is the one Z-order call that must let Windows move the shared
+    /// Explorer owner - blocking that puts the widget under the wallpaper
+    /// (DEF-058) - and moving the owner re-stacks every widget attached to it,
+    /// so all of them re-sample their acrylic backdrop. Users see the whole
+    /// group dim for a frame at the end of every capsule collapse. Inserting
+    /// after a resting peer reaches the same band with one owner-preserving
+    /// move, so only the returning widget re-composites.
+    /// </para>
+    /// </summary>
+    internal static bool TryReturnToRestingBandBelow(
+        IntPtr windowHandle,
+        IntPtr insertAfter)
+    {
+        if (windowHandle == IntPtr.Zero ||
+            insertAfter == IntPtr.Zero ||
+            insertAfter == windowHandle ||
+            !Win32Helper.IsWindow(windowHandle) ||
+            !Win32Helper.IsWindow(insertAfter) ||
+            // A topmost anchor would leave the widget at the top of the normal
+            // band, i.e. above every application window.
+            Win32Helper.IsWindowTopMost(insertAfter))
+        {
+            return false;
+        }
+
+        ApplyDesktopPinnedActivationStyle(windowHandle);
+        if (ShouldAttachRestingWindowToDesktop() &&
+            !TryAttachToDesktopIconLayer(
+                windowHandle,
+                placeAtBottom: false))
+        {
+            return false;
+        }
+
+        if (Win32Helper.IsWindowTopMost(windowHandle))
+        {
+            Win32Helper.ClearWindowTopMost(windowHandle);
+        }
+
+        if (!Win32Helper.PlaceWindowBelow(windowHandle, insertAfter))
+        {
+            return false;
+        }
+
+        App.LogVerbose(
+            $"[ZOrder] Resting band rejoin hwnd=0x{windowHandle.ToInt64():X} " +
+            $"below=0x{insertAfter.ToInt64():X}");
+        return true;
+    }
+
     public static IntPtr ClearTopMostPreservingForeground(IntPtr windowHandle)
     {
         ApplyDesktopPinnedActivationStyle(windowHandle);

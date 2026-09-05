@@ -1110,6 +1110,18 @@ public static partial class Win32Helper
             ZOrderRaiseFlags);
     }
 
+    /// <summary>
+    /// Insert a window directly below another window, leaving the shared owner
+    /// where it is. This is the quiet alternative to <see cref="SetWindowToBottom"/>
+    /// for a window that only needs to rejoin a band it already belongs to:
+    /// HWND_BOTTOM has to let Windows move the owner (see
+    /// <c>ZOrderBottomFlags</c>), and that re-stacks every window sharing it.
+    /// </summary>
+    public static bool PlaceWindowBelow(IntPtr hWnd, IntPtr insertAfter)
+    {
+        return SetWindowPos(hWnd, insertAfter, 0, 0, 0, 0, ZOrderRaiseFlags);
+    }
+
     public static bool IsWindowTopMost(IntPtr hWnd)
     {
         return (GetWindowLong(hWnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;

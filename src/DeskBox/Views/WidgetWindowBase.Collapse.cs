@@ -3560,10 +3560,12 @@ public abstract partial class WidgetWindowBase
             return;
         }
 
+        long settleStarted = Stopwatch.GetTimestamp();
         WidgetShellControl.CompleteCompactTransition(
             collapsed,
             SettingsService.Settings.WidgetCompactContentMode);
         WidgetShellControl.CompleteResponsiveLayoutTransition();
+        long shellResetDone = Stopwatch.GetTimestamp();
         _isShellTransitionActive = false;
         IsWidgetCollapsedBoundsActive = collapsed;
         OnCompactVisualStateChanged(collapsed);
@@ -3580,13 +3582,26 @@ public abstract partial class WidgetWindowBase
                         : WidgetCompactState.Expanded;
         UpdateCompactViewState();
         ApplyWindowCornerPreference();
+        long viewStateDone = Stopwatch.GetTimestamp();
         if (collapsed)
         {
             ApplyCompactSurfaceState();
+            long surfaceDone = Stopwatch.GetTimestamp();
             ScheduleExpandedLayerRestoreAfterFrameCommit(generation);
             StartCompactHoverRecoveryProbe();
             SynchronizeCompactHoverFromCurrentCursor();
             QueueCompactExpansionWarmup();
+            if (PerformanceLogger.IsEnabled)
+            {
+                PerformanceLogger.Mark(
+                    "CompactCollapseSettle",
+                    $"kind={Config.WidgetKind} " +
+                    $"totalMs={Stopwatch.GetElapsedTime(settleStarted).TotalMilliseconds:F1} " +
+                    $"shellResetMs={Stopwatch.GetElapsedTime(settleStarted, shellResetDone).TotalMilliseconds:F1} " +
+                    $"viewStateMs={Stopwatch.GetElapsedTime(shellResetDone, viewStateDone).TotalMilliseconds:F1} " +
+                    $"surfaceMs={Stopwatch.GetElapsedTime(viewStateDone, surfaceDone).TotalMilliseconds:F1} " +
+                    $"hoverMs={Stopwatch.GetElapsedTime(surfaceDone).TotalMilliseconds:F1}");
+            }
         }
         else
         {
@@ -4442,7 +4457,32 @@ public abstract partial class WidgetWindowBase
         KeepRaisedUntilDeactivate = false;
         RestoreDesktopLayerWhenIdle = false;
         IsAtDesktopLayer = true;
-        WidgetLayerService.MoveToDesktopBottom(HWnd);
+        long restoreStarted = Stopwatch.GetTimestamp();
+        // The expand raise only lifts this widget above its peers (HWND_TOP with
+        // SWP_NOOWNERZORDER), so when the band is still physically under the
+        // desktop shell there is nothing to sink. That check is worth making:
+        // the HWND_BOTTOM sink is the one Z-order call that must let Windows
+        // move the shared Explorer owner (see ZOrderBottomFlags / DEF-058), and
+        // moving the owner re-stacks every widget attached to it, so all of them
+        // re-sample their acrylic backdrop - the whole group visibly dims for a
+        // frame at the end of every collapse. The peer normalization queued by
+        // the lease release puts this widget back into its position-derived slot
+        // with a single owner-preserving move instead.
+        bool sank = !IsPhysicallyAtDesktopBottom() &&
+            App.Current.WidgetManager?.TryReturnWidgetToRestingBand(HWnd) != true;
+        if (sank)
+        {
+            WidgetLayerService.MoveToDesktopBottom(HWnd);
+        }
+
+        if (PerformanceLogger.IsEnabled)
+        {
+            PerformanceLogger.Mark(
+                "CompactLayerRestore",
+                $"kind={Config.WidgetKind} sank={sank} " +
+                $"elapsedMs={Stopwatch.GetElapsedTime(restoreStarted).TotalMilliseconds:F1}");
+        }
+
         ReleaseExpandedWidgetLayerLease("expanded-state-restored");
     }
 
