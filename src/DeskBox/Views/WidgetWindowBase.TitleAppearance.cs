@@ -1,4 +1,4 @@
-using DeskBox.Helpers;
+﻿using DeskBox.Helpers;
 using DeskBox.Models;
 using DeskBox.Services;
 using Microsoft.UI.Xaml;
@@ -208,14 +208,22 @@ public abstract partial class WidgetWindowBase
         }
 
         var localization = App.Current.LocalizationService;
-        (int left, int top, int right, int bottom) = GetCurrentReferenceMargins();
+        WidgetMarginEdge[] edges = GetCurrentReferenceMarginEdges();
+        int left = edges[0].Distance;
+        int top = edges[1].Distance;
+        int right = edges[2].Distance;
+        int bottom = edges[3].Distance;
 
+        // Per-side is the default now. The four distances are what users
+        // actually reason about, and the reference for each one is shown next to
+        // it because it can legitimately differ per side (an icon on the left, a
+        // widget above, nothing on the right).
         string entryMode = WidgetMarginSettings.GetModeOverride(Config) ??
-            WidgetMarginSettings.ModeUniform;
+            WidgetMarginSettings.ModePerSide;
 
         var modeSelection = new RadioButtons
         {
-            SelectedIndex = entryMode == WidgetMarginSettings.ModePerSide ? 1 : 0
+            SelectedIndex = entryMode == WidgetMarginSettings.ModeUniform ? 0 : 1
         };
         modeSelection.Items.Add(localization.T("Widget.Margin.Uniform"));
         modeSelection.Items.Add(localization.T("Widget.Margin.PerSide"));
@@ -227,10 +235,25 @@ public abstract partial class WidgetWindowBase
                 .ToString(System.Globalization.CultureInfo.InvariantCulture)
         };
 
-        var leftBox = new TextBox { Header = localization.T("Widget.Margin.Left"), Text = left.ToString(System.Globalization.CultureInfo.InvariantCulture) };
-        var topBox = new TextBox { Header = localization.T("Widget.Margin.Top"), Text = top.ToString(System.Globalization.CultureInfo.InvariantCulture) };
-        var rightBox = new TextBox { Header = localization.T("Widget.Margin.Right"), Text = right.ToString(System.Globalization.CultureInfo.InvariantCulture) };
-        var bottomBox = new TextBox { Header = localization.T("Widget.Margin.Bottom"), Text = bottom.ToString(System.Globalization.CultureInfo.InvariantCulture) };
+        var leftBox = new TextBox { Text = left.ToString(System.Globalization.CultureInfo.InvariantCulture) };
+        var topBox = new TextBox { Text = top.ToString(System.Globalization.CultureInfo.InvariantCulture) };
+        var rightBox = new TextBox { Text = right.ToString(System.Globalization.CultureInfo.InvariantCulture) };
+        var bottomBox = new TextBox { Text = bottom.ToString(System.Globalization.CultureInfo.InvariantCulture) };
+        void ApplySideHeaders(WidgetMarginEdge[] sideEdges)
+        {
+            leftBox.Header = BuildMarginSideHeader("Widget.Margin.Left", sideEdges[0].Kind);
+            topBox.Header = BuildMarginSideHeader("Widget.Margin.Top", sideEdges[1].Kind);
+            rightBox.Header = BuildMarginSideHeader("Widget.Margin.Right", sideEdges[2].Kind);
+            bottomBox.Header = BuildMarginSideHeader("Widget.Margin.Bottom", sideEdges[3].Kind);
+        }
+
+        ApplySideHeaders(edges);
+        var referenceHint = new TextBlock
+        {
+            Text = localization.T("Widget.Margin.ReferenceHint"),
+            TextWrapping = TextWrapping.Wrap,
+            Opacity = 0.75
+        };
         // 2x2 grid: row 0 = Top / Bottom, row 1 = Left / Right, so the four
         // independent margins read spatially the way they apply.
         var perSidePanel = new Grid { ColumnSpacing = 10, RowSpacing = 8 };
@@ -259,10 +282,11 @@ public abstract partial class WidgetWindowBase
             Visibility = Visibility.Collapsed
         };
 
-        var content = new StackPanel { Spacing = 12, MinWidth = 280 };
+        var content = new StackPanel { Spacing = 12, MinWidth = 300 };
         content.Children.Add(modeSelection);
         content.Children.Add(uniformBox);
         content.Children.Add(perSidePanel);
+        content.Children.Add(referenceHint);
         content.Children.Add(applyToAll);
         content.Children.Add(validation);
 
@@ -331,13 +355,20 @@ public abstract partial class WidgetWindowBase
             suppressMarginPreview = true;
             try
             {
-                (int newLeft, int newTop, int newRight, int newBottom) = GetCurrentReferenceMargins();
+                WidgetMarginEdge[] liveEdges = GetCurrentReferenceMarginEdges();
+                int newLeft = liveEdges[0].Distance;
+                int newTop = liveEdges[1].Distance;
+                int newRight = liveEdges[2].Distance;
+                int newBottom = liveEdges[3].Distance;
                 leftBox.Text = newLeft.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 topBox.Text = newTop.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 rightBox.Text = newRight.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 bottomBox.Text = newBottom.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 uniformBox.Text = GetNearestEdgeMargin(newLeft, newTop, newRight, newBottom)
                     .ToString(System.Globalization.CultureInfo.InvariantCulture);
+                // Moving the widget can change which object each side is
+                // measured against, so the headers are re-resolved with it.
+                ApplySideHeaders(liveEdges);
             }
             finally
             {
@@ -459,22 +490,24 @@ public abstract partial class WidgetWindowBase
         string bottomText,
         bool applyToAll)
     {
-        IReadOnlyList<RectInt32> others = App.Current?.WidgetManager
-            ?.GetOtherVisibleWidgetRects(HWnd) ?? Array.Empty<RectInt32>();
+        IReadOnlyList<WidgetMarginNeighbour> neighbours = CollectMarginNeighbours(
+            App.Current?.WidgetManager?.GetOtherVisibleWidgetRects(HWnd) ??
+                Array.Empty<RectInt32>());
+        int tolerance = ResolveMarginOverlapTolerance();
 
         if (perSide)
         {
-            var sideValues = new (string Side, string Text)[]
+            var sideValues = new (WidgetMarginSide Side, string Key, string Text)[]
             {
-                ("Left", leftText),
-                ("Top", topText),
-                ("Right", rightText),
-                ("Bottom", bottomText),
+                (WidgetMarginSide.Left, "Left", leftText),
+                (WidgetMarginSide.Top, "Top", topText),
+                (WidgetMarginSide.Right, "Right", rightText),
+                (WidgetMarginSide.Bottom, "Bottom", bottomText),
             };
 
-            foreach ((string side, string text) in sideValues)
+            foreach ((WidgetMarginSide side, string key, string text) in sideValues)
             {
-                if (!editedSides.Contains(side) ||
+                if (!editedSides.Contains(key) ||
                     !WidgetMarginSettings.TryParseMargin(text, out int margin))
                 {
                     continue;
@@ -483,11 +516,17 @@ public abstract partial class WidgetWindowBase
                 if (applyToAll)
                 {
                     App.Current?.WidgetManager?.MoveVisibleWidgets((_, bounds, othersForWidget) =>
-                        ShiftSideToMargin(bounds, side, margin, othersForWidget, ResolveWorkAreaStatic(bounds)));
+                        ShiftSideToMargin(
+                            bounds,
+                            side,
+                            margin,
+                            CollectMarginNeighbours(othersForWidget),
+                            ResolveWorkAreaStatic(bounds),
+                            tolerance));
                 }
                 else
                 {
-                    ApplyOwnMarginToSide(side, margin, others);
+                    ApplyOwnMarginToSide(side, margin, neighbours, tolerance);
                 }
             }
         }
@@ -501,16 +540,50 @@ public abstract partial class WidgetWindowBase
             if (applyToAll)
             {
                 App.Current?.WidgetManager?.MoveVisibleWidgets((_, bounds, othersForWidget) =>
-                    ShiftBoundsToNearestEdge(bounds, uniform, othersForWidget, ResolveWorkAreaStatic(bounds)));
+                    ShiftBoundsToNearestEdge(
+                        bounds,
+                        uniform,
+                        CollectMarginNeighbours(othersForWidget),
+                        ResolveWorkAreaStatic(bounds),
+                        tolerance));
             }
             else
             {
-                ApplyOwnMarginToSide("Nearest", uniform, others);
+                ApplyOwnNearestMargin(uniform, neighbours, tolerance);
             }
         }
     }
 
-    private void ApplyOwnMarginToSide(string side, int margin, IReadOnlyList<RectInt32> others)
+    private void ApplyOwnMarginToSide(
+        WidgetMarginSide side,
+        int margin,
+        IReadOnlyList<WidgetMarginNeighbour> neighbours,
+        int parallelOverlapTolerance)
+    {
+        ApplyOwnMarginTarget((current, workArea) => ShiftSideToMargin(
+            current,
+            side,
+            margin,
+            neighbours,
+            workArea,
+            parallelOverlapTolerance));
+    }
+
+    private void ApplyOwnNearestMargin(
+        int margin,
+        IReadOnlyList<WidgetMarginNeighbour> neighbours,
+        int parallelOverlapTolerance)
+    {
+        ApplyOwnMarginTarget((current, workArea) => ShiftBoundsToNearestEdge(
+            current,
+            margin,
+            neighbours,
+            workArea,
+            parallelOverlapTolerance));
+    }
+
+    private void ApplyOwnMarginTarget(
+        Func<RectInt32, RectInt32, RectInt32?> resolveTarget)
     {
         if (Config.IsPositionLocked ||
             !Win32Helper.GetWindowRect(HWnd, out Win32Helper.RECT rect))
@@ -523,16 +596,9 @@ public abstract partial class WidgetWindowBase
             rect.Top,
             Math.Max(1, rect.Right - rect.Left),
             Math.Max(1, rect.Bottom - rect.Top));
-        var workArea = ResolveWorkArea(current);
-        RectInt32? target = side switch
-        {
-            "Nearest" => ShiftBoundsToNearestEdge(current, margin, others, workArea),
-            "Left" => ShiftSideToMargin(current, "Left", margin, others, workArea),
-            "Top" => ShiftSideToMargin(current, "Top", margin, others, workArea),
-            "Right" => ShiftSideToMargin(current, "Right", margin, others, workArea),
-            _ => ShiftSideToMargin(current, "Bottom", margin, others, workArea),
-        };
-        if (target is not RectInt32 next || (next.X == current.X && next.Y == current.Y))
+        RectInt32 workArea = ResolveWorkArea(current);
+        if (resolveTarget(current, workArea) is not RectInt32 next ||
+            (next.X == current.X && next.Y == current.Y))
         {
             return;
         }
@@ -576,11 +642,67 @@ public abstract partial class WidgetWindowBase
     /// widget is present there. Same reference geometry as the apply path,
     /// so displayed and applied values agree.
     /// </summary>
+    /// <summary>
+    /// Every candidate a margin can be measured against, in physical pixels:
+    /// the other widgets plus the desktop icons Explorer is showing. The user
+    /// judges the gap to whatever is actually beside the widget, so an icon or
+    /// folder is as valid a reference as another widget; the work area is only
+    /// the fallback for a side with nothing next to it.
+    /// </summary>
+    private static IReadOnlyList<WidgetMarginNeighbour> CollectMarginNeighbours(
+        IReadOnlyList<RectInt32> widgetRects)
+    {
+        IReadOnlyList<RectInt32> iconRects = DesktopIconGeometryService.GetIconRects();
+        var neighbours = new List<WidgetMarginNeighbour>(
+            widgetRects.Count + iconRects.Count);
+        foreach (RectInt32 rect in widgetRects)
+        {
+            neighbours.Add(new WidgetMarginNeighbour(
+                rect,
+                WidgetMarginReferenceKind.Widget));
+        }
+
+        foreach (RectInt32 rect in iconRects)
+        {
+            neighbours.Add(new WidgetMarginNeighbour(
+                rect,
+                WidgetMarginReferenceKind.DesktopIcon));
+        }
+
+        return neighbours;
+    }
+
+    private int ResolveMarginOverlapTolerance()
+    {
+        return WidgetMarginReferenceCalculator.ResolveParallelOverlapTolerance(
+            Win32Helper.GetDpiScaleForWindow(HWnd, RootElement.XamlRoot));
+    }
+
     private (int Left, int Top, int Right, int Bottom) GetCurrentReferenceMargins()
+    {
+        WidgetMarginEdge[] edges = GetCurrentReferenceMarginEdges();
+        return (
+            edges[0].Distance,
+            edges[1].Distance,
+            edges[2].Distance,
+            edges[3].Distance);
+    }
+
+    /// <summary>
+    /// Left, Top, Right, Bottom distances together with what each one is
+    /// measured against, derived from the live window rect on every call.
+    /// </summary>
+    private WidgetMarginEdge[] GetCurrentReferenceMarginEdges()
     {
         if (!Win32Helper.GetWindowRect(HWnd, out Win32Helper.RECT rect))
         {
-            return (0, 0, 0, 0);
+            return
+            [
+                new WidgetMarginEdge(0, WidgetMarginReferenceKind.WorkArea),
+                new WidgetMarginEdge(0, WidgetMarginReferenceKind.WorkArea),
+                new WidgetMarginEdge(0, WidgetMarginReferenceKind.WorkArea),
+                new WidgetMarginEdge(0, WidgetMarginReferenceKind.WorkArea)
+            ];
         }
 
         var bounds = new RectInt32(
@@ -588,70 +710,66 @@ public abstract partial class WidgetWindowBase
             rect.Top,
             Math.Max(1, rect.Right - rect.Left),
             Math.Max(1, rect.Bottom - rect.Top));
-        IReadOnlyList<RectInt32> others = App.Current?.WidgetManager
-            ?.GetOtherVisibleWidgetRects(HWnd) ?? Array.Empty<RectInt32>();
-        var workArea = ResolveWorkArea(bounds);
-        return (
-            Math.Max(0, bounds.X - ResolveSideBoundary(bounds, "Left", others, workArea)),
-            Math.Max(0, bounds.Y - ResolveSideBoundary(bounds, "Top", others, workArea)),
-            Math.Max(0, ResolveSideBoundary(bounds, "Right", others, workArea) - (bounds.X + bounds.Width)),
-            Math.Max(0, ResolveSideBoundary(bounds, "Bottom", others, workArea) - (bounds.Y + bounds.Height)));
+        IReadOnlyList<WidgetMarginNeighbour> neighbours = CollectMarginNeighbours(
+            App.Current?.WidgetManager?.GetOtherVisibleWidgetRects(HWnd) ??
+                Array.Empty<RectInt32>());
+        RectInt32 workArea = ResolveWorkArea(bounds);
+        int tolerance = ResolveMarginOverlapTolerance();
+        return
+        [
+            WidgetMarginReferenceCalculator.ResolveMargin(
+                bounds, WidgetMarginSide.Left, neighbours, workArea, tolerance),
+            WidgetMarginReferenceCalculator.ResolveMargin(
+                bounds, WidgetMarginSide.Top, neighbours, workArea, tolerance),
+            WidgetMarginReferenceCalculator.ResolveMargin(
+                bounds, WidgetMarginSide.Right, neighbours, workArea, tolerance),
+            WidgetMarginReferenceCalculator.ResolveMargin(
+                bounds, WidgetMarginSide.Bottom, neighbours, workArea, tolerance)
+        ];
+    }
+
+    private static string DescribeMarginReference(WidgetMarginReferenceKind kind)
+    {
+        var localization = App.Current.LocalizationService;
+        return kind switch
+        {
+            WidgetMarginReferenceKind.Widget =>
+                localization.T("Widget.Margin.Reference.Widget"),
+            WidgetMarginReferenceKind.DesktopIcon =>
+                localization.T("Widget.Margin.Reference.Icon"),
+            _ => localization.T("Widget.Margin.Reference.Screen")
+        };
+    }
+
+    private static string BuildMarginSideHeader(
+        string sideKey,
+        WidgetMarginReferenceKind kind)
+    {
+        var localization = App.Current.LocalizationService;
+        return string.Format(
+            localization.T("Widget.Margin.ReferenceFormat"),
+            localization.T(sideKey),
+            DescribeMarginReference(kind));
     }
 
     /// <summary>
-    /// The reference boundary for one side: the closest other-widget edge
-    /// strictly on that side (within a 8px parallel-overlap tolerance), or
-    /// the work-area edge when no widget borders this window there.
+    /// The reference boundary for one side, delegated to the shared pure
+    /// calculator so the dialog, the single-widget apply path and the batch
+    /// apply path cannot drift apart.
     /// </summary>
     private static int ResolveSideBoundary(
         RectInt32 bounds,
-        string side,
-        IReadOnlyList<RectInt32> others,
-        RectInt32 workArea)
+        WidgetMarginSide side,
+        IReadOnlyList<WidgetMarginNeighbour> neighbours,
+        RectInt32 workArea,
+        int parallelOverlapTolerance)
     {
-        int workLeft = workArea.X;
-        int workTop = workArea.Y;
-        int workRight = workArea.X + workArea.Width;
-        int workBottom = workArea.Y + workArea.Height;
-        int boundary = side switch
-        {
-            "Left" => workLeft,
-            "Top" => workTop,
-            "Right" => workRight,
-            _ => workBottom,
-        };
-
-        const int parallelOverlapTolerance = 8;
-        foreach (RectInt32 other in others)
-        {
-            int otherRight = other.X + other.Width;
-            int otherBottom = other.Y + other.Height;
-            switch (side)
-            {
-                case "Left" when otherRight <= bounds.X + parallelOverlapTolerance &&
-                    other.Y < bounds.Y + bounds.Height - parallelOverlapTolerance &&
-                    otherBottom > bounds.Y + parallelOverlapTolerance:
-                    boundary = Math.Max(boundary, otherRight);
-                    break;
-                case "Right" when other.X >= bounds.X + bounds.Width - parallelOverlapTolerance &&
-                    other.Y < bounds.Y + bounds.Height - parallelOverlapTolerance &&
-                    otherBottom > bounds.Y + parallelOverlapTolerance:
-                    boundary = Math.Min(boundary, other.X);
-                    break;
-                case "Top" when otherBottom <= bounds.Y + parallelOverlapTolerance &&
-                    other.X < bounds.X + bounds.Width - parallelOverlapTolerance &&
-                    otherRight > bounds.X + parallelOverlapTolerance:
-                    boundary = Math.Max(boundary, otherBottom);
-                    break;
-                case "Bottom" when other.Y >= bounds.Y + bounds.Height - parallelOverlapTolerance &&
-                    other.X < bounds.X + bounds.Width - parallelOverlapTolerance &&
-                    otherRight > bounds.X + parallelOverlapTolerance:
-                    boundary = Math.Min(boundary, other.Y);
-                    break;
-            }
-        }
-
-        return boundary;
+        return WidgetMarginReferenceCalculator.ResolveSide(
+            bounds,
+            side,
+            neighbours,
+            workArea,
+            parallelOverlapTolerance).Boundary;
     }
 
     private static int GetNearestEdgeMargin(int left, int top, int right, int bottom)
@@ -664,36 +782,25 @@ public abstract partial class WidgetWindowBase
 
     /// <summary>
     /// Moves the window so the requested side sits at the given distance from
-    /// its nearest reference boundary: the closest other-widget edge strictly
-    /// on that side, or the work-area edge when no widget borders it there.
+    /// its nearest reference boundary: the closest widget or desktop icon edge
+    /// on that side, or the work-area edge when nothing borders it there.
     /// </summary>
     private static RectInt32? ShiftSideToMargin(
         RectInt32 bounds,
-        string side,
+        WidgetMarginSide side,
         int margin,
-        IReadOnlyList<RectInt32> others,
-        RectInt32 workArea)
+        IReadOnlyList<WidgetMarginNeighbour> neighbours,
+        RectInt32 workArea,
+        int parallelOverlapTolerance)
     {
-        int boundary = ResolveSideBoundary(bounds, side, others, workArea);
-        int newX = bounds.X;
-        int newY = bounds.Y;
-        switch (side)
-        {
-            case "Left":
-                newX = boundary + margin;
-                break;
-            case "Top":
-                newY = boundary + margin;
-                break;
-            case "Right":
-                newX = boundary - margin - bounds.Width;
-                break;
-            default:
-                newY = boundary - margin - bounds.Height;
-                break;
-        }
-
-        if (newX == bounds.X && newY == bounds.Y)
+        PointInt32? origin = WidgetMarginReferenceCalculator.ResolveShiftedOrigin(
+            bounds,
+            side,
+            margin,
+            neighbours,
+            workArea,
+            parallelOverlapTolerance);
+        if (origin is not PointInt32 next)
         {
             return null;
         }
@@ -704,110 +811,56 @@ public abstract partial class WidgetWindowBase
         // then pull back — a second, silent drift. Apply the same work-area
         // clamp the restore path uses so the applied position is final.
         return WidgetPositioningService.EnsureVisible(
-            new RectInt32(newX, newY, bounds.Width, bounds.Height),
+            new RectInt32(next.X, next.Y, bounds.Width, bounds.Height),
             workArea);
     }
 
     /// <summary>
-    /// Uniform entry: snaps the window along its nearest reference boundary
-    /// (other widget edge or work-area edge) so that boundary sits exactly at
-    /// the requested distance.
+    /// Uniform entry: snaps the window along whichever side is currently
+    /// closest to its reference so that gap becomes the requested distance.
     /// </summary>
     private static RectInt32? ShiftBoundsToNearestEdge(
         RectInt32 bounds,
         int margin,
-        IReadOnlyList<RectInt32> others,
-        RectInt32 workArea)
+        IReadOnlyList<WidgetMarginNeighbour> neighbours,
+        RectInt32 workArea,
+        int parallelOverlapTolerance)
     {
-        int leftBoundary = ResolveSideBoundary(bounds, "Left", others, workArea);
-        int topBoundary = ResolveSideBoundary(bounds, "Top", others, workArea);
-        int rightBoundary = ResolveSideBoundary(bounds, "Right", others, workArea);
-        int bottomBoundary = ResolveSideBoundary(bounds, "Bottom", others, workArea);
-        int left = bounds.X - leftBoundary;
-        int top = bounds.Y - topBoundary;
-        int right = rightBoundary - (bounds.X + bounds.Width);
-        int bottom = bottomBoundary - (bounds.Y + bounds.Height);
-
-        int min = Math.Min(Math.Min(left, top), Math.Min(right, bottom));
-        int clamped = Math.Clamp(margin, WidgetMarginSettings.MinimumMarginPixels, WidgetMarginSettings.MaximumMarginPixels);
-        int x = bounds.X;
-        int y = bounds.Y;
-        if (min == left)
+        WidgetMarginSide nearestSide = WidgetMarginSide.Left;
+        int nearestDistance = int.MaxValue;
+        foreach (WidgetMarginSide side in MarginSides)
         {
-            x = leftBoundary + clamped;
-        }
-        else if (min == top)
-        {
-            y = topBoundary + clamped;
-        }
-        else if (min == right)
-        {
-            x = rightBoundary - clamped - bounds.Width;
-        }
-        else
-        {
-            y = bottomBoundary - clamped - bounds.Height;
+            int distance = WidgetMarginReferenceCalculator.ResolveMargin(
+                bounds,
+                side,
+                neighbours,
+                workArea,
+                parallelOverlapTolerance).Distance;
+            if (distance < nearestDistance)
+            {
+                nearestDistance = distance;
+                nearestSide = side;
+            }
         }
 
-        if (x == bounds.X && y == bounds.Y)
-        {
-            return null;
-        }
-
-        // Same work-area clamp as the per-side shift above: the uniform
-        // entry must not hand back a target the restart chain would move
-        // again.
-        return WidgetPositioningService.EnsureVisible(
-            new RectInt32(x, y, bounds.Width, bounds.Height),
-            workArea);
+        int clamped = Math.Clamp(
+            margin,
+            WidgetMarginSettings.MinimumMarginPixels,
+            WidgetMarginSettings.MaximumMarginPixels);
+        return ShiftSideToMargin(
+            bounds,
+            nearestSide,
+            clamped,
+            neighbours,
+            workArea,
+            parallelOverlapTolerance);
     }
 
-    /// <summary>
-    /// Unified entry: snaps the window along its nearest work-area edge so
-    /// that edge sits exactly at the requested distance.
-    /// </summary>
-    private static RectInt32? ShiftBoundsToNearestEdge(RectInt32 bounds, int margin)
-    {
-        var center = new Windows.Graphics.PointInt32(
-            bounds.X + bounds.Width / 2,
-            bounds.Y + bounds.Height / 2);
-        RectInt32 workArea = Microsoft.UI.Windowing.DisplayArea.GetFromPoint(
-            center,
-            Microsoft.UI.Windowing.DisplayAreaFallback.Nearest).WorkArea;
-        int workRight = workArea.X + workArea.Width;
-        int workBottom = workArea.Y + workArea.Height;
-
-        int left = bounds.X - workArea.X;
-        int top = bounds.Y - workArea.Y;
-        int right = workRight - (bounds.X + bounds.Width);
-        int bottom = workBottom - (bounds.Y + bounds.Height);
-
-        int min = Math.Min(Math.Min(left, top), Math.Min(right, bottom));
-        int clamped = Math.Clamp(margin, WidgetMarginSettings.MinimumMarginPixels, WidgetMarginSettings.MaximumMarginPixels);
-        int x = bounds.X;
-        int y = bounds.Y;
-        if (min == left)
-        {
-            x = workArea.X + clamped;
-        }
-        else if (min == top)
-        {
-            y = workArea.Y + clamped;
-        }
-        else if (min == right)
-        {
-            x = workRight - clamped - bounds.Width;
-        }
-        else
-        {
-            y = workBottom - clamped - bounds.Height;
-        }
-
-        if (x == bounds.X && y == bounds.Y)
-        {
-            return null;
-        }
-
-        return new RectInt32(x, y, bounds.Width, bounds.Height);
-    }
+    private static readonly WidgetMarginSide[] MarginSides =
+    [
+        WidgetMarginSide.Left,
+        WidgetMarginSide.Top,
+        WidgetMarginSide.Right,
+        WidgetMarginSide.Bottom
+    ];
 }

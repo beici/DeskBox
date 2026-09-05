@@ -44,15 +44,29 @@ public sealed class WidgetBatchMarginPositioningContractTests
     {
         string source = ReadRepositoryFile("src/DeskBox/Views/WidgetWindowBase.TitleAppearance.cs");
 
-        // Both shift helpers (per-side and uniform) are shared by the
-        // single-widget path and the "apply to all" batch lambdas, so each
-        // must route its computed target through the work-area clamp.
-        int clampCount = Regex.Matches(
+        // There is now exactly one clamp, and both apply paths reach it: the
+        // uniform helper resolves which side is closest and then delegates to
+        // the per-side helper instead of duplicating the shift math. Assert the
+        // delegation rather than a count so the contract survives that.
+        Assert.Contains(
+            "WidgetPositioningService.EnsureVisible(",
             source,
-            Regex.Escape("WidgetPositioningService.EnsureVisible(")).Count;
-        Assert.True(
-            clampCount >= 2,
-            $"expected the margin shift helpers to clamp via EnsureVisible, found {clampCount}");
+            StringComparison.Ordinal);
+        int perSideClamp = source.IndexOf(
+            "private static RectInt32? ShiftSideToMargin(",
+            StringComparison.Ordinal);
+        int uniformHelper = source.IndexOf(
+            "private static RectInt32? ShiftBoundsToNearestEdge(",
+            StringComparison.Ordinal);
+        Assert.True(perSideClamp >= 0 && uniformHelper > perSideClamp);
+        Assert.Contains(
+            "WidgetPositioningService.EnsureVisible(",
+            source[perSideClamp..uniformHelper],
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "return ShiftSideToMargin(",
+            source[uniformHelper..],
+            StringComparison.Ordinal);
 
         // The single-widget path keeps capturing the anchor before it
         // persists — the batch path mirrors this via CaptureAnchor.

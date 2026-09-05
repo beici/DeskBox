@@ -1371,6 +1371,17 @@ public static class WidgetLayerService
         return IntPtr.Zero;
     }
 
+    /// <summary>
+    /// The desktop icon view Explorer has already created, or zero. Shared with
+    /// the icon-geometry reader so there is exactly one discovery path: this one
+    /// deliberately never forces WorkerW creation, which during login can race
+    /// Explorer's icon-layout restoration.
+    /// </summary>
+    internal static IntPtr GetDesktopIconViewHandle()
+    {
+        return FindDesktopIconView();
+    }
+
     private static IntPtr FindHighestPeer(IReadOnlyCollection<IntPtr> handles)
     {
         var peers = handles.ToHashSet();
