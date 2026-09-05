@@ -75,6 +75,53 @@ public sealed class WeatherResilienceTests : IDisposable
     }
 
     [Fact]
+    public async Task GetWeatherAsync_ReturnsIndependentCopies_CallersCannotPolluteCache()
+    {
+        // DEF-025 (THR-05): each cache hit must hand out its own instance —
+        // a caller mutating the returned object (stale flag, name) must never
+        // leak into the shared authoritative cache or the next caller.
+        var store = CreateStore();
+        Assert.True(await store.SaveForecastAsync(CreateForecast(
+            fetchedAtUtc: DateTimeOffset.UtcNow.AddMinutes(-2))));
+        using var service = new WeatherService(store);
+
+        WeatherData? first = await service.GetWeatherAsync(
+            33.7931,
+            113.1446,
+            "平顶山",
+            cacheDuration: TimeSpan.FromMinutes(30),
+            dataSource: SettingsService.WeatherDataSourceMsn);
+        WeatherData? second = await service.GetWeatherAsync(
+            33.7931,
+            113.1446,
+            "平顶山",
+            cacheDuration: TimeSpan.FromMinutes(30),
+            dataSource: SettingsService.WeatherDataSourceMsn);
+
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+        Assert.NotSame(first, second);
+
+        // Caller-side mutation stays caller-side.
+        first.IsStale = true;
+        first.LocationName = "caller-edited";
+        Assert.False(second.IsStale);
+        Assert.Equal("平顶山", second.LocationName);
+
+        // A third call still sees the untouched authoritative cache.
+        WeatherData? third = await service.GetWeatherAsync(
+            33.7931,
+            113.1446,
+            "平顶山",
+            cacheDuration: TimeSpan.FromMinutes(30),
+            dataSource: SettingsService.WeatherDataSourceMsn);
+        Assert.NotNull(third);
+        Assert.NotSame(second, third);
+        Assert.False(third.IsStale);
+        Assert.Equal("平顶山", third.LocationName);
+    }
+
+    [Fact]
     public async Task InitializeAsync_RestoresManualCitySnapshotWithoutStartingNetworkRefresh()
     {
         var store = CreateStore();

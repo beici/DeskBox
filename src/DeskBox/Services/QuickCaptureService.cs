@@ -40,6 +40,21 @@ public sealed class QuickCaptureService
     private readonly Dictionary<string, Task<string?>> _thumbnailTasks = new(StringComparer.OrdinalIgnoreCase);
     private QuickCaptureStoreData? _data;
 
+    /// <summary>
+    /// DEF-012: image paths belonging to items inside the delete-undo window.
+    /// A deleted item lives only in its undo snapshot — outside Items and
+    /// RecentItems — so the image cache GC (which keys on "referenced by the
+    /// live lists") would physically delete its image while the user can
+    /// still press Undo, restoring a record whose image file is gone.
+    /// Deleting an image-carrying item registers its paths here; Restore or
+    /// expiry un-registers them. All access happens under <see cref="_gate"/>;
+    /// entries older than <see cref="UndoRetentionWindow"/> are ignored so the
+    /// protection self-expires even if a restore callback never fires.
+    /// </summary>
+    private readonly Dictionary<string, DateTime> _undoWindowImagePaths = new(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly TimeSpan UndoRetentionWindow = TimeSpan.FromSeconds(10);
+
     public event Action? Changed;
 
     public QuickCaptureService(QuickCaptureStore? store = null)
@@ -808,6 +823,8 @@ public sealed class QuickCaptureService
             NormalizeSortOrders(_data.Items);
             NormalizePinnedSortOrders(_data.Items);
             await SaveCoreAsync();
+            RegisterUndoWindowImages([deletedItem]);
+            CleanupUnusedImageCacheCore();
             return new QuickCaptureDeletedItemSnapshot(deletedItem, IsRecent: false);
         }
         finally
@@ -856,6 +873,8 @@ public sealed class QuickCaptureService
             }
 
             await SaveCoreAsync();
+            RegisterUndoWindowImages(snapshots.Select(snapshot => snapshot.Item));
+            CleanupUnusedImageCacheCore();
             return snapshots;
         }
         finally
@@ -885,6 +904,8 @@ public sealed class QuickCaptureService
             _data.RecentItems.Remove(item);
             NormalizeSortOrders(_data.RecentItems);
             await SaveCoreAsync();
+            RegisterUndoWindowImages([deletedItem]);
+            CleanupUnusedImageCacheCore();
             return new QuickCaptureDeletedItemSnapshot(deletedItem, IsRecent: true);
         }
         finally
@@ -921,6 +942,8 @@ public sealed class QuickCaptureService
             }
 
             await SaveCoreAsync();
+            UnregisterUndoWindowImages([item]);
+            CleanupUnusedImageCacheCore();
             return true;
         }
         finally
@@ -1497,7 +1520,7 @@ public sealed class QuickCaptureService
 
     private HashSet<string> GetReferencedImagePathsCore()
     {
-        return _data!.Items
+        var referenced = _data!.Items
             .Concat(_data.RecentItems)
             .Where(item => item is not null &&
                            item.Type == QuickCaptureItemType.Image &&
@@ -1505,6 +1528,62 @@ public sealed class QuickCaptureService
             .Select(item => NormalizePath(item.ImagePath))
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // DEF-012: items sitting in the delete-undo window are not referenced
+        // by either live list, but their image must survive until the user's
+        // undo decision (or the undo window expires). Remove expired entries
+        // lazily here — every caller already holds _gate.
+        if (_undoWindowImagePaths.Count > 0)
+        {
+            DateTime nowUtc = DateTime.UtcNow;
+            string[] expired = _undoWindowImagePaths
+                .Where(entry => nowUtc - entry.Value > UndoRetentionWindow)
+                .Select(entry => entry.Key)
+                .ToArray();
+            foreach (string path in expired)
+            {
+                _undoWindowImagePaths.Remove(path);
+            }
+
+            referenced.UnionWith(_undoWindowImagePaths.Keys);
+        }
+
+        return referenced;
+    }
+
+    private void RegisterUndoWindowImages(IEnumerable<QuickCaptureItem> items)
+    {
+        DateTime nowUtc = DateTime.UtcNow;
+        foreach (QuickCaptureItem item in items)
+        {
+            if (item.Type != QuickCaptureItemType.Image ||
+                string.IsNullOrWhiteSpace(item.ImagePath))
+            {
+                continue;
+            }
+
+            string normalized = NormalizePath(item.ImagePath);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                // Re-delete the same image within the window refreshes the
+                // timestamp, keeping the retention window honest.
+                _undoWindowImagePaths[normalized] = nowUtc;
+            }
+        }
+    }
+
+    private void UnregisterUndoWindowImages(IEnumerable<QuickCaptureItem> items)
+    {
+        foreach (QuickCaptureItem item in items)
+        {
+            if (item.Type != QuickCaptureItemType.Image ||
+                string.IsNullOrWhiteSpace(item.ImagePath))
+            {
+                continue;
+            }
+
+            _undoWindowImagePaths.Remove(NormalizePath(item.ImagePath));
+        }
     }
 
     private HashSet<string> GetReferencedThumbnailPathsCore(HashSet<string> referencedImagePaths)

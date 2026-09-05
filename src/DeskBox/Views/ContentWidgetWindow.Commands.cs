@@ -66,6 +66,7 @@ public sealed partial class ContentWidgetWindow
 
         ContentWidgetShell.SetTitleBarRowHeight(metrics.RowHeight);
         ContentWidgetShell.SetTitleBarPadding(WidgetTitleBarMetricsCalculator.CreateOuterPadding(chromeMode));
+        ApplyTitleAppearance();
     }
 
     private void ApplyTitleActionButtonConfiguration()
@@ -208,6 +209,114 @@ public sealed partial class ContentWidgetWindow
             e.PointerPosition);
     }
 
+    private MenuFlyoutSubItem CreateClipboardItemColorMenu(Action hideFlyout)
+    {
+        var localization = App.Current.LocalizationService;
+        if (CurrentContent is not QuickCaptureSurfaceContent quickCaptureSurface)
+        {
+            return new MenuFlyoutSubItem
+            {
+                Text = localization.T("QuickCapture.ClipboardColor.Menu"),
+                IsEnabled = false
+            };
+        }
+
+        var menu = new MenuFlyoutSubItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.Menu"),
+            Icon = new FontIcon { Glyph = "\uE790" }
+        };
+
+        var followTheme = new ToggleMenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.FollowTheme"),
+            IsChecked = !quickCaptureSurface.IsClipboardItemTextCustom &&
+                !quickCaptureSurface.IsClipboardItemBackgroundCustom
+        };
+        followTheme.Click += (_, _) =>
+        {
+            quickCaptureSurface.SetClipboardItemFollowTheme(isBackground: false);
+            quickCaptureSurface.SetClipboardItemFollowTheme(isBackground: true);
+            quickCaptureSurface.SetClipboardItemHoverTextFollowTheme();
+        };
+        menu.Items.Add(followTheme);
+
+        var textColor = new MenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.Text"),
+            Icon = new FontIcon { Glyph = "\uE8D2" }
+        };
+        textColor.Click += (_, _) =>
+        {
+            hideFlyout();
+            _pendingClipboardColorPicker = ClipboardColorPickerTarget.Text;
+        };
+        menu.Items.Add(textColor);
+
+        var hoverTextColor = new MenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.HoverText"),
+            Icon = new FontIcon { Glyph = "\uE7E6" }
+        };
+        hoverTextColor.Click += (_, _) =>
+        {
+            hideFlyout();
+            _pendingClipboardColorPicker = ClipboardColorPickerTarget.HoverText;
+        };
+        menu.Items.Add(hoverTextColor);
+
+        var backgroundColor = new MenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.Background"),
+            Icon = new FontIcon { Glyph = "\uE790" }
+        };
+        backgroundColor.Click += (_, _) =>
+        {
+            hideFlyout();
+            _pendingClipboardColorPicker = ClipboardColorPickerTarget.Background;
+        };
+        menu.Items.Add(backgroundColor);
+
+        var reset = new MenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.Reset"),
+            Icon = new FontIcon { Glyph = "\uE777" }
+        };
+        reset.Click += (_, _) => quickCaptureSurface.ResetClipboardItemColors();
+        menu.Items.Add(reset);
+
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(new ToggleMenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.TextCustom"),
+            IsChecked = quickCaptureSurface.IsClipboardItemTextCustom,
+            IsEnabled = false
+        });
+        menu.Items.Add(new ToggleMenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.HoverTextCustom"),
+            IsChecked = quickCaptureSurface.IsClipboardItemHoverTextCustom,
+            IsEnabled = false
+        });
+        menu.Items.Add(new ToggleMenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.BackgroundCustom"),
+            IsChecked = quickCaptureSurface.IsClipboardItemBackgroundCustom,
+            IsEnabled = false
+        });
+
+        return menu;
+    }
+
+    private enum ClipboardColorPickerTarget
+    {
+        Text,
+        Background,
+        HoverText
+    }
+
+    private ClipboardColorPickerTarget? _pendingClipboardColorPicker;
+
     private void PositionLockButton_Click(object sender, RoutedEventArgs e)
     {
         SetPositionLocked(!_config.IsPositionLocked);
@@ -313,6 +422,20 @@ public sealed partial class ContentWidgetWindow
                 QueueCloseWidgetFlyout(closeWidgetFlyoutHandoff);
                 closeWidgetFlyoutHandoff = null;
             }
+            else if (_pendingClipboardColorPicker.HasValue)
+            {
+                ClipboardColorPickerTarget pickerTarget = _pendingClipboardColorPicker.Value;
+                _pendingClipboardColorPicker = null;
+                DispatcherQueue.TryEnqueue(async () =>
+                {
+                    if (CurrentContent is QuickCaptureSurfaceContent quickCaptureSurface)
+                    {
+                        await quickCaptureSurface.ShowClipboardItemColorPickerAsync(
+                            isBackground: pickerTarget == ClipboardColorPickerTarget.Background,
+                            isHoverText: pickerTarget == ClipboardColorPickerTarget.HoverText);
+                    }
+                });
+            }
             else if (showForegroundColorPickerWhenClosed)
             {
                 DispatcherQueue.TryEnqueue(async () =>
@@ -344,7 +467,12 @@ public sealed partial class ContentWidgetWindow
             App.Current.LocalizationService,
             SetWidgetForegroundModeOverride,
             () => showForegroundColorPickerWhenClosed = true));
-
+        flyout.Items.Add(CreateTitleAppearanceMenu(flyout.Hide));
+        flyout.Items.Add(CreateMarginMenuEntry(flyout.Hide));
+        if (_config.WidgetKind is WidgetKind.QuickCapture)
+        {
+            flyout.Items.Add(CreateClipboardItemColorMenu(flyout.Hide));
+        }
         if (_config.WidgetKind is WidgetKind.File)
         {
             flyout.Items.Add(

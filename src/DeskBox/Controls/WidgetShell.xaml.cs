@@ -132,6 +132,8 @@ public sealed partial class WidgetShell : UserControl
             true);
     private bool _isShellDragActive;
     private bool _isCompactCompositionTransitionActive;
+    private bool _hasStartedCompactCompositionFades;
+    private bool _pendingCompactCompositionCollapsed;
     private double _lastCompactTransitionCornerRadius = double.NaN;
 
     public void ShowFeedback(WidgetFeedbackRequest request)
@@ -140,7 +142,8 @@ public sealed partial class WidgetShell : UserControl
         FeedbackPresenter.Show(request);
     }
 
-    public void ClearFeedback() => FeedbackPresenter.Clear();
+    public void ClearFeedback(string? deduplicationKey = null) =>
+        FeedbackPresenter.Clear(deduplicationKey);
 
     /// <summary>
     /// Content hosted below the title area. Future widget kinds should provide their body through this slot.
@@ -608,6 +611,29 @@ public sealed partial class WidgetShell : UserControl
     public FrameworkElement CloseActionIcon => CloseButtonIcon;
     public FrameworkElement DragHandleElement => _isCollapsed ? CollapsedChromeLayer : OverlayDragHandle;
     public FrameworkElement GroupNavigationElement => GroupTitleSwitcher;
+
+    /// <summary>
+    /// Aligns the default title block (icon + caption) and the group switcher
+    /// to the left/center/right of the title bar. Both hosts share this
+    /// layout so alignment survives group membership changes.
+    /// </summary>
+    public void SetTitleAlignment(HorizontalAlignment alignment)
+    {
+        TitleIdentityHost.HorizontalAlignment = alignment;
+        GroupTitleSwitcher.HorizontalAlignment = alignment == HorizontalAlignment.Right
+            ? HorizontalAlignment.Right
+            : HorizontalAlignment.Stretch;
+    }
+
+    /// <summary>
+    /// Replaces the title icon with a user-picked image, or restores the
+    /// built-in icon when the source is null. The image is centered and
+    /// uniformly scaled by the icon surface itself.
+    /// </summary>
+    public void SetTitleCustomIcon(ImageSource? source)
+    {
+        TitleIcon.CustomImageSource = source;
+    }
 
     /// <summary>
     /// Clears hover state that WinUI can leave behind when the native host is
@@ -1788,9 +1814,62 @@ public sealed partial class WidgetShell : UserControl
         ApplyCompactInnerCornerRadii();
         SetBackgroundCornerRadius(_transitionOuterCornerRadiusFrom);
         _lastCompactTransitionCornerRadius = _transitionOuterCornerRadiusFrom;
-        _isCompactCompositionTransitionActive =
-            StartCompactCompositionTransition(collapsed);
+        // The fades are armed here but issued by the host from its first
+        // committed geometry frame (StartCompactTransitionFades). Starting them
+        // now would let the compositor clock run while the UI thread is still
+        // paying for the first rasterization of the tree this call just
+        // revealed, and the content would then lead the window.
+        _pendingCompactCompositionCollapsed = collapsed;
+        _hasStartedCompactCompositionFades = false;
+        _isCompactCompositionTransitionActive = CanRunCompactCompositionTransition();
         return true;
+    }
+
+    private bool CanRunCompactCompositionTransition()
+    {
+        return _compactTransitionProfile.IsAnimated &&
+            _compactTransitionProfile.DurationMilliseconds > 0;
+    }
+
+    /// <summary>
+    /// Issues the compositor-owned opacity/scale fades for the armed compact
+    /// transition. Called from the first frame the host actually commits, so
+    /// both timelines share one origin.
+    /// </summary>
+    public void StartCompactTransitionFades()
+    {
+        if (!_isCompactTransitionActive ||
+            !_isCompactCompositionTransitionActive ||
+            _hasStartedCompactCompositionFades)
+        {
+            return;
+        }
+
+        _hasStartedCompactCompositionFades = true;
+        _isCompactCompositionTransitionActive =
+            StartCompactCompositionTransition(_pendingCompactCompositionCollapsed);
+    }
+
+    /// <summary>
+    /// Restarts the armed fades over the span that is still ahead of the
+    /// geometry. Used when the host absorbed a UI-thread stall: the compositor
+    /// ran through it, so without this the content would be further along than
+    /// the window it is supposed to track.
+    /// </summary>
+    public void ResyncCompactTransitionFades(double progress)
+    {
+        if (!_isCompactTransitionActive ||
+            !_isCompactCompositionTransitionActive ||
+            !_hasStartedCompactCompositionFades ||
+            progress <= 0 ||
+            progress >= 1)
+        {
+            return;
+        }
+
+        _isCompactCompositionTransitionActive = StartCompactCompositionTransition(
+            _pendingCompactCompositionCollapsed,
+            progress);
     }
 
     public void SetCompactTransitionProgress(bool collapsed, double progress)
@@ -1801,10 +1880,12 @@ public sealed partial class WidgetShell : UserControl
         }
 
         double value = Math.Clamp(progress, 0, 1);
-        bool compositionOwnsWin10Visuals =
-            _isCompactCompositionTransitionActive &&
-            !WindowsCompatibilityService.IsWindows11OrLater;
-        if (!compositionOwnsWin10Visuals)
+        // When the compositor owns the fades (Win10 and, since the frame-cost
+        // fix, Win11 too), the per-frame dependency-property writes are
+        // skipped entirely; the compositor drives opacity/scale on its own
+        // clock while the UI thread only resizes the HWND.
+        bool compositionOwnsFadeVisuals = _isCompactCompositionTransitionActive;
+        if (!compositionOwnsFadeVisuals)
         {
             double compactOpacity =
                 _compactTransitionProfile.GetCompactSurfaceOpacity(collapsed, value);
@@ -1851,7 +1932,7 @@ public sealed partial class WidgetShell : UserControl
         // Full-bleed background: fade out earlier during expand, fade in later during collapse
         bool hasFullBleed = _compactPresentation?.UseFullBleedBackground == true &&
             _compactPresentation.Thumbnail is not null;
-        if (hasFullBleed && !compositionOwnsWin10Visuals)
+        if (hasFullBleed && !compositionOwnsFadeVisuals)
         {
             double fullBleedOpacity;
             double fullBleedScale;
@@ -1884,7 +1965,7 @@ public sealed partial class WidgetShell : UserControl
     private static double Lerp(double start, double end, double progress) =>
         start + ((end - start) * Math.Clamp(progress, 0, 1));
 
-    private bool StartCompactCompositionTransition(bool collapsed)
+    private bool StartCompactCompositionTransition(bool collapsed, double fromProgress = 0)
     {
         if (!_compactTransitionProfile.IsAnimated ||
             _compactTransitionProfile.DurationMilliseconds <= 0)
@@ -1895,33 +1976,40 @@ public sealed partial class WidgetShell : UserControl
         try
         {
             bool started = false;
-            if (!WindowsCompatibilityService.IsWindows11OrLater)
+            // Win10 pays heavily when XAML dependency properties are rewritten
+            // alongside a real HWND resize; Win11 measures show the same cost
+            // (the per-frame DP walk dominated hover-expand frames), so both
+            // run the independent fades on the compositor clock and leave the
+            // UI thread with only the physical bounds transition.
             {
-                // Win10 pays heavily when XAML dependency properties are
-                // rewritten alongside a real HWND resize. Keep the physical
-                // bounds transition on the UI thread, while independent fades
-                // run on the compositor clock.
                 StartCompactOpacityAnimation(
                     CollapsedChromeLayer,
-                    progress => _compactTransitionProfile.GetCompactSurfaceOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetCompactSurfaceOpacity(collapsed, progress),
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     TitleBarGrid,
-                    progress => _compactTransitionProfile.GetLiveContentOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetLiveContentOpacity(collapsed, progress),
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     ShellContentPresenter,
-                    progress => _compactTransitionProfile.GetLiveContentOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetLiveContentOpacity(collapsed, progress),
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     CompactIdentityHost,
-                    progress => _compactTransitionProfile.GetCompactIdentityOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetCompactIdentityOpacity(collapsed, progress),
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     CompactTextContainer,
-                    progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress),
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     CompactBadge,
-                    progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress),
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     CompactLiveIndicatorHost,
-                    progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress),
+                    fromProgress);
                 started = true;
             }
 
@@ -1931,17 +2019,17 @@ public sealed partial class WidgetShell : UserControl
             {
                 StartCompactScaleAnimation(
                     CompactFullBleedBackground,
-                    progress => ResolveFullBleedTransition(collapsed, progress).Scale);
-                if (!WindowsCompatibilityService.IsWindows11OrLater)
-                {
-                    StartCompactOpacityAnimation(
-                        CompactFullBleedBackground,
-                        progress => ResolveFullBleedTransition(collapsed, progress).Opacity);
-                    StartCompactOpacityAnimation(
-                        CompactFullBleedOverlay,
-                        progress => ResolveFullBleedTransition(collapsed, progress).Opacity *
-                            ResolveFullBleedOverlayOpacity());
-                }
+                    progress => ResolveFullBleedTransition(collapsed, progress).Scale,
+                    fromProgress);
+                StartCompactOpacityAnimation(
+                    CompactFullBleedBackground,
+                    progress => ResolveFullBleedTransition(collapsed, progress).Opacity,
+                    fromProgress);
+                StartCompactOpacityAnimation(
+                    CompactFullBleedOverlay,
+                    progress => ResolveFullBleedTransition(collapsed, progress).Opacity *
+                        ResolveFullBleedOverlayOpacity(),
+                    fromProgress);
 
                 started = true;
             }
@@ -1958,17 +2046,20 @@ public sealed partial class WidgetShell : UserControl
 
     private void StartCompactOpacityAnimation(
         FrameworkElement element,
-        Func<double, double> valueSelector)
+        Func<double, double> valueSelector,
+        double fromProgress = 0)
     {
         Visual visual = ElementCompositionPreview.GetElementVisual(element);
         ScalarKeyFrameAnimation animation = visual.Compositor.CreateScalarKeyFrameAnimation();
+        double span = Math.Clamp(1 - fromProgress, 0.01, 1);
         animation.Duration = TimeSpan.FromMilliseconds(
-            _compactTransitionProfile.DurationMilliseconds);
+            _compactTransitionProfile.DurationMilliseconds * span);
         const int sampleCount = 12;
         for (int step = 0; step <= sampleCount; step++)
         {
             double timeProgress = step / (double)sampleCount;
-            double easedProgress = _compactTransitionProfile.EaseProgress(timeProgress);
+            double easedProgress = _compactTransitionProfile.EaseProgress(
+                fromProgress + (timeProgress * span));
             animation.InsertKeyFrame(
                 (float)timeProgress,
                 (float)Math.Clamp(valueSelector(easedProgress), 0, 1));
@@ -1979,18 +2070,21 @@ public sealed partial class WidgetShell : UserControl
 
     private void StartCompactScaleAnimation(
         FrameworkElement element,
-        Func<double, double> valueSelector)
+        Func<double, double> valueSelector,
+        double fromProgress = 0)
     {
         Visual visual = ElementCompositionPreview.GetElementVisual(element);
         visual.CenterPoint = new Vector3(visual.Size.X / 2, visual.Size.Y / 2, 0);
         Vector3KeyFrameAnimation animation = visual.Compositor.CreateVector3KeyFrameAnimation();
+        double span = Math.Clamp(1 - fromProgress, 0.01, 1);
         animation.Duration = TimeSpan.FromMilliseconds(
-            _compactTransitionProfile.DurationMilliseconds);
+            _compactTransitionProfile.DurationMilliseconds * span);
         const int sampleCount = 24;
         for (int step = 0; step <= sampleCount; step++)
         {
             double timeProgress = step / (double)sampleCount;
-            double easedProgress = _compactTransitionProfile.EaseProgress(timeProgress);
+            double easedProgress = _compactTransitionProfile.EaseProgress(
+                fromProgress + (timeProgress * span));
             float scale = (float)valueSelector(easedProgress);
             animation.InsertKeyFrame((float)timeProgress, new Vector3(scale, scale, 1));
         }
@@ -2016,9 +2110,22 @@ public sealed partial class WidgetShell : UserControl
     {
         if (!force && !_isCompactCompositionTransitionActive)
         {
+            _hasStartedCompactCompositionFades = false;
             return;
         }
 
+        // An armed-but-never-issued transition (the host never got a frame to
+        // commit) has nothing to stop, and resolving nine element visuals just
+        // to stop animations that were never started is pure UI-thread cost at
+        // the end of every aborted morph.
+        if (!_hasStartedCompactCompositionFades)
+        {
+            _hasStartedCompactCompositionFades = false;
+            _isCompactCompositionTransitionActive = false;
+            return;
+        }
+
+        _hasStartedCompactCompositionFades = false;
         foreach (FrameworkElement element in new FrameworkElement[]
         {
             CollapsedChromeLayer,
@@ -2275,7 +2382,9 @@ public sealed partial class WidgetShell : UserControl
         ApplyEdgeGlow(presentation);
         ApplyParticles(presentation);
         ApplySpectrum(presentation);
-        ApplyShimmer(presentation);
+        // ApplyShimmer removed with DEF-018: it only zeroed the shimmer
+        // opacity and stopped the (deleted) breath-border timer.
+        CompactShimmer.Opacity = 0;
         ApplyConditionalAnimations(presentation);
 
         ApplyCompactLiveState();
@@ -2856,56 +2965,9 @@ public sealed partial class WidgetShell : UserControl
         StartCompactLiveIndeterminate(isFullBleed);
     }
 
-    private DispatcherQueueTimer? _compactLiveBreathingTimer;
     private ScalarKeyFrameAnimation? _compactLiveTranslationAnimation;
     private ScalarKeyFrameAnimation? _compactLiveOpacityAnimation;
     private double _compactLiveIndeterminateSegment;
-    private double _compactLiveBreathingPhase;
-
-    private void StartCompactLiveBreathing()
-    {
-        if (!_isHostVisualActivityEnabled ||
-            !IsLoaded ||
-            !_isCollapsed ||
-            !CompactAmbientAnimationsEnabled() ||
-            !SystemAnimationsEnabled())
-        {
-            StopCompactLiveBreathing();
-            return;
-        }
-
-        if (_compactLiveBreathingTimer is not null)
-        {
-            return;
-        }
-
-        _compactLiveBreathingPhase = 0;
-        _compactLiveBreathingTimer = DispatcherQueue.CreateTimer();
-        _compactLiveBreathingTimer.Interval = TimeSpan.FromMilliseconds(50);
-        _compactLiveBreathingTimer.Tick += CompactLiveBreathingTimer_Tick;
-        PerformanceLogger.RecordTransientUiTimerCreated();
-        _compactLiveBreathingTimer.Start();
-    }
-
-    private void StopCompactLiveBreathing()
-    {
-        if (_compactLiveBreathingTimer is not { } timer)
-        {
-            return;
-        }
-
-        _compactLiveBreathingTimer = null;
-        timer.Stop();
-        timer.Tick -= CompactLiveBreathingTimer_Tick;
-        PerformanceLogger.RecordTransientUiTimerReleased();
-    }
-
-    private void CompactLiveBreathingTimer_Tick(DispatcherQueueTimer sender, object args)
-    {
-        _compactLiveBreathingPhase += 0.06;
-        CompactLiveProgress.Opacity =
-            0.6 + 0.2 * Math.Sin(_compactLiveBreathingPhase);
-    }
 
     private void ApplyFullBleedVisibility(bool visible)
     {
@@ -3361,118 +3423,14 @@ public sealed partial class WidgetShell : UserControl
     }
 
     // ── Bottom glow (music playback) ─────────────────────────
-
-    private DispatcherQueueTimer? _bottomGlowTimer;
-    private double _bottomGlowPhase;
+    // (Removed with DEF-018: the bottom-glow effect was already retired —
+    // ApplySpectrum collapses the element — so the 20Hz CPU timer driving it
+    // was dead weight and is deleted together with the breath-border timer.)
 
     private void ApplySpectrum(WidgetCompactPresentation p)
     {
         // Bottom glow removed - progress bar is sufficient
         CompactBottomGlow.Visibility = Visibility.Collapsed;
-        StopBottomGlow();
-    }
-
-    private void StartBottomGlow()
-    {
-        if (!_isHostVisualActivityEnabled ||
-            !IsLoaded ||
-            !_isCollapsed ||
-            !CompactAmbientAnimationsEnabled() ||
-            !SystemAnimationsEnabled())
-        {
-            StopBottomGlow();
-            CompactBottomGlow.Opacity = 0.6;
-            return;
-        }
-
-        if (_bottomGlowTimer is not null)
-        {
-            return;
-        }
-
-        _bottomGlowPhase = 0;
-        _bottomGlowTimer = DispatcherQueue.CreateTimer();
-        _bottomGlowTimer.Interval = TimeSpan.FromMilliseconds(50);
-        _bottomGlowTimer.Tick += BottomGlowTimer_Tick;
-        PerformanceLogger.RecordTransientUiTimerCreated();
-        _bottomGlowTimer.Start();
-    }
-
-    private void StopBottomGlow()
-    {
-        if (_bottomGlowTimer is not { } timer)
-        {
-            return;
-        }
-
-        _bottomGlowTimer = null;
-        timer.Stop();
-        timer.Tick -= BottomGlowTimer_Tick;
-        PerformanceLogger.RecordTransientUiTimerReleased();
-    }
-
-    private void BottomGlowTimer_Tick(DispatcherQueueTimer sender, object args)
-    {
-        _bottomGlowPhase += 0.035;
-        CompactBottomGlow.Opacity =
-            0.35 + 0.3 * Math.Sin(_bottomGlowPhase);
-    }
-
-    // ── Breathing border (search) ──────────────────────────────
-
-    private DispatcherQueueTimer? _breathBorderTimer;
-    private double _breathBorderPhase;
-
-    private void ApplyShimmer(WidgetCompactPresentation p)
-    {
-        CompactShimmer.Opacity = 0;
-        StopBreathBorder();
-    }
-
-    private void StartBreathBorder()
-    {
-        if (!_isHostVisualActivityEnabled ||
-            !IsLoaded ||
-            !_isCollapsed ||
-            !CompactAmbientAnimationsEnabled() ||
-            !SystemAnimationsEnabled())
-        {
-            StopBreathBorder();
-            CompactEdgeGlow.Opacity = 0.35;
-            return;
-        }
-
-        if (_breathBorderTimer is not null)
-        {
-            return;
-        }
-
-        _breathBorderPhase = 0;
-        _breathBorderTimer = DispatcherQueue.CreateTimer();
-        _breathBorderTimer.Interval = TimeSpan.FromMilliseconds(50);
-        _breathBorderTimer.Tick += BreathBorderTimer_Tick;
-        PerformanceLogger.RecordTransientUiTimerCreated();
-        _breathBorderTimer.Start();
-    }
-
-    private void StopBreathBorder()
-    {
-        if (_breathBorderTimer is not { } timer)
-        {
-            return;
-        }
-
-        _breathBorderTimer = null;
-        timer.Stop();
-        timer.Tick -= BreathBorderTimer_Tick;
-        PerformanceLogger.RecordTransientUiTimerReleased();
-    }
-
-    private void BreathBorderTimer_Tick(DispatcherQueueTimer sender, object args)
-    {
-        _breathBorderPhase += 0.03;
-        CompactEdgeGlow.Opacity =
-            0.35 + 0.15 * Math.Sin(_breathBorderPhase);
     }
 
     // ── Conditional animations (todo flash, capture bounce) ────
@@ -3844,10 +3802,7 @@ public sealed partial class WidgetShell : UserControl
     private void StopCompactVisualTimers()
     {
         StopCompactLiveIndeterminate();
-        StopCompactLiveBreathing();
         StopParticles();
-        StopBottomGlow();
-        StopBreathBorder();
         StopEdgeGlowPulse();
     }
 
@@ -4767,14 +4722,16 @@ public sealed partial class WidgetShell : UserControl
             return false;
         }
 
-        // A drag that finishes outside the XAML island can miss the final
-        // routed DragLeave. Do not raise CompactDragLeft here: its delayed
-        // restore belongs to a real drag leave and can race the hover request
-        // that is repairing this stale session.
+        // WinUI can miss the final Drop/DragItemsCompleted callback even when
+        // the pointer is released over the file surface. Let that surface
+        // commit its last confirmed internal insertion before clearing state.
+        // Do not raise CompactDragLeft here: its delayed restore belongs to a
+        // real drag leave and can race the hover request repairing this stale
+        // session.
         _isShellDragActive = false;
         if (_hostedContent is FileSurfaceContent fileSurface)
         {
-            fileSurface.ClearDragSessionVisualState();
+            fileSurface.CompleteReleasedDragSession();
         }
         return true;
     }

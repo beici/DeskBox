@@ -16,6 +16,24 @@ public readonly record struct FileItemDragPackageResult(
 /// </summary>
 public static class FileItemDragPackage
 {
+    internal const DataPackageOperation PreferredOperation =
+        DataPackageOperation.Move;
+
+    internal const DataPackageOperation SupportedOperations =
+        DataPackageOperation.Copy |
+        DataPackageOperation.Move |
+        DataPackageOperation.Link;
+
+    internal const DataPackageOperation ManagedShortcutSupportedOperations =
+        DataPackageOperation.Move |
+        DataPackageOperation.Link;
+
+    internal static DataPackageOperation ResolveSupportedOperations(
+        bool isManagedShortcutDrag) =>
+        isManagedShortcutDrag
+            ? ManagedShortcutSupportedOperations
+            : SupportedOperations;
+
     public static IReadOnlyList<WidgetItem> ResolveDraggedItems(
         IReadOnlyList<WidgetItem> eventItems,
         IReadOnlyList<WidgetItem> selectedItems)
@@ -61,8 +79,8 @@ public static class FileItemDragPackage
             return false;
         }
 
-        // WinRT's StorageFile broker can reject shortcuts carrying Hidden or
-        // System attributes with UNABLE_TO_MASK_PATH. More importantly, this
+        // WinRT's StorageFile broker can reject .lnk files (including ones
+        // whose filesystem attributes look normal). More importantly, this
         // event is raised on the UI STA, so synchronously waiting for that
         // broker can deadlock the drag/drop message loop. Wrap a native Shell
         // IDataObject before attempting that broker so Explorer receives the
@@ -112,6 +130,116 @@ public static class FileItemDragPackage
             }
         }
 
+        // RequestedOperation is one preferred action. The full capability
+        // set belongs to DragStartingEventArgs.AllowedOperations; combining
+        // the flags here makes Windows 10 Explorer ask the user to choose an
+        // operation for every otherwise ordinary left-button drop.
+        dataPackage.RequestedOperation = PreferredOperation;
+
+        dataPackage.Properties[DeskBoxDragData.SourceWidgetIdProperty] =
+            sourceWidgetId;
+        dataPackage.Properties[DeskBoxDragData.SourcePathsProperty] =
+            sourcePaths;
+        dataPackage.Properties[
+            DeskBoxDragData.InternalFileDragTokenProperty] =
+            DeskBoxDragData.InternalFileDragToken;
+        dataPackage.Properties.Title = getTitle(sourcePaths);
+        dataPackage.SetText(string.Join(Environment.NewLine, sourcePaths));
+
+        result = new FileItemDragPackageResult(
+            sourcePaths,
+            storageItems.Count > 0 || usesNativeShellDataObject,
+            usesNativeShellDataObject);
+        return true;
+    }
+
+    /// <summary>
+    /// DEF-023 (THR-03): deferred-payload variant of <see cref="TryPrepare"/>
+    /// for the drag-start path. The main path is fully synchronous (drag
+    /// commit semantics preserved, no UI-thread yield) and the StorageItem
+    /// broker round-trips move into a SetDataProvider callback (mirroring
+    /// QuickCaptureDragPackage), so a slow or network drive can no longer
+    /// freeze the shell on every drag — the broker is only hit when a drop
+    /// target actually asks for the items, and Explorer-style targets that
+    /// consume the native Shell payload never trigger it at all. Returns
+    /// false when the drag must be canceled (no resolvable paths or a
+    /// broker-blocked drag without a native Shell fallback); the caller
+    /// cancels the drag-start event.
+    /// </summary>
+    public static bool TryPrepareDeferred(
+        DataPackage dataPackage,
+        IReadOnlyList<WidgetItem> draggedItems,
+        string sourceWidgetId,
+        FileService fileService,
+        Func<IReadOnlyList<string>, string> getTitle,
+        out FileItemDragPackageResult result)
+    {
+        result = default;
+        if (draggedItems.Count == 0)
+        {
+            return false;
+        }
+
+        string[] sourcePaths = draggedItems
+            .Select(item => item.Path)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (sourcePaths.Length == 0)
+        {
+            return false;
+        }
+
+        bool requiresStorageBrokerBypass =
+            NativeShellFileDragProvider.RequiresStorageBrokerBypass(
+                sourcePaths);
+        bool usesNativeShellDataObject =
+            requiresStorageBrokerBypass &&
+            NativeShellFileDragProvider.TryAttach(dataPackage, sourcePaths);
+        if (requiresStorageBrokerBypass && !usesNativeShellDataObject)
+        {
+            App.Log(
+                $"[DragStart] Canceled broker-blocked file drag because a " +
+                $"native Shell payload could not be created paths=" +
+                $"{sourcePaths.Length}");
+            return false;
+        }
+
+        if (!usesNativeShellDataObject)
+        {
+            // Deferred payload: resolved on the thread pool when the drop
+            // target requests StorageItems, never on the UI STA.
+            dataPackage.SetDataProvider(StandardDataFormats.StorageItems, async request =>
+            {
+                var deferral = request.GetDeferral();
+                try
+                {
+                    IReadOnlyList<IStorageItem> items =
+                        await fileService.GetStorageItemsAsync(sourcePaths);
+                    if (items.Count == sourcePaths.Length)
+                    {
+                        request.SetData(items);
+                    }
+                    else
+                    {
+                        App.Log(
+                            $"[DragStart] Drop target requested StorageItems but " +
+                            $"only a partial payload was available " +
+                            $"resolved={items.Count} requested={sourcePaths.Length}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    App.Log($"[DragStart] Deferred StorageItems provider failed: {ex}");
+                }
+                finally
+                {
+                    deferral.Complete();
+                }
+            });
+        }
+
         dataPackage.RequestedOperation =
             DataPackageOperation.Copy |
             DataPackageOperation.Move |
@@ -129,7 +257,7 @@ public static class FileItemDragPackage
 
         result = new FileItemDragPackageResult(
             sourcePaths,
-            storageItems.Count > 0 || usesNativeShellDataObject,
+            HasStorageItems: true,
             usesNativeShellDataObject);
         return true;
     }

@@ -10,9 +10,15 @@ namespace DeskBox.Views;
 
 public abstract partial class WidgetWindowBase
 {
+    /// <summary>
+    /// Room the colour picker asks for: spectrum, sliders and the hex entry.
+    /// </summary>
+    private const double ColorPickerContentWidthDips = 340;
+    private const double ColorPickerContentHeightDips = 500;
+
     private AccessibilitySettings? _foregroundAccessibilitySettings;
 
-    protected void ApplyWidgetForegroundAppearance()
+    protected virtual void ApplyWidgetForegroundAppearance()
     {
         EnsureForegroundAccessibilityWatcher();
         bool highContrast = _foregroundAccessibilitySettings?.HighContrast == true;
@@ -45,28 +51,31 @@ public abstract partial class WidgetWindowBase
             return;
         }
 
+        // Same host constraint as the margin editor: a colour picker is far taller
+        // than a widget, so it is shown in the shared tool window instead of a
+        // ContentDialog that the widget would clip.
+        WidgetDialogViewport viewport = ResolveToolDialogViewport(
+            ColorPickerContentWidthDips,
+            ColorPickerContentHeightDips);
         var picker = new ColorPicker
         {
             Color = WidgetForegroundSettings.ResolveCustomColor(
                 Config,
                 SettingsService.Settings),
             IsAlphaEnabled = false,
-            MinWidth = 340
+            MaxWidth = viewport.ContentWidth
         };
         var localization = App.Current.LocalizationService;
-        var dialog = new ContentDialog
-        {
-            XamlRoot = RootElement.XamlRoot,
-            Title = localization.T("Widget.Foreground.CustomColor"),
-            Content = picker,
-            PrimaryButtonText = localization.T("Common.Save"),
-            CloseButtonText = localization.T("Common.Cancel"),
-            DefaultButton = ContentDialogButton.Primary
-        };
 
         try
         {
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary)
+            bool saved = await ShowToolDialogAsync(
+                localization.T("Widget.Foreground.CustomColor"),
+                picker,
+                localization.T("Common.Save"),
+                localization.T("Common.Cancel"),
+                viewport);
+            if (!saved)
             {
                 return;
             }

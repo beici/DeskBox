@@ -29,6 +29,7 @@ internal static class WidgetCompactAnimationCoordinator
     private static bool s_frameCallbackSnapshotDirty;
     private static readonly HashSet<long> BoundsTransitionRegistrations = [];
     private static readonly Dictionary<IntPtr, PendingBoundsMove> PendingBoundsMoves = [];
+    private static readonly List<PendingBoundsMove> PendingBoundsMovesBuffer = [];
     private static long s_nextRegistrationId;
     private static bool s_isRenderingSubscribed;
     private static bool s_isDispatchingFrame;
@@ -377,7 +378,11 @@ internal static class WidgetCompactAnimationCoordinator
             return;
         }
 
-        PendingBoundsMove[] moves = PendingBoundsMoves.Values.ToArray();
+        // Reused buffer: this runs once per animation frame, so replacing
+        // Values.ToArray() removes a per-frame list+enumerator allocation.
+        PendingBoundsMovesBuffer.Clear();
+        PendingBoundsMovesBuffer.AddRange(PendingBoundsMoves.Values);
+        List<PendingBoundsMove> moves = PendingBoundsMovesBuffer;
         PendingBoundsMoves.Clear();
         long started = Stopwatch.GetTimestamp();
 
@@ -418,7 +423,7 @@ internal static class WidgetCompactAnimationCoordinator
             double elapsedMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
             if (elapsedMs >= 8)
             {
-                string details = $"count={moves.Length} elapsedMs={elapsedMs:F1}";
+                string details = $"count={moves.Count} elapsedMs={elapsedMs:F1}";
                 PerformanceLogger.Mark("CompactBoundsBatch", details);
                 App.LogVerbose($"[CompactBoundsBatch] {details}");
             }

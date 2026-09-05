@@ -25,6 +25,14 @@ public sealed class TodoReminderService : IDisposable
     private readonly Func<DateTimeOffset> _clock;
     private readonly HashSet<string> _sessionNotifiedKeys = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Raised on the UI thread after this service persists a change to a
+    /// todo store (DEF-043). Open todo widgets listen and merge the change
+    /// into their in-memory state, so the next user-driven save cannot
+    /// overwrite the reminder bookkeeping with a stale snapshot.
+    /// </summary>
+    public event Action<string, TodoItem?, TodoItem?>? TodoStoreChanged;
+
     private DispatcherQueueTimer? _timer;
     private bool _isChecking;
     private bool _disposed;
@@ -241,23 +249,34 @@ public sealed class TodoReminderService : IDisposable
             }
 
             var store = _storeFactory(widget.Id);
-            var data = await store.LoadAsync();
-            var item = data.Items.FirstOrDefault(item =>
-                string.Equals(item.Id, itemId, StringComparison.Ordinal));
-            if (item is null ||
-                item.IsCompleted ||
-                item.DueDate is null ||
-                TodoReminderOptions.IsReminderOff(item.ReminderOffsetMinutes))
+            TodoItem? changedItem = null;
+            _ = await store.MutateAsync(current =>
+            {
+                var item = current.Items.FirstOrDefault(entry =>
+                    string.Equals(entry.Id, itemId, StringComparison.Ordinal));
+                if (item is null ||
+                    item.IsCompleted ||
+                    item.DueDate is null ||
+                    TodoReminderOptions.IsReminderOff(item.ReminderOffsetMinutes))
+                {
+                    return false;
+                }
+
+                item.SnoozedUntil = snoozedUntil;
+                item.SnoozeLastNotifiedAt = null;
+                item.ReminderDismissedForDueDate = item.DueDate;
+                item.UpdatedAt = _clock().ToUniversalTime();
+                changedItem = item;
+                return true;
+            }).ConfigureAwait(false);
+
+            if (changedItem is null)
             {
                 return false;
             }
 
-            item.SnoozedUntil = snoozedUntil;
-            item.SnoozeLastNotifiedAt = null;
-            item.ReminderDismissedForDueDate = item.DueDate;
-            item.UpdatedAt = _clock().ToUniversalTime();
-            await store.SaveAsync(data);
-            App.Log($"[TodoReminder] Snoozed widget={widgetId} item={itemId} until={item.SnoozedUntil:O}");
+            App.Log($"[TodoReminder] Snoozed widget={widgetId} item={itemId} until={changedItem.SnoozedUntil:O}");
+            PublishStoreChanged(widget.Id, changedItem, insertedItem: null);
             return true;
         }
         catch (Exception ex)
@@ -284,48 +303,71 @@ public sealed class TodoReminderService : IDisposable
             }
 
             var store = _storeFactory(widget.Id);
-            var data = await store.LoadAsync();
-            int itemIndex = data.Items.FindIndex(item =>
-                string.Equals(item.Id, itemId, StringComparison.Ordinal));
-            if (itemIndex < 0)
-            {
-                return false;
-            }
-
-            var item = data.Items[itemIndex];
-            if (item.IsCompleted)
-            {
-                return true;
-            }
-
+            TodoItem? completedItem = null;
+            TodoItem? insertedNext = null;
             DateTimeOffset now = _clock().ToUniversalTime();
-            if (item.Recurrence is not null)
+            _ = await store.MutateAsync(current =>
             {
-                item.RecurrenceSeriesId ??= Guid.NewGuid().ToString("N");
+                int itemIndex = current.Items.FindIndex(item =>
+                    string.Equals(item.Id, itemId, StringComparison.Ordinal));
+                if (itemIndex < 0)
+                {
+                    return false;
+                }
+
+                var item = current.Items[itemIndex];
+                if (item.IsCompleted)
+                {
+                    return false;
+                }
+
+                if (item.Recurrence is not null)
+                {
+                    item.RecurrenceSeriesId ??= Guid.NewGuid().ToString("N");
+                }
+
+                item.IsCompleted = true;
+                item.CompletedAt = now;
+                item.UpdatedAt = now;
+                item.GeneratedNextItemId = null;
+                item.SnoozedUntil = null;
+                item.SnoozeLastNotifiedAt = null;
+
+                if (TodoRecurrenceService.TryCreateNextOccurrence(item, now, out TodoItem? nextItem) &&
+                    nextItem is not null)
+                {
+                    item.GeneratedNextItemId = nextItem.Id;
+                    current.Items.Insert(Math.Clamp(itemIndex + 1, 0, current.Items.Count), nextItem);
+                    insertedNext = nextItem;
+                }
+
+                completedItem = item;
+                return true;
+            }).ConfigureAwait(false);
+
+            if (completedItem is null)
+            {
+                // The item may have been completed by an open widget in the
+                // meantime; the store now reflects whichever write landed
+                // first and there is nothing left to do.
+                return await itemExists(store, itemId).ConfigureAwait(false);
             }
 
-            item.IsCompleted = true;
-            item.CompletedAt = now;
-            item.UpdatedAt = now;
-            item.GeneratedNextItemId = null;
-            item.SnoozedUntil = null;
-            item.SnoozeLastNotifiedAt = null;
-
-            if (TodoRecurrenceService.TryCreateNextOccurrence(item, now, out TodoItem? nextItem) &&
-                nextItem is not null)
-            {
-                item.GeneratedNextItemId = nextItem.Id;
-                data.Items.Insert(Math.Clamp(itemIndex + 1, 0, data.Items.Count), nextItem);
-            }
-
-            await store.SaveAsync(data);
             App.Log($"[TodoReminder] Completed from notification widget={widgetId} item={itemId}");
+            PublishStoreChanged(widget.Id, completedItem, insertedNext);
             return true;
         }
         catch (Exception ex)
         {
             App.Log($"[TodoReminder] Complete failed: {ex}");
             return false;
+        }
+
+        static async Task<bool> itemExists(TodoWidgetStore store, string itemId)
+        {
+            var data = await store.LoadAsync().ConfigureAwait(false);
+            return data.Items.Any(entry =>
+                string.Equals(entry.Id, itemId, StringComparison.Ordinal) && entry.IsCompleted);
         }
     }
 
@@ -381,41 +423,86 @@ public sealed class TodoReminderService : IDisposable
         List<TodoReminderCandidate> candidates)
     {
         var store = _storeFactory(widget.Id);
-        var data = await store.LoadAsync();
-        bool changed = false;
-
-        foreach (var item in data.Items)
+        List<TodoReminderCandidate> widgetCandidates = [];
+        TodoItem? lastChangedItem = null;
+        _ = await store.MutateAsync(current =>
         {
-            if (!TryGetReminderTrigger(item, now, defaultOffsetMinutes, out ReminderTriggerKind triggerKind, out int? effectiveOffsetMinutes))
+            bool changed = false;
+            foreach (var item in current.Items)
             {
-                continue;
+                if (!TryGetReminderTrigger(item, now, defaultOffsetMinutes, out ReminderTriggerKind triggerKind, out int? effectiveOffsetMinutes))
+                {
+                    continue;
+                }
+
+                string reminderKey = GetReminderKey(widget.Id, item, triggerKind, effectiveOffsetMinutes);
+                if (!_sessionNotifiedKeys.Add(reminderKey))
+                {
+                    continue;
+                }
+
+                if (triggerKind == ReminderTriggerKind.Snooze)
+                {
+                    item.SnoozeLastNotifiedAt = now;
+                    item.SnoozedUntil = null;
+                }
+                else
+                {
+                    item.ReminderLastNotifiedAt = now;
+                    item.ReminderDismissedForDueDate = item.DueDate;
+                }
+
+                changed = true;
+                lastChangedItem = item;
+                widgetCandidates.Add(new TodoReminderCandidate(widget.Id, widget.Name, item));
             }
 
-            string reminderKey = GetReminderKey(widget.Id, item, triggerKind, effectiveOffsetMinutes);
-            if (!_sessionNotifiedKeys.Add(reminderKey))
-            {
-                continue;
-            }
+            return changed;
+        }).ConfigureAwait(false);
 
-            if (triggerKind == ReminderTriggerKind.Snooze)
-            {
-                item.SnoozeLastNotifiedAt = now;
-                item.SnoozedUntil = null;
-            }
-            else
-            {
-                item.ReminderLastNotifiedAt = now;
-                item.ReminderDismissedForDueDate = item.DueDate;
-            }
+        if (widgetCandidates.Count > 0)
+        {
+            candidates.AddRange(widgetCandidates);
+            PublishStoreChanged(widget.Id, lastChangedItem, insertedItem: null);
+        }
+    }
 
-            changed = true;
-            candidates.Add(new TodoReminderCandidate(widget.Id, widget.Name, item));
+    /// <summary>
+    /// Notifies open todo widgets about a persisted store change (DEF-043).
+    /// The event is raised on the UI thread so subscribers can touch their
+    /// observable state directly. The service may outlive individual widgets,
+    /// so this is best-effort fire-and-forget; widgets that are closed simply
+    /// have no subscribers.
+    /// </summary>
+    private void PublishStoreChanged(
+        string widgetId,
+        TodoItem? changedItem,
+        TodoItem? insertedItem)
+    {
+        if (TodoStoreChanged is null)
+        {
+            return;
         }
 
-        if (changed)
+        void Raise()
         {
-            await store.SaveAsync(data);
+            try
+            {
+                TodoStoreChanged?.Invoke(widgetId, changedItem, insertedItem);
+            }
+            catch (Exception ex)
+            {
+                App.Log($"[TodoReminder] Store-changed subscriber failed: {ex.Message}");
+            }
         }
+
+        if (_dispatcherQueue is null || _dispatcherQueue.HasThreadAccess)
+        {
+            Raise();
+            return;
+        }
+
+        _dispatcherQueue.TryEnqueue(Raise);
     }
 
     private TodoReminderNotification BuildNotification(IReadOnlyList<TodoReminderCandidate> candidates)

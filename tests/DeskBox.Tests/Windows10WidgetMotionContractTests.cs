@@ -193,8 +193,15 @@ public sealed class Windows10WidgetMotionContractTests
             "src/DeskBox/Views/WidgetWindowBase.Collapse.cs"));
 
         Assert.Contains("StartCompactOpacityAnimation", shell, StringComparison.Ordinal);
-        Assert.Contains("!WindowsCompatibilityService.IsWindows11OrLater", shell, StringComparison.Ordinal);
         Assert.Contains("ScalarKeyFrameAnimation", shell, StringComparison.Ordinal);
+        // The compositor owns the fades on every OS version: when the
+        // composition transition is active, the per-frame dependency-property
+        // walk must be skipped and the UI thread only moves the real HWND.
+        Assert.Contains(
+            "bool compositionOwnsFadeVisuals = _isCompactCompositionTransitionActive;",
+            shell,
+            StringComparison.Ordinal);
+        Assert.Contains("if (!compositionOwnsFadeVisuals)", shell, StringComparison.Ordinal);
         Assert.Contains("MoveWindowWithoutPersisting(bounds, suppressRedraw: true);", collapse, StringComparison.Ordinal);
     }
 

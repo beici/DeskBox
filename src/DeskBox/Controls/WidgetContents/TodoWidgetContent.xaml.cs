@@ -146,6 +146,23 @@ public sealed partial class TodoWidgetContent : UserControl
         }
     }
 
+    // DEF-043: a background reminder write was persisted for this widget.
+    // Merge the change into the view model's in-memory state (no reload, so
+    // user selection/detail state stays put) and let the next user save carry
+    // the merged document. Invoked on the UI thread by the App relay.
+    private void OnTodoStoreChangedByReminder(
+        string widgetId,
+        TodoItem? changedItem,
+        TodoItem? insertedItem)
+    {
+        if (ViewModel is null)
+        {
+            return;
+        }
+
+        ViewModel.ApplyExternalStoreChange(changedItem, insertedItem);
+    }
+
     private void TodoWidgetContent_Loaded(object sender, RoutedEventArgs e)
     {
         if (ViewModel is not null)
@@ -156,6 +173,13 @@ public sealed partial class TodoWidgetContent : UserControl
             ViewModel.VisibleItems.CollectionChanged += VisibleItems_CollectionChanged;
         }
 
+        // DEF-043: merge background reminder writes into the live view model
+        // while the view is loaded, so the next user-driven save cannot revert
+        // the reminder bookkeeping. Loaded/Unloaded is the natural lifetime
+        // for this: tests that construct the adapter without a WinUI
+        // Application never fire Loaded, so App.Current is never touched.
+        App.Current.TodoStoreChangedByReminder -= OnTodoStoreChangedByReminder;
+        App.Current.TodoStoreChangedByReminder += OnTodoStoreChangedByReminder;
         App.Current.LocalizationService.LanguageChanged -= OnLanguageChanged;
         App.Current.LocalizationService.LanguageChanged += OnLanguageChanged;
         ApplyLocalizedText();
@@ -182,6 +206,7 @@ public sealed partial class TodoWidgetContent : UserControl
 
         App.Current.LocalizationService.LanguageChanged -= OnLanguageChanged;
         App.Current.ThemeService.AppearanceChanged -= OnThemeAppearanceChanged;
+        App.Current.TodoStoreChangedByReminder -= OnTodoStoreChangedByReminder;
         _draggedTodoItemId = null;
         _draggedTodoItemIds.Clear();
         ResetTodoReorderVisualState();

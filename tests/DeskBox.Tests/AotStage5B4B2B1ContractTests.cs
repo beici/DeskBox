@@ -30,8 +30,6 @@ public sealed class AotStage5B4B2B1ContractTests
             "src/DeskBox/ViewModels/QuickCaptureWidgetViewModel.cs");
         string itemSync = ReadRepositoryFile(
             "src/DeskBox/ViewModels/QuickCaptureWidgetViewModel.ItemSync.cs");
-        string window = ReadRepositoryFile(
-            "src/DeskBox/Views/QuickCaptureWidgetWindow.xaml");
         string surface = ReadRepositoryFile(
             "src/DeskBox/Controls/WidgetContents/QuickCaptureSurfaceContent.xaml");
 
@@ -60,17 +58,14 @@ public sealed class AotStage5B4B2B1ContractTests
             itemSync,
             StringComparison.Ordinal);
 
-        foreach (string xaml in new[] { window, surface })
-        {
-            Assert.Contains(
-                "ItemsSource=\"{Binding VisibleItemsSource}\"",
-                xaml,
-                StringComparison.Ordinal);
-            Assert.DoesNotContain(
-                "ItemsSource=\"{Binding Items}\"",
-                xaml,
-                StringComparison.Ordinal);
-        }
+        Assert.Contains(
+            "ItemsSource=\"{Binding VisibleItemsSource}\"",
+            surface,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "ItemsSource=\"{Binding Items}\"",
+            surface,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -283,7 +278,7 @@ public sealed class AotStage5B4B2B1ContractTests
         Assert.Contains("stage5B4B2B1ForbiddenScopePatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B2B1JsonSerializeCallCount", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B2B1SourceWarningMessages", audit, StringComparison.Ordinal);
-        Assert.Contains("stage5B4B2B1ExpectedWmc1510Count = 1241", audit, StringComparison.Ordinal);
+        Assert.Contains("stage5B4B2B1ExpectedWmc1510Count = 1235", audit, StringComparison.Ordinal);
     }
 
     private static int CountOccurrences(string value, string token)

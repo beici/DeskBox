@@ -66,6 +66,18 @@ public sealed partial class SearchPopupWindow : Window
     private const int MinPopupWidth = 400;
     private const int MinPopupHeight = 300;
 
+    // Close-path forensics: DeskBox never closes this window on its own except via
+    // an explicit service dispose (which logs "[Search] Services disposed"), so a
+    // WM_CLOSE here means an external sender or a framework teardown. The next
+    // diagnostics export can then distinguish "hidden by managed code" (Popup
+    // hidden), "closed via WM_CLOSE" (external WM_CLOSE), and "destroyed without
+    // WM_CLOSE" (WinUI/DWM teardown).
+    private const uint WmClose = 0x0010;
+    private const uint WmDestroy = 0x0002;
+    private static readonly UIntPtr PopupCloseWatcherSubclassId = new(0x5E4C);
+    private readonly Win32Helper.SubclassProc _popupCloseWatcherProc;
+    private bool _isPopupCloseWatcherInstalled;
+
     // The popup uses the same pointer-capture interaction model as widget windows,
     // avoiding the visible native WS_THICKFRAME border.
     private FrameworkElement? _windowInteractionElement;
@@ -151,6 +163,37 @@ public sealed partial class SearchPopupWindow : Window
             _themeService.AppearanceChanged += OnThemeServiceAppearanceChanged;
         Activated += OnWindowActivated;
         Closed += OnWindowClosed;
+        _popupCloseWatcherProc = PopupCloseWatcherSubclassProc;
+        _isPopupCloseWatcherInstalled = Win32Helper.SetWindowSubclass(
+            _hwnd,
+            _popupCloseWatcherProc,
+            PopupCloseWatcherSubclassId,
+            UIntPtr.Zero);
+        App.Log(
+            $"[Search] Popup close watcher installed hwnd=0x{_hwnd.ToInt64():X} " +
+            $"subclass={_isPopupCloseWatcherInstalled}");
+    }
+
+    private IntPtr PopupCloseWatcherSubclassProc(
+        IntPtr hWnd,
+        uint message,
+        UIntPtr wParam,
+        IntPtr lParam,
+        UIntPtr subclassId,
+        UIntPtr refData)
+    {
+        if (message == WmClose)
+        {
+            App.Log(
+                $"[Search] Popup WM_CLOSE received hwnd=0x{hWnd.ToInt64():X} " +
+                $"visible={IsPopupVisible}");
+        }
+        else if (message == WmDestroy)
+        {
+            App.Log($"[Search] Popup WM_DESTROY hwnd=0x{hWnd.ToInt64():X}");
+        }
+
+        return Win32Helper.DefSubclassProc(hWnd, message, wParam, lParam);
     }
 
     public IntPtr WindowHandle => _hwnd;
@@ -169,18 +212,78 @@ public sealed partial class SearchPopupWindow : Window
 
     /// <summary>
     /// Shows the popup at the correct position and focuses the search box.
+    /// Public entry invoked fire-and-forget by hotkeys and widgets; the
+    /// popup body must stay on the UI thread and a failed open must not
+    /// crash the process through this async void surface (N2).
     /// </summary>
     public async void ShowPopup()
     {
-        await ShowPopupCoreAsync(null);
+        await DispatchShowPopupAsync(null);
     }
 
     /// <summary>
-    /// Shows the popup with a pre-filled query and immediately executes the search.
+    /// Shows the popup with a pre-filled query and immediately executes the
+    /// search. Same protected boundary as ShowPopup (N2).
     /// </summary>
     public async void ShowPopupWithQuery(string query)
     {
-        await ShowPopupCoreAsync(query);
+        await DispatchShowPopupAsync(query);
+    }
+
+    /// <summary>
+    /// Re-hops a fire-and-forget public entry onto the UI thread and runs the
+    /// open pipeline under an exception boundary. Callers may be background
+    /// hotkey callbacks, so the popup body is never executed on the invoking
+    /// thread (N2).
+    /// </summary>
+    private async Task DispatchShowPopupAsync(string? initialQuery)
+    {
+        if (App.UiDispatcherQueue is not { } dispatcherQueue)
+        {
+            return;
+        }
+
+        try
+        {
+            if (dispatcherQueue.HasThreadAccess)
+            {
+                await ShowPopupSafelyAsync(this, initialQuery);
+                return;
+            }
+
+            if (!dispatcherQueue.TryEnqueue(() =>
+                {
+                    _ = ShowPopupSafelyAsync(this, initialQuery);
+                }))
+            {
+                App.Log("[SearchPopup] Open dropped: dispatcher queue not accepting callbacks.");
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[SearchPopup] Open dispatch failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Exception boundary for the whole popup-open pipeline. A failed open is
+    /// logged and the search box refocused instead of escaping an async void
+    /// surface as an unhandled exception (N2).
+    /// </summary>
+    private static async Task ShowPopupSafelyAsync(SearchPopupWindow popup, string? initialQuery)
+    {
+        try
+        {
+            await popup.ShowPopupCoreAsync(initialQuery);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[SearchPopup] Open failed: {ex.Message}");
+            if (popup.IsPopupVisible)
+            {
+                popup.SearchTextBox.Focus(FocusState.Programmatic);
+            }
+        }
     }
 
     private async Task ShowPopupCoreAsync(string? initialQuery)
@@ -344,6 +447,7 @@ public sealed partial class SearchPopupWindow : Window
             return;
         }
 
+        App.Log("[Search] Popup hidden");
         IsPopupVisible = false;
         _viewModel.OnPopupHidden();
         _searchDebounceTimer?.Stop();
@@ -380,11 +484,9 @@ public sealed partial class SearchPopupWindow : Window
         if (!IsPopupVisible)
         {
             _appWindow?.Hide();
-            // Retain the initialized XAML shell for fast reopening, while releasing
-            // native backdrop/compositor resources during the hidden interval.
-            DisposeAcrylicController();
-            DisposeMicaController();
-            Win32Helper.DisableAccentPolicy(_hwnd);
+            // Keep the initialized XAML shell and its material controllers warm.
+            // Recreating these resources on the next hotkey press shifts memory
+            // savings into a visible input delay and a transient material flash.
         }
     }
 
@@ -2780,6 +2882,13 @@ public sealed partial class SearchPopupWindow : Window
         {
             await dragSource.StartDragAsync(e.GetCurrentPoint(dragSource));
         }
+        catch (Exception ex)
+        {
+            // A rare platform drag failure must not escape the async void
+            // pointer-moved handler as an unhandled exception (N4); the drag
+            // candidate is cleared by the finally below either way.
+            App.Log($"[SearchPopup] Drag failed: {ex.Message}");
+        }
         finally
         {
             dragSource.DragStarting -= handler;
@@ -3601,6 +3710,9 @@ public sealed partial class SearchPopupWindow : Window
         {
             var data = new DataPackage { RequestedOperation = operation };
             await SetDragPayloadAsync(data, paths);
+            DeskBoxClipboardWriteScope.MarkWrite(
+                text: string.Join(Environment.NewLine, paths),
+                paths: paths);
             Clipboard.SetContent(data);
             Clipboard.Flush();
             ShowTransientStatus(_localizationService.T(
@@ -3820,10 +3932,15 @@ public sealed partial class SearchPopupWindow : Window
             return;
         }
 
+        string path = item.DetailPath;
+
         try
         {
             var data = new DataPackage { RequestedOperation = operation };
-            await SetDragPayloadAsync(data, item.DetailPath);
+            await SetDragPayloadAsync(data, path);
+            DeskBoxClipboardWriteScope.MarkWrite(
+                text: path,
+                paths: [path]);
             Clipboard.SetContent(data);
             Clipboard.Flush();
             ShowTransientStatus(_localizationService.T(
@@ -4058,6 +4175,7 @@ public sealed partial class SearchPopupWindow : Window
         {
             var dataPackage = new DataPackage();
             dataPackage.SetText(item.DetailPath);
+            DeskBoxClipboardWriteScope.MarkWrite(text: item.DetailPath);
             Clipboard.SetContent(dataPackage);
             ShowTransientStatus(_localizationService.T("Search.Action.PathCopied"));
         }
@@ -4164,7 +4282,10 @@ public sealed partial class SearchPopupWindow : Window
         {
             data.SetStorageItems(items);
         }
-        if (fallbackText.Length > 0 && items.Count == 0)
+        // Resolved storage items win, but any path that failed to resolve must
+        // still reach the clipboard: without this the user silently loses the
+        // failed entries when pasting a mixed selection (N3).
+        if (fallbackText.Length > 0)
         {
             data.SetText(fallbackText.ToString().TrimEnd());
         }
@@ -4348,6 +4469,9 @@ public sealed partial class SearchPopupWindow : Window
 
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
+        App.Log(
+            $"[Search] Popup window closed visible={IsPopupVisible} " +
+            $"hwnd=0x{_hwnd.ToInt64():X}");
         _viewModel.ActionRequested -= OnViewModelActionRequested;
         _viewModel.ContentRequested -= OnViewModelContentRequested;
         _viewModel.QueryApplied -= OnViewModelQueryApplied;

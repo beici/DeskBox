@@ -84,7 +84,9 @@ public static class WidgetCapsuleArrangementCalculator
             HorizontalMinimumWidth);
         int cursorX = anchorPoint.X;
 
-        for (int index = 0; index < items.Count; index++)
+        // DEF-026: FitPrimarySizes may truncate the tail when even the 1px
+        // floor cannot fit every capsule; iterate only the surviving sizes.
+        for (int index = 0; index < widths.Length; index++)
         {
             WidgetCapsuleArrangementItem item = items[index];
             int width = widths[index];
@@ -116,7 +118,9 @@ public static class WidgetCapsuleArrangementCalculator
             VerticalMinimumHeight);
         int cursorY = anchorPoint.Y;
 
-        for (int index = 0; index < items.Count; index++)
+        // DEF-026: FitPrimarySizes may truncate the tail when even the 1px
+        // floor cannot fit every capsule; iterate only the surviving sizes.
+        for (int index = 0; index < heights.Length; index++)
         {
             WidgetCapsuleArrangementItem item = items[index];
             int height = heights[index];
@@ -190,6 +194,38 @@ public static class WidgetCapsuleArrangementCalculator
             remaining--;
         }
 
+        // LAY-04 (DEF-026): when even the 1px floor cannot fit every capsule
+        // (extreme case: count × 1px + spacing > work-area length), the loop
+        // above used to leave the overflow silently in place — the bar then
+        // spills out of the work area and ClampGroupIntoWorkArea can only
+        // push it toward one edge. Squeeze spacing to zero first (the sizes
+        // still win), then truncate the tail: the dropped capsules fall back
+        // to free placement upstream instead of pushing the whole bar out of
+        // the screen. The caller-visible sizes always sum to what fits.
+        int totalWithSpacing = sizes.Sum() + safeSpacing * Math.Max(0, count - 1);
+        if (totalWithSpacing > safeAvailable && count > 1)
+        {
+            safeSpacing = 0;
+            totalWithSpacing = sizes.Sum();
+        }
+
+        if (totalWithSpacing > safeAvailable)
+        {
+            int fitCount = Math.Max(1, Math.Min(
+                count,
+                Math.Max(1, safeAvailable)));
+            // Drop from the tail; the leftover items are simply not arranged.
+            if (fitCount < count)
+            {
+                App.Log(
+                    $"[CapsuleArrangement] Work area too small to fit every " +
+                    $"capsule: fit={fitCount} requested={count} " +
+                    $"available={safeAvailable}; overflowing capsules fall back " +
+                    "to free placement");
+                Array.Resize(ref sizes, fitCount);
+            }
+        }
+
         return (safeSpacing, sizes);
     }
 
@@ -197,22 +233,46 @@ public static class WidgetCapsuleArrangementCalculator
         IDictionary<string, RectInt32> results,
         RectInt32 workArea)
     {
+        // LAY-04 (DEF-026): the old single-direction compensation (else-if)
+        // left the opposite edge outside the work area when the group was
+        // wider/taller than it could shift. Centering the group when it
+        // cannot fit entirely keeps both overflow halves equal, and the bar
+        // is at least symmetric around the work area.
         int minX = results.Values.Min(bounds => bounds.X);
         int minY = results.Values.Min(bounds => bounds.Y);
         int maxX = results.Values.Max(bounds => bounds.X + bounds.Width);
         int maxY = results.Values.Max(bounds => bounds.Y + bounds.Height);
         int workRight = workArea.X + workArea.Width;
         int workBottom = workArea.Y + workArea.Height;
-        int offsetX = minX < workArea.X
-            ? workArea.X - minX
-            : maxX > workRight
-                ? workRight - maxX
-                : 0;
-        int offsetY = minY < workArea.Y
-            ? workArea.Y - minY
-            : maxY > workBottom
-                ? workBottom - maxY
-                : 0;
+        int offsetX;
+        if (minX < workArea.X && maxX > workRight)
+        {
+            // Group cannot fit horizontally — center it over the work area.
+            offsetX = workArea.X + (workArea.Width - (maxX - minX)) / 2 - minX;
+        }
+        else
+        {
+            offsetX = minX < workArea.X
+                ? workArea.X - minX
+                : maxX > workRight
+                    ? workRight - maxX
+                    : 0;
+        }
+
+        int offsetY;
+        if (minY < workArea.Y && maxY > workBottom)
+        {
+            offsetY = workArea.Y + (workArea.Height - (maxY - minY)) / 2 - minY;
+        }
+        else
+        {
+            offsetY = minY < workArea.Y
+                ? workArea.Y - minY
+                : maxY > workBottom
+                    ? workBottom - maxY
+                    : 0;
+        }
+
         if (offsetX == 0 && offsetY == 0)
         {
             return;

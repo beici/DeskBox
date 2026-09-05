@@ -155,7 +155,14 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
 
     private void BeginEnabledCycle()
     {
-        _featureCts.Dispose();
+        // DEF-024 (THR-04): FileSystemWatcher event threads read
+        // _featureCts.Token (StartProcessing, watcher-recovery loop) while
+        // this method swaps the cycle source — disposing here raced with that
+        // read and surfaced as an unhandled ObjectDisposedException.
+        // Cancellation alone retires the cycle's linked source (a canceled
+        // CTS without timers holds no unmanaged state and is GC-collected),
+        // and the final Dispose() cancels whatever instance is current.
+        _featureCts.Cancel();
         _featureCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
         Interlocked.Exchange(ref _watcherRecoveryAttempts, 0);
     }

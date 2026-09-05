@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -169,25 +169,6 @@ public static partial class Win32Helper
             : path;
     }
 
-    [LibraryImport("kernel32.dll")]
-    private static partial IntPtr GetCurrentProcess();
-
-    [LibraryImport("psapi.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static partial bool EmptyWorkingSet(IntPtr process);
-
-    public static bool TrimCurrentProcessWorkingSet()
-    {
-        try
-        {
-            return EmptyWorkingSet(GetCurrentProcess());
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
     // ────────────────────────────────────────────────────────────────
     //  SetWindowPos – Z-order manipulation
     // ────────────────────────────────────────────────────────────────
@@ -249,6 +230,42 @@ public static partial class Win32Helper
     [LibraryImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool IsIconic(IntPtr hWnd);
+
+    public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
+    public const uint EVENT_SYSTEM_MINIMIZESTART = 0x0016;
+    public const uint EVENT_SYSTEM_MINIMIZEEND = 0x0017;
+    public const uint WINEVENT_OUTOFCONTEXT = 0x0000;
+    public const uint WINEVENT_SKIPOWNPROCESS = 0x0002;
+
+    public delegate void WinEventProc(
+        IntPtr hWinEventHook,
+        uint eventId,
+        IntPtr hWnd,
+        int idObject,
+        int idChild,
+        uint idThread,
+        uint dwmsEventTime);
+
+    // DllImport rather than LibraryImport: the source generator does not
+    // accept managed delegate parameters, and the hook callback must outlive
+    // the call. Callers keep the delegate instance alive for the hook lifetime.
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetWinEventHook(
+        uint eventMin,
+        uint eventMax,
+        IntPtr hmodWinEventProc,
+        WinEventProc pfnWinEventProc,
+        uint idProcess,
+        uint idThread,
+        uint dwFlags);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool UnhookWinEvent(IntPtr hWinEventHook);
 
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
@@ -333,6 +350,24 @@ public static partial class Win32Helper
 
     [LibraryImport("user32.dll", EntryPoint = "RegisterWindowMessageW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     public static partial uint RegisterWindowMessage(string lpString);
+
+    private const uint MB_YESNO = 0x00000004;
+    private const uint MB_ICONWARNING = 0x00000030;
+    private const int IDYES = 6;
+
+    [LibraryImport("user32.dll", EntryPoint = "MessageBoxW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    private static partial int MessageBox(IntPtr hWnd, string lpText, string lpCaption, uint uType);
+
+    /// <summary>
+    /// Shows the shell-style warning that changing a file extension may make
+    /// the file unusable. Returns true only when the user explicitly picks
+    /// Yes; No, closing the dialog, and Escape all decline the rename.
+    /// </summary>
+    public static bool ConfirmExtensionChange(IntPtr ownerHandle, string message, string caption)
+    {
+        int choice = MessageBox(ownerHandle, message, caption, MB_YESNO | MB_ICONWARNING);
+        return choice == IDYES;
+    }
 
     public const uint GA_ROOT = 2;
     public const uint GA_ROOTOWNER = 3;
@@ -959,14 +994,37 @@ public static partial class Win32Helper
     // ────────────────────────────────────────────────────────────────
 
     /// <summary>
+    /// Shared flag set for same-band Z-order moves that raise a window
+    /// (TOPMOST / NOTOPMOST / TOP). <c>SWP_NOOWNERZORDER</c> is mandatory here:
+    /// resting widgets are owned by Explorer's <c>SHELLDLL_DefView</c> so Win+D
+    /// cannot hide them, and without this flag Windows also repositions that
+    /// shared owner, which drags every other widget of the owner group along.
+    /// The observable damage was a permanently scrambled widget chain
+    /// (peer-order passes reported <c>kept=1</c> of 12) plus a DeferWindowPos
+    /// burst large enough to stall DWM in the middle of a capsule morph.
+    /// <para>
+    /// It must NOT be used for <c>HWND_BOTTOM</c> placement. A raise always
+    /// leaves an owned window above its owner, but sinking one to the bottom
+    /// only stays visible because Windows moves the owner down with it - block
+    /// that and the widget lands underneath the desktop wallpaper and renders
+    /// blank until the next Z-order pass lifts it back.
+    /// </para>
+    /// </summary>
+    private const uint ZOrderRaiseFlags =
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+
+    private const uint ZOrderBottomFlags =
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+
+    /// <summary>
     /// Push a window to the bottom of the Z-order so it sits at desktop level.
     /// </summary>
     public static void SetWindowToBottom(IntPtr hWnd)
     {
         bool r1 = SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            ZOrderRaiseFlags);
         bool r2 = SetWindowPos(hWnd, HWND_BOTTOM, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            ZOrderBottomFlags);
         App.LogVerbose($"[ZOrder] SetWindowToBottom hwnd=0x{hWnd.ToInt64():X} r1={r1} r2={r2}");
     }
 
@@ -977,7 +1035,7 @@ public static partial class Win32Helper
     public static void SetWindowToDesktopLevel(IntPtr hWnd)
     {
         bool r = SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            ZOrderRaiseFlags);
         App.Log($"[ZOrder] SetWindowToDesktopLevel hwnd=0x{hWnd.ToInt64():X} r={r}");
     }
 
@@ -987,7 +1045,7 @@ public static partial class Win32Helper
     public static void BringWindowToFront(IntPtr hWnd)
     {
         SetWindowPos(hWnd, HWND_TOP, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            ZOrderRaiseFlags | SWP_SHOWWINDOW);
     }
 
     /// <summary>
@@ -1008,7 +1066,7 @@ public static partial class Win32Helper
         IntPtr hWnd,
         bool showWindow)
     {
-        uint flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+        uint flags = ZOrderRaiseFlags;
         if (showWindow)
         {
             flags |= SWP_SHOWWINDOW;
@@ -1033,7 +1091,7 @@ public static partial class Win32Helper
     /// </summary>
     public static void SetWindowTopMost(IntPtr hWnd, bool showWindow)
     {
-        uint flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+        uint flags = ZOrderRaiseFlags;
         if (showWindow)
         {
             flags |= SWP_SHOWWINDOW;
@@ -1049,7 +1107,19 @@ public static partial class Win32Helper
     public static void ClearWindowTopMost(IntPtr hWnd)
     {
         SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            ZOrderRaiseFlags);
+    }
+
+    /// <summary>
+    /// Insert a window directly below another window, leaving the shared owner
+    /// where it is. This is the quiet alternative to <see cref="SetWindowToBottom"/>
+    /// for a window that only needs to rejoin a band it already belongs to:
+    /// HWND_BOTTOM has to let Windows move the owner (see
+    /// <c>ZOrderBottomFlags</c>), and that re-stacks every window sharing it.
+    /// </summary>
+    public static bool PlaceWindowBelow(IntPtr hWnd, IntPtr insertAfter)
+    {
+        return SetWindowPos(hWnd, insertAfter, 0, 0, 0, 0, ZOrderRaiseFlags);
     }
 
     public static bool IsWindowTopMost(IntPtr hWnd)
@@ -1153,6 +1223,29 @@ public static partial class Win32Helper
     public static partial int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int pvAttribute, int cbAttribute);
 
     [LibraryImport("dwmapi.dll")]
+    public static partial int DwmGetWindowAttribute(IntPtr hwnd, int attr, ref int pvAttribute, int cbAttribute);
+
+    /// <summary>
+    /// Reads the DWM cloak state of a window. Returns -1 when dwmapi is
+    /// unavailable or the call fails; otherwise the raw DWMWA_CLOAK value
+    /// (0 visible, 1 cloaked).
+    /// </summary>
+    public static int TryGetDwmCloakState(IntPtr hwnd)
+    {
+        try
+        {
+            int cloaked = 0;
+            int result = DwmGetWindowAttribute(hwnd, DWMWA_CLOAK, ref cloaked, sizeof(int));
+            return result != 0 ? -1 : cloaked;
+        }
+        catch (Exception ex) when (
+            ex is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
+        {
+            return -1;
+        }
+    }
+
+    [LibraryImport("dwmapi.dll")]
     public static partial int DwmFlush();
 
     /// <summary>
@@ -1242,6 +1335,36 @@ public static partial class Win32Helper
         };
 
         DwmExtendFrameIntoClientArea(hWnd, ref margins);
+    }
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetCurrentProcess();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetProcessWorkingSetSize(
+        IntPtr hProcess,
+        IntPtr dwMinWorkingSetSize,
+        IntPtr dwMaxWorkingSetSize);
+
+    /// <summary>
+    /// Pages the whole working set out (same effect as minimizing a window).
+    /// Only safe to call while every widget is hidden and the user is idle:
+    /// touched pages fault back in afterwards, which would jitter interaction
+    /// or frame pacing if anything were visible at the time.
+    /// </summary>
+    public static bool TrimWorkingSet()
+    {
+        try
+        {
+            return SetProcessWorkingSetSize(
+                GetCurrentProcess(),
+                (IntPtr)(-1),
+                (IntPtr)(-1));
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>

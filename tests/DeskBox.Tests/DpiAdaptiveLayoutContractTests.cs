@@ -5,21 +5,46 @@ namespace DeskBox.Tests;
 public sealed class DpiAdaptiveLayoutContractTests
 {
     [Fact]
-    public void FileIconTiles_UseMeasuredHeightAsTheAuthority()
+    public void FileIconTiles_UseExplicitUniformWrapGridCells()
     {
         XDocument document = XDocument.Load(TestPaths.FromRepository(
             "src/DeskBox/Controls/WidgetContents/FileSurfaceContent.xaml"));
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
         XElement itemSlot = document.Descendants()
             .Single(element => (string?)element.Attribute("Tag") == "ItemSlot");
+        XElement itemsGrid = document.Descendants()
+            .Single(element =>
+                (string?)element.Attribute(x + "Name") == "ItemsGrid");
+        XElement itemsPanel = itemsGrid.Descendants()
+            .Single(element => element.Name.LocalName == "ItemsWrapGrid");
+        string textScalingCode = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Controls/WidgetContents/FileSurfaceContent.TextScaling.cs"));
         XElement stackSurface = document.Descendants()
             .Single(element =>
                 (string?)element.Attribute("Tag") == "StackSurface" &&
                 (string?)element.Attribute("MinHeight") == "{Binding TileHeight}");
 
-        Assert.Null(itemSlot.Attribute("Height"));
+        Assert.Null(itemSlot.Attribute("MinHeight"));
         Assert.Equal(
             "{Binding DataContext.IconTileHeight, ElementName=ItemsGrid}",
-            (string?)itemSlot.Attribute("MinHeight"));
+            (string?)itemSlot.Attribute("Height"));
+        Assert.Null(itemsPanel.Attribute("ItemWidth"));
+        Assert.Null(itemsPanel.Attribute("ItemHeight"));
+        Assert.Equal(
+            "ItemsGrid_UniformPanelLoaded",
+            (string?)itemsGrid.Attribute("Loaded"));
+        Assert.Contains(
+            "panel.ItemWidth = ViewModel.IconCellWidth;",
+            textScalingCode,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "panel.ItemHeight = ViewModel.IconCellHeight;",
+            textScalingCode,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ViewModel.PropertyChanged += FileSurfaceContent_LayoutPropertyChanged;",
+            textScalingCode,
+            StringComparison.Ordinal);
         Assert.Null(stackSurface.Attribute("Height"));
         Assert.Equal("{Binding TileHeight}", (string?)stackSurface.Attribute("MinHeight"));
     }
@@ -35,10 +60,6 @@ public sealed class DpiAdaptiveLayoutContractTests
             "src/DeskBox/Controls/WidgetShell.xaml.cs"));
         string switcher = File.ReadAllText(TestPaths.FromRepository(
             "src/DeskBox/Controls/WidgetGroupTitleSwitcher.xaml"));
-        string quickCapture = File.ReadAllText(TestPaths.FromRepository(
-            "src/DeskBox/Views/QuickCaptureWidgetWindow.xaml"));
-        string quickCaptureCode = File.ReadAllText(TestPaths.FromRepository(
-            "src/DeskBox/Views/QuickCaptureWidgetWindow.Appearance.cs"));
 
         Assert.Equal("Auto", (string?)titleRow.Attribute("Height"));
         Assert.Equal("46", (string?)titleRow.Attribute("MinHeight"));
@@ -46,9 +67,6 @@ public sealed class DpiAdaptiveLayoutContractTests
         Assert.Contains("ShellRoot.RowDefinitions[0].MinHeight", shellCode, StringComparison.Ordinal);
         Assert.Contains("MinHeight=\"32\"", switcher, StringComparison.Ordinal);
         Assert.DoesNotContain("x:Name=\"Root\"\r\n        Height=\"32\"", switcher, StringComparison.Ordinal);
-        Assert.Contains("<RowDefinition Height=\"Auto\" MinHeight=\"46\" />", quickCapture, StringComparison.Ordinal);
-        Assert.Contains("RootGrid.RowDefinitions[0].MinHeight", quickCaptureCode, StringComparison.Ordinal);
-        Assert.Contains("RootGrid.RowDefinitions[0].Height = GridLength.Auto", quickCaptureCode, StringComparison.Ordinal);
     }
 
     [Fact]

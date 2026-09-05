@@ -8,6 +8,8 @@ using Microsoft.UI;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using System.Diagnostics;
 using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
@@ -22,10 +24,13 @@ using WinRT.Interop;
 namespace DeskBox.Views;
 
 /// <summary>
-/// Shared base class for all desktop widget windows (file, content, quick-capture).
+/// Shared base class for all desktop widget windows (file, content,
+/// quick-capture surfaces).
 /// Consolidates window setup, backdrop management, layer/Z-order control,
 /// drag/resize logic, and display-change restoration that was previously
-/// duplicated across ContentWidgetWindow and QuickCaptureWidgetWindow.
+/// duplicated across host implementations. (DEF-027: the dedicated
+/// QuickCaptureWidgetWindow host was removed; QuickCapture runs on the
+/// shared ContentWidgetWindow path.)
 /// </summary>
 public abstract partial class WidgetWindowBase : Window
 {
@@ -45,14 +50,14 @@ public abstract partial class WidgetWindowBase : Window
     protected AppWindow AppWindow = null!;
     protected WidgetWindowDiagnostics Diagnostics = null!;
     protected WidgetTrayAnimationController TrayAnimation = null!;
-    
-    // Smart Animation Adapter - for future enhancement
-    private static SmartAnimationAdapter? _smartAdapter;
-    
+
     /// <summary>
-    /// 智能动画适配器（静态访问点）
+    /// True while the tray animation controller holds the window DWM-cloaked
+    /// for an intentional tray hide. The Show Desktop self-heal skips such
+    /// windows so it never undoes a deliberate hide.
     /// </summary>
-    public static SmartAnimationAdapter? SmartAnimationAdapter => _smartAdapter;
+    internal bool IsTrayCloakActive => TrayAnimation.IsCloakedForTrayShow;
+
     internal WidgetDisplayChangeWatcher? DisplayChangeWatcher;
 
     // ── Protected state: backdrop controllers ──────────────────
@@ -64,8 +69,6 @@ public abstract partial class WidgetWindowBase : Window
     private bool _isInteractionBackdropDowngraded;
     private Windows.UI.Color _lastLegacyAccentTintColor;
     private double _lastLegacyAccentOpacity;
-    private bool? _acrylicControllerUsesBase;
-    private bool? _micaControllerUsesAlt;
     private BackdropSignature? _lastAppliedBackdropSignature;
     private WinUIEx.TransparentTintBackdrop? _solidColorBackdrop;
     protected SystemBackdropConfiguration? BackdropConfiguration;
@@ -90,6 +93,13 @@ public abstract partial class WidgetWindowBase : Window
     protected SizeInt32 InitialWindowSize;
     protected FrameworkElement? DragCaptureElement;
     private bool _isCoordinatedMoveDrag;
+    // A title-bar or drag-handle press only *arms* a drag. Every side effect
+    // that the shell can see - the Z-order raise, the backdrop downgrade, the
+    // snap-guide session - waits until the pointer actually crosses the move
+    // threshold, so a plain click leaves the whole widget group untouched.
+    private bool _isWindowDragEngaged;
+    private bool _windowDragRequestsCoordinatedMove;
+    private bool _windowDragActivatesTitleGroup;
     private bool _deferTitleBarDragConfigUpdates;
     private bool _deferInteractiveResizeConfigUpdates;
     private PendingTitleBarDragFrame? _pendingTitleBarDragFrame;
@@ -128,25 +138,6 @@ public abstract partial class WidgetWindowBase : Window
     /// </summary>
     protected WidgetWindowBase()
     {
-        // 初始化智能动画适配器（只在第一次）
-        if (_smartAdapter is null)
-        {
-            try
-            {
-                _smartAdapter = new SmartAnimationAdapter(
-                    DispatcherQueue.GetForCurrentThread(),
-                    msg => Debug.WriteLine($"[SmartAnimation] {msg}"));
-                
-                var level = _smartAdapter.GetCurrentHardwareLevel();
-                Debug.WriteLine($"[SmartAnimation] Hardware Level: {level}");
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[SmartAnimation] Failed to initialize: {ex.Message}");
-                // 回退到默认模式
-                _smartAdapter = null;
-            }
-        }
     }
 
     // ── Abstract members: each subclass must provide ───────────
@@ -221,8 +212,37 @@ public abstract partial class WidgetWindowBase : Window
     protected virtual bool HasBlockingFlyoutOpen()
     {
         XamlRoot? xamlRoot = RootElement.XamlRoot;
-        return xamlRoot is not null &&
-            VisualTreeHelper.GetOpenPopupsForXamlRoot(xamlRoot).Count > 0;
+        if (xamlRoot is null)
+        {
+            return false;
+        }
+
+        foreach (Popup popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(xamlRoot))
+        {
+            if (IsToolTipPopup(popup))
+            {
+                // ToolTips are non-interactive previews. Counting them as a
+                // blocking surface let a stationary pointer keep its own
+                // tooltip open and defer hover expansion until the pointer
+                // left the capsule, which surfaced as "hover stops responding
+                // until a click on the desktop".
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsToolTipPopup(Popup popup)
+    {
+        if (popup.Child is ToolTip)
+        {
+            return true;
+        }
+
+        return popup.Child is FrameworkElement { Parent: ToolTip };
     }
 
     /// <summary>Allows hosts with custom title bars to update collapse actions.</summary>

@@ -666,20 +666,15 @@ public sealed class SettingsCopyAndHierarchyTests
     }
 
     [Fact]
-    public void QuickCapturePreviewLineCount_IsBoundInBothWindowHosts()
+    public void QuickCapturePreviewLineCount_IsBoundInSharedSurface()
     {
+        // DEF-027: the standalone window host was removed; the shared surface
+        // carries the setting.
         string root = FindRepositoryRoot();
-        string standaloneWindow = File.ReadAllText(Path.Combine(
-            root,
-            "src/DeskBox/Views/QuickCaptureWidgetWindow.xaml"));
         string sharedSurface = File.ReadAllText(Path.Combine(
             root,
             "src/DeskBox/Controls/WidgetContents/QuickCaptureSurfaceContent.xaml"));
 
-        Assert.Contains(
-            "MaxLines=\"{Binding ElementName=ItemsListView, Path=DataContext.ItemPreviewLineCount}\"",
-            standaloneWindow,
-            StringComparison.Ordinal);
         Assert.Contains(
             "MaxLines=\"{Binding ElementName=ItemsList, Path=DataContext.ItemPreviewLineCount}\"",
             sharedSurface,
@@ -688,6 +683,34 @@ public sealed class SettingsCopyAndHierarchyTests
             "TextSize}\" MaxLines=\"3\"",
             sharedSurface,
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ManagedStorageDesktopShortcutUsesActualStatusAndExplicitActions()
+    {
+        string root = FindRepositoryRoot();
+        string windowXaml = File.ReadAllText(Path.Combine(
+            root,
+            "src/DeskBox/Views/SettingsWindow.xaml"));
+        string storageCode = File.ReadAllText(Path.Combine(
+            root,
+            "src/DeskBox/Views/SettingsWindow.StorageAndUpdates.cs"));
+
+        Assert.Contains(
+            "x:Name=\"ManagedStorageDesktopShortcutStatusText\"",
+            windowXaml,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "Click=\"ManagedStorageDesktopShortcutActionButton_Click\"",
+            windowXaml,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "IsOn=\"{Binding ManagedStorageDesktopShortcutEnabled",
+            windowXaml,
+            StringComparison.Ordinal);
+        Assert.Contains("shortcutService.HasShortcut()", storageCode, StringComparison.Ordinal);
+        Assert.Contains("shortcutService.CreateAsync()", storageCode, StringComparison.Ordinal);
+        Assert.Contains("shortcutService.RemoveAsync()", storageCode, StringComparison.Ordinal);
     }
 
     private static string SliceSection(string xaml, string startToken, string endToken)

@@ -14,6 +14,9 @@ public sealed class ThemeService
     public const string AccentModeCustom = "Custom";
 
     private readonly SettingsService _settingsService;
+    // UI-thread owned: TrackWindow/OnTrackedWindowClosed/ApplyToAllWindows
+    // run on the UI thread by the repo-wide convention (all RefreshAppearance
+    // callers are UI-thread), so this list is never mutated concurrently.
     private readonly List<Window> _trackedWindows = new();
     private readonly Windows.UI.ViewManagement.UISettings _uiSettings = new();
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _appearanceDebounceTimer;
@@ -205,8 +208,47 @@ public sealed class ThemeService
 
     public void RefreshAppearance()
     {
+        // ApplyToAllWindows reads window.Content and the broadcast reaches
+        // subscribers without dispatch protection, so the refresh must run
+        // on the UI thread (DEF-010: startup once pushed it to a thread-pool
+        // thread). Re-post instead of touching XAML objects cross-thread.
+        if (App.UiDispatcherQueue is { HasThreadAccess: false } dispatcherQueue)
+        {
+            _ = dispatcherQueue.TryEnqueue(RefreshAppearance);
+            return;
+        }
+
         ApplyToAllWindows();
-        AppearanceChanged?.Invoke();
+        RaiseAppearanceChanged();
         App.ScheduleLightMemoryCleanup();
+    }
+
+    /// <summary>
+    /// DEF-019 (EVT-01): broadcast with per-handler exception isolation,
+    /// mirroring LocalizationService.RaiseLanguageChanged. Without the
+    /// snapshot + isolation, one throwing subscriber silently truncated the
+    /// notification for every later subscriber — leaving half the UI on the
+    /// previous theme with no diagnostic trail.
+    /// </summary>
+    private void RaiseAppearanceChanged()
+    {
+        if (AppearanceChanged is null)
+        {
+            return;
+        }
+
+        foreach (var handler in AppearanceChanged.GetInvocationList())
+        {
+            try
+            {
+                ((Action)handler).Invoke();
+            }
+            catch (Exception ex)
+            {
+                App.Log(
+                    "[ThemeService] AppearanceChanged handler " +
+                    $"'{handler.Method.DeclaringType?.Name}.{handler.Method.Name}' threw: {ex.Message}");
+            }
+        }
     }
 }

@@ -147,10 +147,9 @@ public sealed partial class SettingsWindow
         }
 
         bool applied;
-        int errorCode = 0;
         if (App.Current.DesktopDoubleClickActivationService is { } service)
         {
-            applied = service.TrySetEnabled(toggle.IsOn, out errorCode);
+            applied = await service.TrySetEnabledAsync(toggle.IsOn);
         }
         else
         {
@@ -161,8 +160,8 @@ public sealed partial class SettingsWindow
 
         if (!applied)
         {
-            App.Log($"[DesktopDoubleClick] Settings toggle failed error={errorCode}");
-            await ShowInfoDialogAsync(
+            App.Log("[DesktopDoubleClick] Settings toggle failed");
+            _ = ShowInfoDialogAsync(
                 _localizationService.T("Settings.GlobalHotkey.Dialog.FailedTitle"),
                 _localizationService.T("Settings.DesktopDoubleClick.Status.Unavailable"));
         }
@@ -443,11 +442,12 @@ public sealed partial class SettingsWindow
             return;
         }
 
-        if (!hotkeyService.TryApplyActivation(activation, out string? error))
+        GlobalHotkeyService.HotkeyApplyResult result = await hotkeyService.TryApplyActivationAsync(activation);
+        if (!result.Succeeded)
         {
-            await ShowInfoDialogAsync(
+            _ = ShowInfoDialogAsync(
                 _localizationService.T("Settings.GlobalHotkey.Dialog.FailedTitle"),
-                error ?? _localizationService.T("Settings.GlobalHotkey.Status.Unregistered"));
+                result.Error ?? _localizationService.T("Settings.GlobalHotkey.Status.Unregistered"));
         }
 
         ViewModel.RefreshGlobalHotkeyState();

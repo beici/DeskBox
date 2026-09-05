@@ -3,6 +3,7 @@ using DeskBox.Helpers;
 using DeskBox.Models;
 using DeskBox.Services;
 using DeskBox.ViewModels;
+using DeskBox.Views;
 using System.ComponentModel;
 using System.Globalization;
 using Microsoft.UI;
@@ -71,6 +72,7 @@ public sealed partial class QuickCaptureSurfaceContent :
     private long _detailSavedRevision;
     private long _detailImageLoadVersion;
     private string? _detailPrimaryImagePath;
+    private long _detailPrimaryImageEstimatedBytes;
     private string? _detailAttachmentRenderKey;
     private bool _isSynchronizingViewSelection;
     private long _viewSwitchRevision;
@@ -149,8 +151,316 @@ public sealed partial class QuickCaptureSurfaceContent :
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
         ActualThemeChanged += QuickCaptureSurfaceContent_ActualThemeChanged;
+        ApplyClipboardItemColors();
         UpdateSelectedViewVisual();
     }
+
+    /// <summary>
+    /// Applies the clipboard record list colors resolved from
+    /// <see cref="QuickCaptureClipboardColorSettings"/>. Follow-theme mode
+    /// reuses the theme text color and the theme card sentinel; custom modes
+    /// write the stored colors into the two dedicated brushes referenced by
+    /// the record list template.
+    /// </summary>
+    internal void ApplyClipboardItemColors()
+    {
+        Windows.UI.Color textColor = default;
+        bool textCustom =
+            QuickCaptureClipboardColorSettings.GetTextModeOverride(ViewModel.Config) ==
+                QuickCaptureClipboardColorSettings.ModeCustom &&
+            QuickCaptureClipboardColorSettings.TryGetTextColorOverride(ViewModel.Config, out textColor);
+
+        if (Resources.TryGetValue(
+                "QuickCaptureClipboardItemForegroundBrush",
+                out object? textBrushObject) &&
+            textBrushObject is SolidColorBrush textBrush)
+        {
+            textBrush.Color = textCustom
+                ? textColor
+                : ResolveClipboardThemeTextColor();
+        }
+        else
+        {
+            textCustom = false;
+        }
+        if (Resources.TryGetValue(
+                "QuickCaptureClipboardItemSecondaryBrush",
+                out object? secondaryBrushObject) &&
+            secondaryBrushObject is SolidColorBrush secondaryBrush)
+        {
+            secondaryBrush.Color = textCustom
+                ? Windows.UI.Color.FromArgb(0xE8, textColor.R, textColor.G, textColor.B)
+                : ResolveClipboardThemeSecondaryTextColor();
+        }
+
+        ApplyHoverTextColor();
+
+        if (Resources.TryGetValue(
+                "QuickCaptureClipboardItemBackgroundBrush",
+                out object? backgroundBrushObject) &&
+            backgroundBrushObject is SolidColorBrush backgroundBrush &&
+            Resources.TryGetValue(
+                "QuickCaptureClipboardItemCardThemeBrush",
+                out object? themeCardObject) &&
+            themeCardObject is SolidColorBrush themeCardBrush)
+        {
+            backgroundBrush.Color =
+                QuickCaptureClipboardColorSettings.GetBackgroundModeOverride(ViewModel.Config) ==
+                    QuickCaptureClipboardColorSettings.ModeCustom &&
+                QuickCaptureClipboardColorSettings.TryGetBackgroundColorOverride(ViewModel.Config, out Windows.UI.Color backgroundColor)
+                    ? backgroundColor
+                    : themeCardBrush.Color;
+        }
+
+        // DEF-013: a saved pair is only validated at save time; the
+        // follow-theme channel's effective color changes with the theme while
+        // the custom channel stays fixed, so the pair can silently fall below
+        // the readability threshold this feature exists to enforce. Re-check
+        // the effective pair on every application and fall back to
+        // follow-theme for the background channel when it breaks.
+        bool backgroundCustom =
+            QuickCaptureClipboardColorSettings.GetBackgroundModeOverride(ViewModel.Config) ==
+                QuickCaptureClipboardColorSettings.ModeCustom &&
+            QuickCaptureClipboardColorSettings.TryGetBackgroundColorOverride(ViewModel.Config, out _);
+        if (textCustom && backgroundCustom)
+        {
+            double contrastRatio = QuickCaptureClipboardColorSettings.ContrastRatio(
+                ResolveClipboardItemEffectiveTextColor(),
+                ResolveClipboardItemEffectiveBackgroundColor());
+            if (contrastRatio < QuickCaptureClipboardColorSettings.MinimumContrastRatio)
+            {
+                QuickCaptureClipboardColorSettings.SetBackgroundModeOverride(
+                    ViewModel.Config,
+                    QuickCaptureClipboardColorSettings.ModeFollowTheme);
+                _settingsService.UpdateWidget(ViewModel.Config);
+                App.Log(
+                    "[QuickCapture] Clipboard record colors fell below the contrast " +
+                    $"threshold (ratio={contrastRatio:F2}) after a theme change; " +
+                    "background fell back to follow-theme");
+                ApplyClipboardItemColors();
+                return;
+            }
+        }
+
+        // The background override also outranks per-record material presets;
+        // repaint already-realized cards now instead of waiting for their
+        // next Loaded/DataContextChanged pass.
+        if (QuickCaptureClipboardColorSettings.GetBackgroundModeOverride(ViewModel.Config) ==
+                QuickCaptureClipboardColorSettings.ModeCustom)
+        {
+            RefreshItemMaterialSurfaces();
+        }
+    }
+
+    private Windows.UI.Color ResolveClipboardThemeSecondaryTextColor()
+    {
+        return TryGetThemeColor("TextFillColorSecondary", out Windows.UI.Color themeSecondary)
+            ? themeSecondary
+            : Windows.UI.Color.FromArgb(0xCC, 0xFF, 0xFF, 0xFF);
+    }
+
+    /// <summary>
+    /// Hovered record text color: the custom channel follows the same
+    /// contrast-validated palette as the static text, and the follow-theme
+    /// channel auto-picks white/black against the effective card background
+    /// so a hover can never dissolve the text into the card (the system
+    /// ListViewItem hover foreground is theme-driven only and did exactly
+    /// that on light cards under the dark panel theme).
+    /// </summary>
+    private void ApplyHoverTextColor()
+    {
+        if (!Resources.TryGetValue(
+                "QuickCaptureClipboardItemHoverForegroundBrush",
+                out object? hoverBrushObject) ||
+            hoverBrushObject is not SolidColorBrush hoverBrush)
+        {
+            return;
+        }
+
+        if (QuickCaptureClipboardColorSettings.GetHoverTextModeOverride(ViewModel.Config) ==
+                QuickCaptureClipboardColorSettings.ModeCustom &&
+            QuickCaptureClipboardColorSettings.TryGetHoverTextColorOverride(
+                ViewModel.Config,
+                out Windows.UI.Color hoverOverride))
+        {
+            hoverBrush.Color = hoverOverride;
+            return;
+        }
+
+        hoverBrush.Color = QuickCaptureClipboardColorSettings.ResolveAutoHoverTextColor(
+            ResolveClipboardItemEffectiveBackgroundColor());
+    }
+
+    /// <summary>
+    /// PointerEntered/Exited on the record title TextBlock itself: the text
+    /// carries an explicit Foreground so the ListViewItem template's hover
+    /// state can never repaint it, and swapping between the two shared
+    /// brushes here is the single writer for the hover color. A card-level
+    /// handler raced the template's own state animation for ownership of the
+    /// same property and visibly flickered.
+    /// </summary>
+    private void QuickCaptureItemText_PointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is TextBlock displayText &&
+            Resources.TryGetValue(
+                "QuickCaptureClipboardItemHoverForegroundBrush",
+                out object? hoverBrushObject) &&
+            hoverBrushObject is SolidColorBrush hoverBrush)
+        {
+            displayText.Foreground = hoverBrush;
+        }
+    }
+
+    private void QuickCaptureItemText_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        if (sender is TextBlock displayText &&
+            Resources.TryGetValue(
+                "QuickCaptureClipboardItemForegroundBrush",
+                out object? textBrushObject) &&
+            textBrushObject is SolidColorBrush textBrush)
+        {
+            displayText.Foreground = textBrush;
+        }
+    }
+
+    private Windows.UI.Color ResolveClipboardThemeTextColor()
+    {
+        return Resources.TryGetValue(
+                "QuickCaptureClipboardItemForegroundBrush",
+                out object? textBrushObject) &&
+            textBrushObject is SolidColorBrush textBrush &&
+            TryGetThemeColor("TextFillColorPrimary", out Windows.UI.Color themeText)
+            ? themeText
+            : (ActualTheme == ElementTheme.Dark
+                ? Windows.UI.Color.FromArgb(0xFF, 0xF5, 0xF5, 0xF5)
+                : Windows.UI.Color.FromArgb(0xFF, 0x1A, 0x1A, 0x1A));
+    }
+
+    private static bool TryGetThemeColor(string resourceKey, out Windows.UI.Color color)
+    {
+        color = default;
+        if (App.Current.Resources.TryGetValue(resourceKey, out object? value) &&
+            value is Windows.UI.Color themeColor)
+        {
+            color = themeColor;
+            return true;
+        }
+
+        // Theme resources are often brushes rather than raw colors.
+        if (App.Current.Resources.TryGetValue(resourceKey + "Brush", out object? brushValue) &&
+            brushValue is SolidColorBrush themeBrush)
+        {
+            color = Windows.UI.Color.FromArgb(
+                themeBrush.Color.A,
+                themeBrush.Color.R,
+                themeBrush.Color.G,
+                themeBrush.Color.B);
+            return true;
+        }
+
+        return false;
+    }
+
+    private Windows.UI.Color ResolveClipboardItemEffectiveTextColor()
+    {
+        return Resources.TryGetValue(
+                "QuickCaptureClipboardItemForegroundBrush",
+                out object? textBrushObject) &&
+            textBrushObject is SolidColorBrush textBrush
+            ? textBrush.Color
+            : ResolveClipboardThemeTextColor();
+    }
+
+    private Windows.UI.Color ResolveClipboardItemEffectiveBackgroundColor()
+    {
+        return Resources.TryGetValue(
+                "QuickCaptureClipboardItemBackgroundBrush",
+                out object? backgroundBrushObject) &&
+            backgroundBrushObject is SolidColorBrush backgroundBrush
+            ? backgroundBrush.Color
+            : Microsoft.UI.Colors.Transparent;
+    }
+
+    internal async Task ShowClipboardItemColorPickerAsync(
+        bool isBackground,
+        bool isHoverText = false)
+    {
+        if (XamlRoot is null)
+        {
+            return;
+        }
+
+        await QuickCaptureClipboardColorEditor.ShowAsync(
+            ViewModel.Config,
+            _settingsService,
+            XamlRoot,
+            _localizationService,
+            isBackground,
+            ResolveClipboardItemEffectiveTextColor(),
+            ResolveClipboardItemEffectiveBackgroundColor(),
+            isHoverText,
+            ResolveClipboardItemEffectiveHoverTextColor());
+        ApplyClipboardItemColors();
+    }
+
+    private Windows.UI.Color ResolveClipboardItemEffectiveHoverTextColor()
+    {
+        return Resources.TryGetValue(
+                "QuickCaptureClipboardItemHoverForegroundBrush",
+                out object? hoverBrushObject) &&
+            hoverBrushObject is SolidColorBrush hoverBrush
+            ? hoverBrush.Color
+            : QuickCaptureClipboardColorSettings.ResolveAutoHoverTextColor(
+                ResolveClipboardItemEffectiveBackgroundColor());
+    }
+
+    internal void SetClipboardItemFollowTheme(bool isBackground)
+    {
+        if (isBackground)
+        {
+            QuickCaptureClipboardColorSettings.SetBackgroundModeOverride(
+                ViewModel.Config,
+                QuickCaptureClipboardColorSettings.ModeFollowTheme);
+        }
+        else
+        {
+            QuickCaptureClipboardColorSettings.SetTextModeOverride(
+                ViewModel.Config,
+                QuickCaptureClipboardColorSettings.ModeFollowTheme);
+        }
+
+        _settingsService.UpdateWidget(ViewModel.Config);
+        ApplyClipboardItemColors();
+    }
+
+    internal void ResetClipboardItemColors()
+    {
+        QuickCaptureClipboardColorSettings.ResetOverrides(ViewModel.Config);
+        _settingsService.UpdateWidget(ViewModel.Config);
+        ApplyClipboardItemColors();
+    }
+
+    internal bool IsClipboardItemTextCustom =>
+        QuickCaptureClipboardColorSettings.GetTextModeOverride(ViewModel.Config) ==
+        QuickCaptureClipboardColorSettings.ModeCustom;
+
+    internal bool IsClipboardItemBackgroundCustom =>
+        QuickCaptureClipboardColorSettings.GetBackgroundModeOverride(ViewModel.Config) ==
+        QuickCaptureClipboardColorSettings.ModeCustom;
+
+    internal bool IsClipboardItemHoverTextCustom =>
+        QuickCaptureClipboardColorSettings.GetHoverTextModeOverride(ViewModel.Config) ==
+        QuickCaptureClipboardColorSettings.ModeCustom;
+
+    internal void SetClipboardItemHoverTextFollowTheme()
+    {
+        QuickCaptureClipboardColorSettings.SetHoverTextModeOverride(
+            ViewModel.Config,
+            QuickCaptureClipboardColorSettings.ModeFollowTheme);
+        _settingsService.UpdateWidget(ViewModel.Config);
+        ApplyClipboardItemColors();
+    }
+
 
     public QuickCaptureWidgetViewModel ViewModel { get; }
 
@@ -680,7 +990,11 @@ public sealed partial class QuickCaptureSurfaceContent :
         {
             if (_isDetailEditing && _detailItem?.IsRecent != true)
             {
-                _detailContentFormat = ViewModel.EditorContentFormat;
+                // DEF-011: editing an existing record must keep that record's
+                // own format — the app-level default only applies to records
+                // that have none of their own (creation path).
+                _detailContentFormat = _detailItem?.ContentFormat ??
+                    ViewModel.EditorContentFormat;
                 RefreshDetailPresentation();
             }
             return;
@@ -1025,9 +1339,10 @@ public sealed partial class QuickCaptureSurfaceContent :
             (!_isDualPane || SettingsService.NormalizeQuickCaptureWideOpenMode(
                 _settingsService.Settings.QuickCaptureWideOpenMode) ==
                 SettingsService.QuickCaptureWideOpenEditing);
-        _detailContentFormat = _isDetailEditing
-            ? ViewModel.EditorContentFormat
-            : item.ContentFormat;
+        // DEF-011: opening an existing record keeps the record's own content
+        // format in both read and edit modes; the app-level default is only
+        // for creation (StartDetailCreation), never for existing records.
+        _detailContentFormat = item.ContentFormat;
         _detailEditRevision = 0;
         _detailSavedRevision = 0;
         _detailHasUnsavedChanges = false;
@@ -1175,7 +1490,12 @@ public sealed partial class QuickCaptureSurfaceContent :
             return false;
         }
 
-        _detailContentFormat = ViewModel.EditorContentFormat;
+        // DEF-011: entering edit mode must not silently rewrite the record's
+        // own format with the app-level default (Markdown <-> PlainText
+        // conversion is destructive and has no switch-back UI). The default
+        // applies only when the record carries no format of its own.
+        _detailContentFormat = _detailItem?.ContentFormat ??
+            ViewModel.EditorContentFormat;
         SetDetailEditorText(_detailItem?.Body ?? string.Empty);
         _isDetailEditing = true;
         RefreshDetailPresentation();
@@ -1820,6 +2140,7 @@ public sealed partial class QuickCaptureSurfaceContent :
             ? null
             : imagePath;
         DetailPrimaryImage.Source = null;
+        SetDetailPrimaryImageEstimatedBytes(0);
 
         bool hasPrimaryImage = _detailPrimaryImagePath is not null;
         bool showDetailText = _isDetailEditing ||
@@ -1851,6 +2172,11 @@ public sealed partial class QuickCaptureSurfaceContent :
             }
 
             DetailPrimaryImage.Source = bitmap;
+            PerformanceLogger.RecordQuickCaptureDetailImageDecode();
+            SetDetailPrimaryImageEstimatedBytes(
+                (long)DetailImageDecodePixelWidth *
+                DetailImageDecodePixelWidth *
+                4);
             DetailPrimaryImageLoadingRing.IsActive = false;
             DetailPrimaryImageLoadingRing.Visibility = Visibility.Collapsed;
         }
@@ -1867,6 +2193,18 @@ public sealed partial class QuickCaptureSurfaceContent :
             DetailPrimaryImageLoadingRing.Visibility = Visibility.Collapsed;
             ApplyDetailPrimaryImageLayout(hasPrimaryImage: false, showDetailText: true);
             RefreshDetailPresentation();
+        }
+    }
+
+    private void SetDetailPrimaryImageEstimatedBytes(long estimatedBytes)
+    {
+        long normalizedBytes = Math.Max(0, estimatedBytes);
+        long delta = normalizedBytes - _detailPrimaryImageEstimatedBytes;
+        _detailPrimaryImageEstimatedBytes = normalizedBytes;
+        if (delta != 0)
+        {
+            PerformanceLogger.AdjustQuickCaptureDetailImageEstimatedBytes(
+                delta);
         }
     }
 
@@ -2429,6 +2767,7 @@ public sealed partial class QuickCaptureSurfaceContent :
             RequestedOperation = DataPackageOperation.Copy
         };
         dataPackage.SetText(text);
+        DeskBoxClipboardWriteScope.MarkWrite(text: text);
         Clipboard.SetContent(dataPackage);
         Clipboard.Flush();
         RaiseFeedback(
@@ -2974,6 +3313,7 @@ public sealed partial class QuickCaptureSurfaceContent :
 
         ApplyDetailMaterialSurface();
         RefreshItemMaterialSurfaces();
+        ApplyClipboardItemColors();
     }
 
     private void RefreshItemMaterialSurfaces()
@@ -2999,6 +3339,23 @@ public sealed partial class QuickCaptureSurfaceContent :
         Border border,
         QuickCaptureItemViewModel? item)
     {
+        // A user-selected clipboard record background outranks the per-record
+        // material preset: without this gate the per-item material pass runs
+        // on Loaded/DataContextChanged and repaints every record card back to
+        // its material color, which is exactly why custom background colors
+        // appeared to "not take effect".
+        if (QuickCaptureClipboardColorSettings.GetBackgroundModeOverride(ViewModel.Config) ==
+                QuickCaptureClipboardColorSettings.ModeCustom &&
+            QuickCaptureClipboardColorSettings.TryGetBackgroundColorOverride(ViewModel.Config, out Windows.UI.Color backgroundOverride) &&
+            Resources.TryGetValue(
+                "QuickCaptureClipboardItemBackgroundBrush",
+                out object? backgroundBrushObject) &&
+            backgroundBrushObject is SolidColorBrush customBackgroundBrush)
+        {
+            border.Background = customBackgroundBrush;
+            return;
+        }
+
         if (item is null)
         {
             border.Background = ResolveMaterialBrush(
@@ -3257,6 +3614,7 @@ public sealed partial class QuickCaptureSurfaceContent :
         _isDisposed = true;
         _detailImageLoadVersion++;
         DetailPrimaryImage.Source = null;
+        SetDetailPrimaryImageEstimatedBytes(0);
         CancelSegmentedRestore();
         Loaded -= OnLoaded;
         Unloaded -= OnUnloaded;

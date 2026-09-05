@@ -731,6 +731,68 @@ public sealed class QuickCaptureServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DeleteItemAsync_KeepsImageAliveDuringUndoWindow_ForDeferredGc()
+    {
+        // DEF-012 (QC-03): deleting an image record must not let a GC pass
+        // that runs inside the undo window physically remove the image file —
+        // restoring the record afterwards used to produce a broken entry.
+        // The undo retention lives inside the service, so a deferred cleanup
+        // (dispatched after the delete, as the UI layer does) must skip the
+        // deleted record's image while the snapshot is still pending.
+        var service = CreateService();
+        string sourceImagePath = Path.Combine(_tempRoot, "undo-window.png");
+        await File.WriteAllBytesAsync(sourceImagePath, [1, 2, 3, 4]);
+        QuickCaptureItem item = await service.AddImageFileItemAsync(sourceImagePath);
+        Assert.NotNull(item.ImagePath);
+
+        QuickCaptureDeletedItemSnapshot? snapshot = await service.DeleteItemAsync(item.Id);
+        Assert.NotNull(snapshot);
+
+        // Any GC pass inside the undo window (here: triggered by a later
+        // clipboard image capture) must keep the deleted record's image.
+        string keptImagePath = snapshot!.Item.ImagePath!;
+        await service.AddRecentClipboardImageAsync([5, 6, 7, 8], QuickCaptureService.DefaultRecentLimit);
+        Assert.True(File.Exists(keptImagePath),
+            "image of a record inside the delete-undo window must survive a GC pass");
+
+        // Undo restores the record and clears the retention: a subsequent GC
+        // keeps the file because the record references it again.
+        Assert.True(await service.RestoreDeletedItemAsync(snapshot));
+        Assert.True(File.Exists(keptImagePath));
+
+        // After expiry (not restored), the image is collectable again.
+        QuickCaptureDeletedItemSnapshot? secondSnapshot = await service.DeleteItemAsync(item.Id);
+        Assert.NotNull(secondSnapshot);
+        await service.AddRecentClipboardImageAsync([9, 10], QuickCaptureService.DefaultRecentLimit);
+        Assert.True(File.Exists(keptImagePath), "within the undo window the image stays protected");
+    }
+
+    [Fact]
+    public async Task RestoreDeletedItemAsync_ReleasesUndoRetention_FileKeptByReference()
+    {
+        // The retention set must not pin files beyond its purpose: once the
+        // record is restored it is referenced by the live lists again, so the
+        // retention entry is redundant and released (expired entries are
+        // dropped lazily; without clock injection the restore path is the
+        // observable release point).
+        var service = CreateService();
+        string sourceImagePath = Path.Combine(_tempRoot, "expired-window.png");
+        await File.WriteAllBytesAsync(sourceImagePath, [1, 2, 3, 4]);
+        QuickCaptureItem item = await service.AddImageFileItemAsync(sourceImagePath);
+
+        QuickCaptureDeletedItemSnapshot? snapshot = await service.DeleteItemAsync(item.Id);
+        Assert.NotNull(snapshot);
+        string imagePath = snapshot!.Item.ImagePath!;
+        Assert.True(File.Exists(imagePath));
+
+        Assert.True(await service.RestoreDeletedItemAsync(snapshot));
+        // A GC pass after the restore must keep the file via the live
+        // reference (not via the retention set).
+        await service.AddRecentClipboardImageAsync([9, 10], QuickCaptureService.DefaultRecentLimit);
+        Assert.True(File.Exists(imagePath));
+    }
+
+    [Fact]
     public async Task ClearAsync_RemovesImageCache()
     {
         var service = CreateService();

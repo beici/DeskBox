@@ -790,6 +790,16 @@ svc:Localized.DescriptionKey="Settings.DefaultWidth.Description"
 
                                 <toolkit:SettingsCard
                                     HorizontalContentAlignment="Right"
+                                    svc:Localized.DescriptionKey="Settings.Animation.FrameRate.Description"
+                                    svc:Localized.HeaderKey="Settings.Animation.FrameRate.Title">
+                                    <ComboBox
+                                        MinWidth="{StaticResource SettingsControlMinWidth}"
+                                        ItemsSource="{Binding AvailableWidgetFrameRateOptions}"
+                                        controls:SettingsComboBox.Value="{Binding SelectedWidgetFrameRate, Mode=TwoWay}" />
+                                </toolkit:SettingsCard>
+
+                                <toolkit:SettingsCard
+                                    HorizontalContentAlignment="Right"
                                     svc:Localized.DescriptionKey="Settings.Animation.Direction.Description"
                                     svc:Localized.HeaderKey="Settings.Animation.Direction.Title">
                                     <ComboBox
@@ -1183,11 +1193,24 @@ svc:Localized.DescriptionKey="Settings.DefaultWidth.Description"
                             HorizontalContentAlignment="Right"
                             svc:Localized.DescriptionKey="Settings.ManagedPath.DesktopShortcut.Description"
                             svc:Localized.HeaderKey="Settings.ManagedPath.DesktopShortcut.Title">
-                            <ToggleSwitch
-                                MinWidth="0"
-                                OffContent=""
-                                OnContent=""
-                                IsOn="{Binding ManagedStorageDesktopShortcutEnabled, Mode=TwoWay}" />
+                            <StackPanel
+                                HorizontalAlignment="Right"
+                                Orientation="Horizontal"
+                                Spacing="10">
+                                <TextBlock
+                                    x:Name="ManagedStorageDesktopShortcutStatusText"
+                                    VerticalAlignment="Center"
+                                    Style="{StaticResource SettingDescriptionTextStyle}" />
+                                <Button
+                                    x:Name="ManagedStorageDesktopShortcutActionButton"
+                                    Click="ManagedStorageDesktopShortcutActionButton_Click"
+                                    Style="{StaticResource ActionButtonStyle}">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon FontSize="14" Glyph="&#xE71B;" />
+                                        <TextBlock x:Name="ManagedStorageDesktopShortcutActionText" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
                         </toolkit:SettingsCard>
                     </StackPanel>
                 </StackPanel>
@@ -1808,6 +1831,52 @@ svc:Localized.DescriptionKey="Settings.DefaultWidth.Description"
                             <toolkit:SettingsExpander
                                 Tag="QuickCapture"
                                 IsEnabled="{Binding QuickCaptureEnabled}"
+                                Loaded="QuickCaptureRecordColors_Loaded"
+                                HorizontalContentAlignment="Stretch"
+                                svc:Localized.DescriptionKey="Settings.QuickCapture.RecordColors.Description"
+                                svc:Localized.HeaderKey="Settings.QuickCapture.RecordColors.Title">
+                                <toolkit:SettingsExpander.HeaderIcon>
+                                    <FontIcon Glyph="&#xE790;" />
+                                </toolkit:SettingsExpander.HeaderIcon>
+                                <Button
+                                    x:Name="QuickCaptureRecordTextColorButton"
+                                    MinWidth="190"
+                                    HorizontalAlignment="Right"
+                                    HorizontalContentAlignment="Stretch"
+                                    Click="QuickCaptureRecordTextColor_Click" />
+                                <toolkit:SettingsExpander.Items>
+                                    <toolkit:SettingsCard
+                                        HorizontalContentAlignment="Right"
+                                        svc:Localized.DescriptionKey="Settings.QuickCapture.RecordColors.Background.Description"
+                                        svc:Localized.HeaderKey="Settings.QuickCapture.RecordColors.Background.Title">
+                                        <Button
+                                            x:Name="QuickCaptureRecordBackgroundColorButton"
+                                            MinWidth="190"
+                                            Click="QuickCaptureRecordBackgroundColor_Click" />
+                                    </toolkit:SettingsCard>
+                                    <toolkit:SettingsCard
+                                        HorizontalContentAlignment="Right"
+                                        svc:Localized.DescriptionKey="Settings.QuickCapture.RecordColors.HoverText.Description"
+                                        svc:Localized.HeaderKey="Settings.QuickCapture.RecordColors.HoverText.Title">
+                                        <Button
+                                            x:Name="QuickCaptureRecordHoverTextButton"
+                                            MinWidth="190"
+                                            Click="QuickCaptureRecordHoverText_Click" />
+                                    </toolkit:SettingsCard>
+                                    <toolkit:SettingsCard
+                                        HorizontalContentAlignment="Right"
+                                        svc:Localized.HeaderKey="Settings.QuickCapture.RecordColors.Reset.Title">
+                                        <Button
+                                            MinWidth="190"
+                                            Click="QuickCaptureRecordColorsReset_Click"
+                                            svc:Localized.Key="QuickCapture.ClipboardColor.Reset" />
+                                    </toolkit:SettingsCard>
+                                </toolkit:SettingsExpander.Items>
+                            </toolkit:SettingsExpander>
+
+                            <toolkit:SettingsExpander
+                                Tag="QuickCapture"
+                                IsEnabled="{Binding QuickCaptureEnabled}"
                                 Loaded="FeatureSettingsExpander_Loaded"
                                 HorizontalContentAlignment="Stretch"
                                 Description="{Binding QuickCaptureTabsSummaryText}"
@@ -2357,6 +2426,24 @@ svc:Localized.DescriptionKey="Settings.DefaultWidth.Description"
                         </toolkit:SettingsCard>
 
                         <toolkit:SettingsCard
+                            Header="{Binding AutoStartStatusText}"
+                            HorizontalContentAlignment="Right"
+                            Visibility="{Binding AutoStartStatusVisibility}">
+                            <toolkit:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE7BA;" />
+                            </toolkit:SettingsCard.HeaderIcon>
+                            <Button
+                                Click="OpenStartupAppsSettingsButton_Click"
+                                Style="{StaticResource ActionButtonStyle}"
+                                Visibility="{Binding AutoStartSystemSettingsVisibility}">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon FontSize="14" Glyph="&#xE713;" />
+                                    <TextBlock svc:Localized.Key="Settings.AutoStart.OpenSystemSettings" />
+                                </StackPanel>
+                            </Button>
+                        </toolkit:SettingsCard>
+
+                        <toolkit:SettingsCard
                             HorizontalContentAlignment="Right"
                             svc:Localized.DescriptionKey="Settings.Onboarding.Description"
                             svc:Localized.HeaderKey="Settings.Onboarding.Title">
@@ -2422,15 +2509,15 @@ svc:Localized.DescriptionKey="Settings.DefaultWidth.Description"
 
                         <toolkit:SettingsCard
                             HorizontalContentAlignment="Right"
-                            svc:Localized.DescriptionKey="Settings.Performance.TransientRelease.Description"
-                            svc:Localized.HeaderKey="Settings.Performance.TransientRelease.Title">
+                            svc:Localized.DescriptionKey="Settings.Performance.HiddenScope.Description"
+                            svc:Localized.HeaderKey="Settings.Performance.HiddenScope.Title">
                             <toolkit:SettingsCard.HeaderIcon>
-                                <FontIcon Glyph="&#xE8BB;" />
+                                <FontIcon Glyph="&#xE950;" />
                             </toolkit:SettingsCard.HeaderIcon>
                             <ComboBox
                                 MinWidth="176"
-                                ItemsSource="{Binding AvailableTransientWindowReleaseDelayOptions}"
-                                controls:SettingsComboBox.Value="{Binding SelectedTransientWindowReleaseDelaySeconds, Mode=TwoWay}" />
+                                ItemsSource="{Binding AvailableHiddenCacheCleanupScopeOptions}"
+                                controls:SettingsComboBox.Value="{Binding SelectedHiddenCacheCleanupScope, Mode=TwoWay}" />
                         </toolkit:SettingsCard>
 
                         <toolkit:SettingsCard
@@ -2444,6 +2531,16 @@ svc:Localized.DescriptionKey="Settings.DefaultWidth.Description"
                                 MinWidth="176"
                                 ItemsSource="{Binding AvailablePerformanceCacheBudgetOptions}"
                                 controls:SettingsComboBox.Value="{Binding SelectedPerformanceCacheBudget, Mode=TwoWay}" />
+                        </toolkit:SettingsCard>
+
+                        <toolkit:SettingsCard
+                            HorizontalContentAlignment="Right"
+                            svc:Localized.DescriptionKey="Settings.Performance.IdleWorkingSetTrim.Description"
+                            svc:Localized.HeaderKey="Settings.Performance.IdleWorkingSetTrim.Title">
+                            <toolkit:SettingsCard.HeaderIcon>
+                                <FontIcon Glyph="&#xE950;" />
+                            </toolkit:SettingsCard.HeaderIcon>
+                            <ToggleSwitch OnContent="" OffContent="" MinWidth="0" IsOn="{Binding IdleWorkingSetTrimEnabled, Mode=TwoWay}" />
                         </toolkit:SettingsCard>
 
                         <toolkit:SettingsCard

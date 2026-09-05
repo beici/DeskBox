@@ -14,6 +14,18 @@
     <UserControl.Resources>
         <x:Double x:Key="QuickCaptureDetailActionIconSize">13</x:Double>
 
+        <!-- Clipboard record list colors (QuickCaptureClipboardColorSettings).
+             The card brush starts at the theme card color and both colors are
+             replaced at runtime when the user picks custom colors; the theme
+             sentinel keeps the follow-theme value fresh across theme flips.
+             The secondary brush is a derived (alpha-dimmed) copy of the main
+             text color so timestamps stay readable against custom colors. -->
+        <SolidColorBrush x:Key="QuickCaptureClipboardItemForegroundBrush" Color="{ThemeResource TextFillColorPrimary}" />
+        <SolidColorBrush x:Key="QuickCaptureClipboardItemSecondaryBrush" Color="{ThemeResource TextFillColorSecondary}" />
+        <SolidColorBrush x:Key="QuickCaptureClipboardItemHoverForegroundBrush" Color="{ThemeResource TextFillColorPrimary}" />
+        <SolidColorBrush x:Key="QuickCaptureClipboardItemBackgroundBrush" Color="{ThemeResource CardBackgroundFillColorDefault}" />
+        <SolidColorBrush x:Key="QuickCaptureClipboardItemCardThemeBrush" Color="{ThemeResource CardBackgroundFillColorDefault}" />
+
         <Style x:Key="QuickCaptureSharedDetailIconButtonStyle" TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
             <Setter Property="Width" Value="28" />
             <Setter Property="Height" Value="28" />
@@ -178,6 +190,7 @@
                             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                             <Setter Property="Background" Value="Transparent" />
                             <Setter Property="BorderThickness" Value="0" />
+                            <Setter Property="Foreground" Value="{StaticResource QuickCaptureClipboardItemForegroundBrush}" />
                         </Style>
                     </ListView.ItemContainerStyle>
                     <ListView.ItemTemplate>
@@ -185,7 +198,7 @@
                             <Border
                                 x:Name="QuickCaptureSurfaceItemRoot"
                                 AllowDrop="True"
-                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                Background="{StaticResource QuickCaptureClipboardItemBackgroundBrush}"
                                 BorderBrush="Transparent"
                                 BorderThickness="0"
                                 CornerRadius="{StaticResource WidgetCornerRadiusSmall}"
@@ -247,15 +260,19 @@
                                         VerticalAlignment="Center"
                                         Spacing="2">
                                         <TextBlock
+                                            x:Name="QuickCaptureItemDisplayText"
                                             FontSize="{Binding TextSize}"
+                                            Foreground="{StaticResource QuickCaptureClipboardItemForegroundBrush}"
                                             MaxLines="{Binding ElementName=ItemsList, Path=DataContext.ItemPreviewLineCount}"
+                                            PointerEntered="QuickCaptureItemText_PointerEntered"
+                                            PointerExited="QuickCaptureItemText_PointerExited"
                                             Text="{Binding DisplayText}"
                                             TextTrimming="CharacterEllipsis"
                                             TextWrapping="Wrap"
                                             Visibility="{Binding TextPreviewVisibility}" />
                                         <TextBlock
                                             FontSize="{Binding SecondaryTextSize}"
-                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                            Foreground="{StaticResource QuickCaptureClipboardItemSecondaryBrush}"
                                             Text="{Binding CreatedAtText}"
                                             Visibility="{Binding ElementName=ItemsList, Path=DataContext.CreatedTimeVisibility}" />
                                     </StackPanel>
