@@ -69,11 +69,17 @@ public sealed class WidgetBatchMarginPositioningContractTests
             StringComparison.Ordinal);
 
         // The single-widget path keeps capturing the anchor before it
-        // persists — the batch path mirrors this via CaptureAnchor.
-        Assert.Contains(
-            "CapturePositionAnchor(next.X, next.Y, next.Width, next.Height);",
-            source,
+        // persists — the batch path mirrors this via CaptureAnchor. The move is
+        // expressed on the live window rect because the resolved target belongs
+        // to the resting (possibly capsule) rect.
+        int anchorCapture = source.IndexOf(
+            "CapturePositionAnchor(nextX, nextY, live.Width, live.Height);",
             StringComparison.Ordinal);
+        int persist = source.IndexOf(
+            "UpdateConfigBoundsFromPhysical(nextX, nextY, live.Width, live.Height, persist: true);",
+            StringComparison.Ordinal);
+        Assert.True(anchorCapture >= 0, "the single-widget path must capture the position anchor");
+        Assert.True(persist > anchorCapture, "the anchor must be captured before the bounds are persisted");
     }
 
     private static string ReadRepositoryFile(string relativePath)

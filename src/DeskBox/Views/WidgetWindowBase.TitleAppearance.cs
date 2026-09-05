@@ -773,28 +773,34 @@ public abstract partial class WidgetWindowBase
             return;
         }
 
-        var current = new RectInt32(
+        var live = new RectInt32(
             rect.Left,
             rect.Top,
             Math.Max(1, rect.Right - rect.Left),
             Math.Max(1, rect.Bottom - rect.Top));
-        RectInt32 workArea = ResolveWorkArea(current);
-        if (resolveTarget(current, workArea) is not RectInt32 next ||
-            (next.X == current.X && next.Y == current.Y))
+        // Margins describe the resting layout, so the target is resolved for the
+        // resting rect and the live window - which may be a hover expansion
+        // covering its lower neighbours - moves by exactly the same delta.
+        RectInt32 subject = ResolveMarginSubjectBounds(live);
+        RectInt32 workArea = ResolveWorkArea(subject);
+        if (resolveTarget(subject, workArea) is not RectInt32 target ||
+            (target.X == subject.X && target.Y == subject.Y))
         {
             return;
         }
 
+        int nextX = live.X + (target.X - subject.X);
+        int nextY = live.Y + (target.Y - subject.Y);
         Win32Helper.SetWindowPos(
             HWnd,
             IntPtr.Zero,
-            next.X,
-            next.Y,
-            next.Width,
-            next.Height,
+            nextX,
+            nextY,
+            live.Width,
+            live.Height,
             Win32Helper.SWP_NOZORDER | Win32Helper.SWP_NOACTIVATE);
-        CapturePositionAnchor(next.X, next.Y, next.Width, next.Height);
-        UpdateConfigBoundsFromPhysical(next.X, next.Y, next.Width, next.Height, persist: true);
+        CapturePositionAnchor(nextX, nextY, live.Width, live.Height);
+        UpdateConfigBoundsFromPhysical(nextX, nextY, live.Width, live.Height, persist: true);
         RefreshCompactPlacementAfterBoundsMove();
     }
 
@@ -860,6 +866,27 @@ public abstract partial class WidgetWindowBase
             Win32Helper.GetDpiScaleForWindow(HWnd, RootElement.XamlRoot));
     }
 
+    /// <summary>
+    /// The rectangle margins describe: the widget's resting geometry.
+    /// <para>
+    /// A capsule has to be hover-expanded before its title bar (and this menu)
+    /// exists, and that temporary rectangle covers the capsules below it — so
+    /// measuring the live window reported "screen edge" for a side that clearly
+    /// has a widget next to it at rest, and applying a value moved the widget
+    /// against a boundary the user never saw. The capsule the widget returns to is
+    /// therefore the subject whenever the pointer is only peeking.
+    /// </para>
+    /// </summary>
+    private RectInt32 ResolveMarginSubjectBounds(RectInt32 liveBounds)
+    {
+        if (!RestsCollapsed || IsCompactBoundsStateActive)
+        {
+            return liveBounds;
+        }
+
+        return GetCompactBounds(liveBounds);
+    }
+
     private (int Left, int Top, int Right, int Bottom) GetCurrentReferenceMargins()
     {
         WidgetMarginEdge[] edges = GetCurrentReferenceMarginEdges();
@@ -872,7 +899,7 @@ public abstract partial class WidgetWindowBase
 
     /// <summary>
     /// Left, Top, Right, Bottom distances together with what each one is
-    /// measured against, derived from the live window rect on every call.
+    /// measured against, derived from the widget's resting rect on every call.
     /// </summary>
     private WidgetMarginEdge[] GetCurrentReferenceMarginEdges()
     {
@@ -887,17 +914,19 @@ public abstract partial class WidgetWindowBase
             ];
         }
 
-        var bounds = new RectInt32(
+        var live = new RectInt32(
             rect.Left,
             rect.Top,
             Math.Max(1, rect.Right - rect.Left),
             Math.Max(1, rect.Bottom - rect.Top));
-        IReadOnlyList<WidgetMarginNeighbour> neighbours = CollectMarginNeighbours(
+        RectInt32 bounds = ResolveMarginSubjectBounds(live);
+        IReadOnlyList<RectInt32> widgetRects =
             App.Current?.WidgetManager?.GetOtherVisibleWidgetRects(HWnd) ??
-                Array.Empty<RectInt32>());
+                Array.Empty<RectInt32>();
+        IReadOnlyList<WidgetMarginNeighbour> neighbours = CollectMarginNeighbours(widgetRects);
         RectInt32 workArea = ResolveWorkArea(bounds);
         int tolerance = ResolveMarginOverlapTolerance();
-        return
+        WidgetMarginEdge[] edges =
         [
             WidgetMarginReferenceCalculator.ResolveMargin(
                 bounds, WidgetMarginSide.Left, neighbours, workArea, tolerance),
@@ -908,6 +937,18 @@ public abstract partial class WidgetWindowBase
             WidgetMarginReferenceCalculator.ResolveMargin(
                 bounds, WidgetMarginSide.Bottom, neighbours, workArea, tolerance)
         ];
+
+        // The reference each side resolved to is the whole point of this entry, so
+        // it is traceable: a side reported against the work area is either really
+        // free or a sign that the subject rect covered its neighbour.
+        App.LogVerbose(
+            $"[WidgetMargin] Reference resolve hwnd=0x{HWnd.ToInt64():X} " +
+            $"subject={bounds.X},{bounds.Y} {bounds.Width}x{bounds.Height} " +
+            $"live={live.X},{live.Y} {live.Width}x{live.Height} " +
+            $"widgets={widgetRects.Count} neighbours={neighbours.Count} tolerance={tolerance} " +
+            $"left={edges[0].Distance}/{edges[0].Kind} top={edges[1].Distance}/{edges[1].Kind} " +
+            $"right={edges[2].Distance}/{edges[2].Kind} bottom={edges[3].Distance}/{edges[3].Kind}");
+        return edges;
     }
 
     private static string DescribeMarginReference(WidgetMarginReferenceKind kind)

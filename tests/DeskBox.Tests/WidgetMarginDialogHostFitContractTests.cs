@@ -230,6 +230,49 @@ public sealed class WidgetMarginDialogHostFitContractTests
         Assert.DoesNotContain("sideBoxes[index].Text = ", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Margins_AreMeasuredOnTheRestingRect_NotOnAHoverExpansion()
+    {
+        string editor = ReadRepositoryFile(MarginEditorSource);
+        string collapse = ReadRepositoryFile("src/DeskBox/Views/WidgetWindowBase.Collapse.cs");
+
+        // A capsule must be hover-expanded before its title bar (and this menu)
+        // exists, and that temporary rect covers the capsules below it. Measuring
+        // the live window therefore reported "screen edge" for a side that has a
+        // widget right next to it at rest, and applying a value moved the widget
+        // against a boundary the user never saw.
+        Assert.Contains(
+            "private RectInt32 ResolveMarginSubjectBounds(RectInt32 liveBounds)",
+            editor,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "if (!RestsCollapsed || IsCompactBoundsStateActive)",
+            editor,
+            StringComparison.Ordinal);
+        Assert.Contains("return GetCompactBounds(liveBounds);", editor, StringComparison.Ordinal);
+
+        // Displayed values and the apply path must share that subject, and the
+        // live window has to move by the same delta so the preview matches.
+        Assert.Contains(
+            "RectInt32 bounds = ResolveMarginSubjectBounds(live);",
+            editor,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "RectInt32 subject = ResolveMarginSubjectBounds(live);",
+            editor,
+            StringComparison.Ordinal);
+        Assert.Contains("int nextX = live.X + (target.X - subject.X);", editor, StringComparison.Ordinal);
+        Assert.Contains("int nextY = live.Y + (target.Y - subject.Y);", editor, StringComparison.Ordinal);
+
+        // The resting-state rule is shared with the startup state instead of
+        // being copied into a second switch that can drift.
+        Assert.Contains("protected bool RestsCollapsed =>", collapse, StringComparison.Ordinal);
+        Assert.Contains(
+            "ApplyCollapsedStateImmediately(RestsCollapsed);",
+            collapse,
+            StringComparison.Ordinal);
+    }
+
     private static string ReadRepositoryFile(string relativePath)
     {
         return File.ReadAllText(TestPaths.FromRepository(relativePath));

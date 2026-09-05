@@ -342,6 +342,20 @@ public abstract partial class WidgetWindowBase
             Config,
             SettingsService.Settings.WidgetCollapseBehavior);
 
+    /// <summary>
+    /// True when the capsule is this widget's resting form: Smart always returns
+    /// to it once the pointer leaves, Click keeps the manually persisted state.
+    /// Callers that reason about the widget's place in the desktop layout - margin
+    /// entry, for one - must measure the resting geometry, because a hover
+    /// expansion temporarily covers the neighbours below the capsule.
+    /// </summary>
+    protected bool RestsCollapsed => EffectiveCollapseBehavior switch
+    {
+        WidgetCollapseBehavior.Smart => true,
+        WidgetCollapseBehavior.Click => Config.IsCollapsed,
+        _ => false
+    };
+
     protected virtual bool SupportsCompactDropExpansion =>
         Config.WidgetKind is WidgetKind.File or WidgetKind.Todo or WidgetKind.QuickCapture;
 
@@ -804,13 +818,7 @@ public abstract partial class WidgetWindowBase
         RefreshCompactPresentation();
         ApplyCompactTooltips();
         ApplyCollapseBehaviorVisuals();
-        bool initiallyCollapsed = EffectiveCollapseBehavior switch
-        {
-            WidgetCollapseBehavior.Smart => true,
-            WidgetCollapseBehavior.Click => Config.IsCollapsed,
-            _ => false
-        };
-        ApplyCollapsedStateImmediately(initiallyCollapsed);
+        ApplyCollapsedStateImmediately(RestsCollapsed);
         ObserveCompactOverrides();
         QueueCompactExpansionWarmup();
         StartCompactHoverRecoveryProbe();
