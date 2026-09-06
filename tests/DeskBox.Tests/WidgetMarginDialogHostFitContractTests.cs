@@ -273,6 +273,69 @@ public sealed class WidgetMarginDialogHostFitContractTests
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void PeekExpansion_NeverReAnchorsTheCapsulePlacement()
+    {
+        string collapse = ReadRepositoryFile("src/DeskBox/Views/WidgetWindowBase.Collapse.cs");
+
+        // A hover peek is transient geometry. Re-anchoring the user's capsule
+        // placement to the peek panel's expansion pivot parked a capsule a full
+        // panel height away from its slot; after the next restart the widget sat
+        // buried underneath its neighbour and looked deleted (DEF-065).
+        int refresh = collapse.IndexOf(
+            "private void RefreshCompactPlacementFromExpandedBounds(bool persist)",
+            StringComparison.Ordinal);
+        Assert.True(refresh > 0);
+        string body = collapse[refresh..];
+
+        int guard = body.IndexOf(
+            "if (RestsCollapsed && CurrentCompactViewState == WidgetCompactViewState.Peek)",
+            StringComparison.Ordinal);
+        int discard = body.IndexOf("Config.CompactPlacement = null;", StringComparison.Ordinal);
+        Assert.True(guard > 0, "the peek guard must exist");
+        Assert.True(discard > guard, "the placement may only be cleared after the peek guard passed");
+    }
+
+    [Fact]
+    public void CompactPlacementCapture_RejectsPanelSizedRects()
+    {
+        string collapse = ReadRepositoryFile("src/DeskBox/Views/WidgetWindowBase.Collapse.cs");
+
+        int capture = collapse.IndexOf(
+            "protected void CaptureCompactPlacement(RectInt32 bounds, bool persist)",
+            StringComparison.Ordinal);
+        Assert.True(capture > 0);
+        string body = collapse[capture..];
+
+        // A capture that receives the expanded panel would persist the panel's
+        // anchor margin for the capsule, so the next restart restored the
+        // capsule to the panel's edge. Panel-sized rects are re-derived first.
+        Assert.Contains(
+            "bounds.Height > capsule.Height * 1.5",
+            body,
+            StringComparison.Ordinal);
+        Assert.Contains("bounds = capsule;", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CapsuleSubjectMarginMove_TranslatesTheCapsulePlacement()
+    {
+        string editor = ReadRepositoryFile("src/DeskBox/Views/WidgetWindowBase.TitleAppearance.cs");
+
+        int apply = editor.IndexOf("private void ApplyOwnMarginTarget(", StringComparison.Ordinal);
+        Assert.True(apply > 0);
+        string body = editor[apply..];
+
+        // A capsule-subject move must translate the capsule placement itself:
+        // the generic refresh is a no-op for peeks since DEF-065.
+        int branch = body.IndexOf("if (ReferenceEquals(subject, live))", StringComparison.Ordinal);
+        Assert.True(branch > 0, "the subject kind must decide the placement update path");
+        int refresh = body.IndexOf("RefreshCompactPlacementAfterBoundsMove();", branch, StringComparison.Ordinal);
+        int capture = body.IndexOf("CaptureCompactPlacement(target, persist: true);", branch, StringComparison.Ordinal);
+        Assert.True(refresh > 0, "the expanded-subject path keeps the generic refresh");
+        Assert.True(capture > refresh, "the capsule-subject path must capture the placement at the target");
+    }
+
     private static string ReadRepositoryFile(string relativePath)
     {
         return File.ReadAllText(TestPaths.FromRepository(relativePath));

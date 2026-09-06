@@ -248,3 +248,22 @@ Start-Process E:\DeskBox\src\DeskBox\bin\Debug\net10.0-windows10.0.22621.0\DeskB
 - [ ] 贴着屏幕右缘的格子，「右」仍会显示「屏幕边缘 0」——那一侧确实没有对象，是否符合预期
 - [ ] Click 收起行为的格子（手动收起/展开）在两种状态下打开边距，数值是否都描述你看到的那个形态
 - [ ] 在密集胶囊列里把某一侧调大后，格子会压到对侧邻居身上（编辑器只移动自己，不推开邻居）——是否需要加「不越过对侧邻居」的钳制
+
+---
+
+## 胶囊位置污染批次（DEF-065，2026-09-07）
+
+> 门禁：Debug 构建 0 错误 22 警告（均为既有）；`dotnet test -p:Platform=x64` **3257/3257 全绿**。
+
+### 已完成核验
+
+- [x] **现象解释与数据修复**：「下载」未被删除——被污染的 `compactPlacement.positionMarginY=356` 使胶囊跨重启恢复到 y=883，被「安全」展开面板盖住 91%。停应用后修复数据（356→590.4，留 `.pre-def065-repair` 备份），胶囊回到 (2169,590) 并在再次重启后保持
+- [x] **Peek 守卫**：悬停展开态不再 `CompactPlacement=null` 重锚定、不再以 Peek 播种初始位置（`RefreshCompactPlacementFromExpandedBounds` / `EnsureCompactPlacementFromExpandedBounds`）
+- [x] **面板矩形守卫**：`CaptureCompactPlacement` 收到高 > 1.5×胶囊高的矩形时先重新推导胶囊再入库
+- [x] **边距路径**：胶囊主体移动显式 `CaptureCompactPlacement(target, persist:true)`，不依赖对 Peek 已失效的通用 refresh
+- [x] 3 个新契约测试锁定三条防线；13 格子横向对照确认仅「下载」曾被污染
+
+### 仍需用户实机确认
+
+- [ ] 「下载」胶囊位置与内容是否符合预期（现在在工具与娱乐之间，y=590）
+- [ ] 在悬停展开态打开边距编辑并修改数值后，**收起后**胶囊应停在原槽位附近（面板位置不变、胶囊随数值平移），重启后不再漂移

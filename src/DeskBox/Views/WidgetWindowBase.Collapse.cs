@@ -573,6 +573,20 @@ public abstract partial class WidgetWindowBase
             return;
         }
 
+        // A hover peek is a transient expansion: the resting capsule has not
+        // moved, and re-anchoring the placement to the peek rect's expansion
+        // pivot silently parked the capsule at the panel's far edge — a capsule
+        // resting at the panel's top came back after a restart glued to the
+        // panel's bottom, buried underneath the neighbour below it (DEF-065).
+        // The user-owned placement is kept; legitimate capsule moves translate
+        // it explicitly.
+        if (RestsCollapsed && CurrentCompactViewState == WidgetCompactViewState.Peek)
+        {
+            App.LogVerbose(
+                $"[Compact] Peek expansion keeps the capsule placement id={Config.Id} hwnd=0x{HWnd.ToInt64():X}");
+            return;
+        }
+
         WidgetCompactExpansionAnchor automaticAnchor =
             _compactExpansionAnchor ??
             WidgetCompactExpansionCalculator.FromPositionAnchor(
@@ -609,6 +623,15 @@ public abstract partial class WidgetWindowBase
             IsClosing ||
             Config.CompactPlacement is not null)
         {
+            return;
+        }
+
+        // Same peek guard as RefreshCompactPlacementFromExpandedBounds: a hover
+        // peek must not seed the one-time placement from its temporary panel.
+        if (RestsCollapsed && CurrentCompactViewState == WidgetCompactViewState.Peek)
+        {
+            App.LogVerbose(
+                $"[Compact] Peek expansion does not seed a placement id={Config.Id} hwnd=0x{HWnd.ToInt64():X}");
             return;
         }
 
@@ -4105,6 +4128,25 @@ public abstract partial class WidgetWindowBase
         if (persist && _isDisplayTopologyTransitionActive)
         {
             return;
+        }
+
+        // The compact placement must never describe the expanded panel: a
+        // panel-sized capture restores the capsule at the panel's anchor margin,
+        // which is exactly how a capsule came to be buried underneath the
+        // neighbour below the panel (DEF-065). Re-derive the capsule that such a
+        // rect belongs to before it is stored.
+        if (RestsCollapsed &&
+            !IsCompactBoundsStateActive &&
+            UsesCompactExpansionGeometry())
+        {
+            RectInt32 capsule = GetCompactBounds(bounds);
+            if (bounds.Height > capsule.Height * 1.5)
+            {
+                App.LogVerbose(
+                    $"[Compact] Panel-sized compact capture re-derived id={Config.Id} " +
+                    $"panelHeight={bounds.Height} capsuleHeight={capsule.Height} hwnd=0x{HWnd.ToInt64():X}");
+                bounds = capsule;
+            }
         }
 
         _stableCompactBounds = bounds;

@@ -801,7 +801,19 @@ public abstract partial class WidgetWindowBase
             Win32Helper.SWP_NOZORDER | Win32Helper.SWP_NOACTIVATE);
         CapturePositionAnchor(nextX, nextY, live.Width, live.Height);
         UpdateConfigBoundsFromPhysical(nextX, nextY, live.Width, live.Height, persist: true);
-        RefreshCompactPlacementAfterBoundsMove();
+        if (ReferenceEquals(subject, live))
+        {
+            RefreshCompactPlacementAfterBoundsMove();
+        }
+        else
+        {
+            // The subject was the resting capsule under a transient hover peek:
+            // its placement must follow the move exactly. The generic refresh
+            // would re-anchor it to the peek panel's expansion pivot, which is
+            // how a capsule got parked a full panel height away from its slot
+            // and the widget looked deleted after the next restart (DEF-065).
+            CaptureCompactPlacement(target, persist: true);
+        }
     }
 
     private RectInt32 ResolveWorkArea(RectInt32 bounds)
