@@ -4212,8 +4212,7 @@ public sealed partial class SearchPopupWindow : Window
         {
             From = 0.72,
             To = 1,
-            Duration = TimeSpan.FromMilliseconds(83),
-            EnableDependentAnimation = true
+            Duration = TimeSpan.FromMilliseconds(83)
         };
         Storyboard.SetTarget(animation, ResultsPanel);
         Storyboard.SetTargetProperty(animation, "Opacity");

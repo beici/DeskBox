@@ -21,7 +21,7 @@ Current widget kinds are represented by `WidgetKind`.
 Current production widget categories:
 
 - `File`: file organizer / mapped folder widgets.
-- `QuickCapture`: the note and clipboard widget, still using a dedicated window.
+- `QuickCapture`: the note and clipboard widget hosted by `ContentWidgetWindow`.
 - `Todo`: content-type feature widget using `ContentWidgetWindow`.
 - `Music`: content-type feature widget using `ContentWidgetWindow` and Windows media sessions.
 - `Weather`: content-type feature widget using `ContentWidgetWindow`, Open-Meteo API, and adaptive responsive layouts.
@@ -55,10 +55,9 @@ Use this path for future content-type widgets whenever possible.
 
 Core widget foundation:
 
-- `src/DeskBox/Models/WidgetKind.cs`
-- `src/DeskBox/Models/WidgetConfig.cs`
+- `src/DeskBox.Abstractions/Models/WidgetConfig.cs` (includes `WidgetKind`)
 - `src/DeskBox/Services/WidgetRegistry.cs`
-- `src/DeskBox/Services/WidgetContentDescriptor.cs`
+- `src/DeskBox.Abstractions/Services/WidgetContentDescriptor.cs`
 - `src/DeskBox/Services/WidgetContentFactory.cs`
 - `src/DeskBox/Services/IWidgetContentProvider.cs`
 - `src/DeskBox/Services/ContentWidgetWindowFactory.cs`
@@ -341,7 +340,7 @@ Current feature widget dispatch:
 
 Current handlers:
 
-- QuickCapture: dedicated window path.
+- QuickCapture: content window path.
 - Todo: content window path.
 - Music: content window path.
 - Weather: content window path.

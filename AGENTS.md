@@ -32,7 +32,7 @@ DeskBox is a free, open-source Windows desktop organizer with native-feeling Win
 
 ## Architecture boundaries
 
-- New feature widgets must follow the shared content-window path: `WidgetKind -> WidgetRegistry -> WidgetContentDescriptor -> WidgetContentFactory / IWidgetContentProvider -> IWidgetContent -> ContentWidgetWindow -> WidgetManager`. Only QuickCapture still owns a dedicated host (`QuickCaptureWidgetWindow`); the legacy `WidgetWindow` host is removed.
+- New feature widgets must follow the shared content-window path: `WidgetKind -> WidgetRegistry -> WidgetContentDescriptor -> WidgetContentFactory / IWidgetContentProvider -> IWidgetContent -> ContentWidgetWindow -> WidgetManager`. QuickCapture also runs through this unified host; the legacy `WidgetWindow` and dedicated `QuickCaptureWidgetWindow` hosts are removed.
 - Widget kinds are `File`, `QuickCapture`, `Todo`, `Music`, `Weather` (plus planned `Tags`/`SystemMonitor` placeholders). Do not reintroduce the legacy `Productivity` kind into active creation paths. Reuse `WidgetShell` / `WidgetShellContentHost` for shared shell, menu, and lifecycle behavior.
 - `docs/architecture/[重要勿删]widget_zorder_lifecycle.md` is explicitly marked do-not-delete; consult it before changing widget z-order or desktop-layer window lifecycle code.
 
@@ -43,3 +43,4 @@ DeskBox is a free, open-source Windows desktop organizer with native-feeling Win
 - NuGet lock files are enabled via `Directory.Build.props`; AOT builds use a separate `packages.aot.lock.json`.
 - Windows 10 is the validated compatibility floor: unsupported materials, rounded corners, and some animations fall back there, so keep behavior working against that floor.
 
+- When adding a project under `src/`, always: add it to `DeskBox.sln` (CI restores the solution), commit BOTH `packages.lock.json` and `packages.aot.lock.json` (the AOT lock only regenerates under an AOT-profiled restore), and re-run `scripts/publish-aot-audit.ps1` after XAML or csproj changes — the retail pipeline has no WMC1510 count assertions, so audit drift accumulates silently otherwise (see docs/architecture/pluginization-roadmap.md §16.3).

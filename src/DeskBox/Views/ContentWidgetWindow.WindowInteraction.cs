@@ -161,6 +161,10 @@ public sealed partial class ContentWidgetWindow
 
     private void TitleBarGrid_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
+        if (IsGroupNavigationInput(e.OriginalSource))
+        {
+            return;
+        }
         CancelPendingTitleBarClickCollapse();
         var properties = e.GetCurrentPoint(ContentWidgetShell.TitleBar).Properties;
         if (!properties.IsLeftButtonPressed) return;
@@ -173,7 +177,7 @@ public sealed partial class ContentWidgetWindow
         }
 
         BeginTitleBarClickCollapse(e, ShouldOpenTitleBarFlyout(e.OriginalSource));
-        if (_config.IsPositionLocked) return;
+        if (_config.IsPositionLocked || IsCompactTransitionActive) return;
         // The group raise is part of the drag preparation now (see
         // BeginWindowDragCore): a click that never moves the widget must not
         // reorder the desktop layer, because the round trip flickers the
@@ -191,13 +195,19 @@ public sealed partial class ContentWidgetWindow
             return true;
         }
 
-        return !IsWithin(source, ContentWidgetShell.PositionLockActionButton) &&
+        return !IsGroupNavigationInput(source) &&
+               !IsWithin(source, ContentWidgetShell.PositionLockActionButton) &&
                !IsWithin(source, ContentWidgetShell.SizeLockActionButton) &&
                !IsWithin(source, ContentWidgetShell.AddActionButton) &&
                !IsWithin(source, ContentWidgetShell.MoreActionButton) &&
                !IsWithin(source, ContentWidgetShell.CloseActionButton) &&
                !HasAncestorOfType<TextBox>(source);
     }
+
+    private bool IsGroupNavigationInput(object? source) =>
+        source is DependencyObject element &&
+        IsWithin(element, ContentWidgetShell.GroupNavigationElement) &&
+        (HasAncestorOfType<TabViewItem>(element) || HasAncestorOfType<ButtonBase>(element));
 
     private static bool IsWithin(DependencyObject source, DependencyObject target)
     {

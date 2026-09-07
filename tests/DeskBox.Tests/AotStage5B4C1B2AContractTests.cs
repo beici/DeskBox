@@ -203,14 +203,14 @@ public sealed class AotStage5B4C1B2AContractTests
         string launcher = ReadRepositoryFile("scripts/start-aot-preview.ps1");
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
         string report = ReadRepositoryFile(
-            "docs/architecture/aot-stage-5b-4c1b2a-report.md");
+            "docs/architecture/stage-reports/aot-stage-5b-4c1b2a-report.md");
         string roadmap = ReadRepositoryFile(
             "docs/architecture/rust-native-aot-roadmap.md");
 
-        Assert.Contains("$auditProfileVersion = 58", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 61", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1B2A", audit, StringComparison.Ordinal);
-        Assert.Contains("$RequiredAuditProfileVersion = 58", launcher, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 61", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredRustCapabilities = 511", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredRustExportCount = 10", launcher, StringComparison.Ordinal);

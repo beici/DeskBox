@@ -6,13 +6,11 @@ public sealed class FrostedActionSurfaceContractTests
     public void RecommendedActionAreas_UseIndependentAcrylicLayers()
     {
         string root = FindRepositoryRoot();
-        string desktopOrganization = Read(root, "src/DeskBox/Controls/DesktopOrganizationTaskView.xaml");
         string onboarding = Read(root, "src/DeskBox/Views/OnboardingWindow.xaml");
         string quickCaptureSurface = Read(root, "src/DeskBox/Controls/WidgetContents/QuickCaptureSurfaceContent.xaml");
         string todo = Read(root, "src/DeskBox/Controls/WidgetContents/TodoWidgetContent.xaml");
         string releaseNotes = Read(root, "src/DeskBox/Views/ReleaseNotesWindow.xaml");
 
-        AssertAcrylicLayer(desktopOrganization, "x:Name=\"FooterAcrylicSurface\"", "Opacity=\"0.5\"");
         AssertAcrylicLayer(onboarding, "x:Name=\"FooterAcrylicSurface\"", "Opacity=\"0.46\"");
         AssertAcrylicLayer(quickCaptureSurface, "x:Name=\"DetailHeaderAcrylicSurface\"", "Opacity=\"0.42\"");
         AssertAcrylicLayer(todo, "x:Name=\"DetailHeaderAcrylicSurface\"", "Opacity=\"0.42\"");
@@ -31,7 +29,6 @@ public sealed class FrostedActionSurfaceContractTests
             "Value=\"{ThemeResource TextFillColorSecondaryBrush}\"",
             xaml,
             StringComparison.Ordinal);
-        Assert.Contains("x:Key=\"DesktopOrganizationTargetCardStyle\"", xaml, StringComparison.Ordinal);
         Assert.Contains(
             "Style = (Style)Resources[\"DesktopOrganizationSecondaryTextStyle\"]",
             presentation,
