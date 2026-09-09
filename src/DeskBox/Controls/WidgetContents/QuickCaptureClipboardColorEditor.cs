@@ -5,7 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Windows.UI;
 
-namespace DeskBox.Views;
+namespace DeskBox.Controls.WidgetContents;
 
 /// <summary>
 /// Shared color-picker flow for the Quick Capture clipboard record list.

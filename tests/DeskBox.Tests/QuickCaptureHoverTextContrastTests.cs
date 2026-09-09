@@ -95,18 +95,25 @@ public class QuickCaptureHoverTextContrastTests
         Assert.DoesNotContain("ClearHoveredItemTextColor", code);
 
         // Follow-theme resolution derives from the effective card background
-        // via the shared auto-contrast resolver (never a fixed white).
+        // via the shared auto-contrast resolver (never a fixed white). The
+        // 1.5.0 merge spread the resolver across the hover-apply and the
+        // effective-text paths; pin both call shapes. Line endings are mixed
+        // across merge boundaries, so the probes are newline-agnostic.
+        string normalizedCode = code.Replace("\r\n", "\n");
         Assert.Contains(
-            "QuickCaptureClipboardColorSettings.ResolveAutoHoverTextColor(" + Environment.NewLine +
+            "QuickCaptureClipboardColorSettings.ResolveAutoHoverTextColor(\n" +
             "            ResolveClipboardItemEffectiveBackgroundColor());",
-            code.Replace("\r\n", Environment.NewLine));
+            normalizedCode);
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(
+            normalizedCode,
+            "QuickCaptureClipboardColorSettings\\.ResolveAutoHoverTextColor\\(").Count);
     }
 
     [Fact]
     public void ColorEditorAndEntries_ExposeHoverTextChannel()
     {
         string editor = File.ReadAllText(TestPaths.FromRepository(
-            "src/DeskBox/Views/QuickCaptureClipboardColorEditor.cs"));
+            "src/DeskBox/Controls/WidgetContents/QuickCaptureClipboardColorEditor.cs"));
         string commands = File.ReadAllText(TestPaths.FromRepository(
             "src/DeskBox/Views/ContentWidgetWindow.Commands.cs"));
         string settingsCode = File.ReadAllText(TestPaths.FromRepository(

@@ -52,11 +52,11 @@ public sealed class WidgetMetadataKeysContractTests
     {
         // The literal used to be declared privately in both
         // QuickCaptureSurfaceContent and the dead QuickCaptureWidgetWindow;
-        // both now consume the registry constant.
+        // both now consume the registry constant. The legacy host is gone with
+        // the unified content-window path, so only the live consumer remains.
         string[] consumers =
         [
             "src/DeskBox/Controls/WidgetContents/QuickCaptureSurfaceContent.xaml.cs",
-            "src/DeskBox/Views/QuickCaptureWidgetWindow.ResponsiveDetail.cs",
         ];
 
         foreach (string consumer in consumers)

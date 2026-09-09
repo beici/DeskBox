@@ -3,7 +3,6 @@ using DeskBox.Helpers;
 using DeskBox.Models;
 using DeskBox.Services;
 using DeskBox.ViewModels;
-using DeskBox.Views;
 using System.ComponentModel;
 using System.Globalization;
 using Microsoft.UI;
