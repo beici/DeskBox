@@ -26,6 +26,8 @@
                     <SolidColorBrush x:Key="WidgetLayerFillBrush" Color="#CCFFFFFF" />
                     <SolidColorBrush x:Key="WidgetLayerFillSecondaryBrush" Color="#70FFFFFF" />
                     <SolidColorBrush x:Key="WidgetLayerStrokeBrush" Color="#16000000" />
+                    <SolidColorBrush x:Key="TodoCardReadabilitySurfaceBrush" Color="#D9FFFFFF" />
+                    <SolidColorBrush x:Key="TodoCardReadabilityStrokeBrush" Color="#24000000" />
                     <SolidColorBrush x:Key="WidgetTitleStateHoverBrush" Color="#0F000000" />
                     <SolidColorBrush x:Key="WidgetTitleStatePressedBrush" Color="#18000000" />
                     <SolidColorBrush x:Key="WidgetTitleStateOpenBrush" Color="#14000000" />
@@ -51,6 +53,8 @@
                     <SolidColorBrush x:Key="WidgetLayerFillBrush" Color="#20FFFFFF" />
                     <SolidColorBrush x:Key="WidgetLayerFillSecondaryBrush" Color="#0DFFFFFF" />
                     <SolidColorBrush x:Key="WidgetLayerStrokeBrush" Color="#20FFFFFF" />
+                    <SolidColorBrush x:Key="TodoCardReadabilitySurfaceBrush" Color="#C21D2025" />
+                    <SolidColorBrush x:Key="TodoCardReadabilityStrokeBrush" Color="#38FFFFFF" />
                     <SolidColorBrush x:Key="WidgetTitleStateHoverBrush" Color="#12FFFFFF" />
                     <SolidColorBrush x:Key="WidgetTitleStatePressedBrush" Color="#20FFFFFF" />
                     <SolidColorBrush x:Key="WidgetTitleStateOpenBrush" Color="#18FFFFFF" />
