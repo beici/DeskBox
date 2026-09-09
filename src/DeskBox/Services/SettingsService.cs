@@ -662,15 +662,20 @@ settings.FocusClickedWidgetOnRaise = false;
                 ResilientJsonLoadSource.DefaultAfterFailure => SettingsLoadRecoveryState.DefaultsAfterFailure,
                 _ => SettingsLoadRecoveryState.DefaultsForMissingFile
             };
+
+            AppSettings loadedSettings = loadResult.Value;
+            bool migrationsChanged = loadedFromDisk &&
+                await new SettingsMigrationPipeline(
+                    Path.GetDirectoryName(_settingsPath)!).RunMigrationsAsync(loadedSettings);
             lock (_lock)
             {
-                _settings = loadResult.Value;
+                _settings = loadedSettings;
             }
 
             bool changed;
             lock (_lock)
             {
-                changed = false;
+                changed = migrationsChanged;
                 if (!loadedFromDisk)
                 {
                     ApplyDefaultPreferences(_settings);
@@ -689,11 +694,6 @@ settings.FocusClickedWidgetOnRaise = false;
                         changed = true;
                     }
                 }
-
-                // Run schema migrations if the loaded version is older than current
-                var migrationPipeline = new SettingsMigrationPipeline();
-                changed |= migrationPipeline.RunMigrations(_settings);
-
                 // Schema migration treats every existing profile as having resolved
                 // the legacy default file-widget setup. Only a genuinely missing
                 // settings file represents a new profile that may still be offered

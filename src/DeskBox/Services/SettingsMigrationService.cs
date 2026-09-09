@@ -11,7 +11,7 @@ public interface ISettingsMigration
     int FromVersion { get; }
 
     /// <summary>Applies the migration to the given settings instance.</summary>
-    void Migrate(AppSettings settings);
+    ValueTask MigrateAsync(AppSettings settings);
 }
 /// <summary>
 /// Pipeline that executes registered settings migrations in version order.
@@ -24,7 +24,14 @@ public sealed class SettingsMigrationPipeline
     private readonly List<ISettingsMigration> _migrations = [];
 
     public SettingsMigrationPipeline()
+        : this(DeskBoxDataPathService.Current.DataDirectory)
     {
+    }
+
+    internal SettingsMigrationPipeline(string dataDirectory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(dataDirectory);
+
         // Register migrations in order
         _migrations.Add(new Migration_0_To_1());
         _migrations.Add(new Migration_1_To_2());
@@ -35,7 +42,7 @@ public sealed class SettingsMigrationPipeline
         _migrations.Add(new Migration_6_To_7());
         _migrations.Add(new Migration_7_To_8());
         _migrations.Add(new Migration_8_To_9());
-        _migrations.Add(new Migration_9_To_10());
+        _migrations.Add(new Migration_9_To_10(dataDirectory));
     }
 
     /// <summary>
@@ -43,7 +50,7 @@ public sealed class SettingsMigrationPipeline
     /// schema version up to <see cref="CurrentSchemaVersion"/>.
     /// Returns true if any migration was applied.
     /// </summary>
-    public bool RunMigrations(AppSettings settings)
+    public async Task<bool> RunMigrationsAsync(AppSettings settings)
     {
         if (settings.SchemaVersion >= CurrentSchemaVersion)
         {
@@ -59,7 +66,7 @@ public sealed class SettingsMigrationPipeline
             {
                 try
                 {
-                    migration.Migrate(settings);
+                    await migration.MigrateAsync(settings);
                     version = migration.FromVersion + 1;
                     anyApplied = true;
                     App.Log($"[SettingsMigration] Applied migration from version {migration.FromVersion} to {version}");
@@ -85,7 +92,7 @@ internal sealed class Migration_0_To_1 : ISettingsMigration
 {
     public int FromVersion => 0;
 
-    public void Migrate(AppSettings settings)
+    public ValueTask MigrateAsync(AppSettings settings)
     {
         // Legacy migration: ensure WidgetCompactSettingsVersion is at least 1
         // (older settings may have version 0 which used a different compact layout)
@@ -115,6 +122,8 @@ internal sealed class Migration_0_To_1 : ISettingsMigration
 
         // Ensure RecentOrganizationHistory is initialized
         settings.RecentOrganizationHistory ??= [];
+
+        return ValueTask.CompletedTask;
     }
 }
 
@@ -128,7 +137,7 @@ internal sealed class Migration_1_To_2 : ISettingsMigration
 {
     public int FromVersion => 1;
 
-    public void Migrate(AppSettings settings)
+    public ValueTask MigrateAsync(AppSettings settings)
     {
         settings.WidgetGroups ??= [];
         foreach (WidgetGroupConfig group in settings.WidgetGroups)
@@ -144,6 +153,8 @@ internal sealed class Migration_1_To_2 : ISettingsMigration
                 group.WheelSwitchEnabled = null;
             }
         }
+
+        return ValueTask.CompletedTask;
     }
 }
 
@@ -156,7 +167,7 @@ internal sealed class Migration_2_To_3 : ISettingsMigration
 {
     public int FromVersion => 2;
 
-    public void Migrate(AppSettings settings)
+    public ValueTask MigrateAsync(AppSettings settings)
     {
         settings.WidgetGroups ??= [];
         foreach (WidgetGroupConfig group in settings.WidgetGroups)
@@ -172,6 +183,8 @@ internal sealed class Migration_2_To_3 : ISettingsMigration
                 group.WheelSwitchEnabled = null;
             }
         }
+
+        return ValueTask.CompletedTask;
     }
 }
 
@@ -185,9 +198,10 @@ internal sealed class Migration_3_To_4 : ISettingsMigration
 {
     public int FromVersion => 3;
 
-    public void Migrate(AppSettings settings)
+    public ValueTask MigrateAsync(AppSettings settings)
     {
         settings.HasResolvedInitialFileWidgetSetup = true;
+        return ValueTask.CompletedTask;
     }
 }
 
@@ -200,12 +214,14 @@ internal sealed class Migration_4_To_5 : ISettingsMigration
 {
     public int FromVersion => 4;
 
-    public void Migrate(AppSettings settings)
+    public ValueTask MigrateAsync(AppSettings settings)
     {
         if (settings.SearchMaxResults == 50)
         {
             settings.SearchMaxResults = 200;
         }
+
+        return ValueTask.CompletedTask;
     }
 }
 
@@ -218,9 +234,10 @@ internal sealed class Migration_5_To_6 : ISettingsMigration
 {
     public int FromVersion => 5;
 
-    public void Migrate(AppSettings settings)
+    public ValueTask MigrateAsync(AppSettings settings)
     {
         settings.WidgetTopologyLayouts ??= [];
+        return ValueTask.CompletedTask;
     }
 }
 
@@ -232,11 +249,12 @@ internal sealed class Migration_6_To_7 : ISettingsMigration
 {
     public int FromVersion => 6;
 
-    public void Migrate(AppSettings settings)
+    public ValueTask MigrateAsync(AppSettings settings)
     {
         settings.SearchEverythingEnabled = false;
         settings.SearchEverythingExecutablePath = string.Empty;
         settings.SearchEverythingAdvancedSyntaxEnabled = false;
+        return ValueTask.CompletedTask;
     }
 }
 
@@ -256,10 +274,11 @@ internal sealed class Migration_8_To_9 : ISettingsMigration
 {
     public int FromVersion => 8;
 
-    public void Migrate(AppSettings settings)
+    public ValueTask MigrateAsync(AppSettings settings)
     {
         settings.FileStackAutoStacking = settings.FileStacksEnabled;
         settings.FileStacksEnabled = true;
+        return ValueTask.CompletedTask;
     }
 }
 
@@ -267,7 +286,7 @@ internal sealed class Migration_7_To_8 : ISettingsMigration
 {
     public int FromVersion => 7;
 
-    public void Migrate(AppSettings settings)
+    public ValueTask MigrateAsync(AppSettings settings)
     {
         bool legacyAnimationsEnabled =
             settings.EnableContinuousDecorativeAnimations;
@@ -288,7 +307,7 @@ internal sealed class Migration_7_To_8 : ISettingsMigration
             PerformanceSettingsPolicy.ApplyPreset(
                 settings,
                 PerformanceSettingsPolicy.ModeBalanced);
-            return;
+            return ValueTask.CompletedTask;
         }
 
         settings.HiddenCacheCleanupDelaySeconds =
@@ -300,6 +319,8 @@ internal sealed class Migration_7_To_8 : ISettingsMigration
         settings.TransientWindowReleaseDelaySeconds =
             PerformanceSettingsPolicy.NormalizeTransientWindowReleaseDelaySeconds(
                 settings.TransientWindowReleaseDelaySeconds);
+
+        return ValueTask.CompletedTask;
     }
 }
 
@@ -314,12 +335,27 @@ internal sealed class Migration_7_To_8 : ISettingsMigration
 /// </summary>
 internal sealed class Migration_9_To_10 : ISettingsMigration
 {
+    private readonly string _dataDirectory;
+
+    public Migration_9_To_10()
+        : this(DeskBoxDataPathService.Current.DataDirectory)
+    {
+    }
+
+    internal Migration_9_To_10(string dataDirectory)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(dataDirectory);
+        _dataDirectory = dataDirectory;
+    }
+
     public int FromVersion => 9;
 
-    public void Migrate(AppSettings settings) =>
-        Migrate(settings, DeskBoxDataPathService.Current.DataDirectory);
+    public ValueTask MigrateAsync(AppSettings settings) =>
+        MigrateAsync(settings, _dataDirectory);
 
-    internal static void Migrate(AppSettings settings, string dataDirectory)
+    internal static async ValueTask MigrateAsync(
+        AppSettings settings,
+        string dataDirectory)
     {
         string musicDataDirectory = Path.Combine(dataDirectory, "music");
         string storePath = Path.Combine(musicDataDirectory, "settings.json");
@@ -333,6 +369,6 @@ internal sealed class Migration_9_To_10 : ISettingsMigration
         migrated.UseArtworkBackdrop = settings.MusicUseArtworkBackdrop;
         migrated.EnableCoverHoverMotion = settings.MusicEnableCoverHoverMotion;
         migrated.DisplayMode = SettingsService.NormalizeMusicDisplayMode(settings.MusicDisplayMode);
-        store.SaveAsync(migrated).GetAwaiter().GetResult();
+        await store.SaveAsync(migrated);
     }
 }

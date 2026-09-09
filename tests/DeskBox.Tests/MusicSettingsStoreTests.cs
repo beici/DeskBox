@@ -64,7 +64,7 @@ public sealed class MusicSettingsStoreTests : IDisposable
     }
 
     [Fact]
-    public void Migration_9_To_10_CopiesLegacyFieldsAndIsIdempotent()
+    public async Task Migration_9_To_10_CopiesLegacyFieldsAndIsIdempotent()
     {
         string dataDirectory = Path.Combine(_tempRoot, "data");
         var settings = new AppSettings
@@ -74,7 +74,7 @@ public sealed class MusicSettingsStoreTests : IDisposable
             MusicDisplayMode = "RecordVertical"
         };
 
-        Migration_9_To_10.Migrate(
+        await Migration_9_To_10.MigrateAsync(
             settings, dataDirectory);
 
         // The legacy fields stay as an inert compatibility source (N+2 removes them).
@@ -91,7 +91,7 @@ public sealed class MusicSettingsStoreTests : IDisposable
         // Idempotence: a second migration run never overwrites the store.
         File.WriteAllText(storePath,
             File.ReadAllText(storePath).Replace("RecordVertical", "Cover"));
-        Migration_9_To_10.Migrate(
+        await Migration_9_To_10.MigrateAsync(
             new AppSettings(), dataDirectory);
         using var reparsed = System.Text.Json.JsonDocument.Parse(File.ReadAllText(storePath));
         Assert.Equal("Cover", reparsed.RootElement.GetProperty("displayMode").GetString());
@@ -102,8 +102,9 @@ public sealed class MusicSettingsStoreTests : IDisposable
     {
         string pipelineSource = File.ReadAllText(TestPaths.SourceFile(
             "src/DeskBox/Services/SettingsMigrationService.cs"));
-        Assert.Contains("_migrations.Add(new Migration_9_To_10());", pipelineSource, StringComparison.Ordinal);
+        Assert.Contains("_migrations.Add(new Migration_9_To_10(dataDirectory));", pipelineSource, StringComparison.Ordinal);
         Assert.Contains("CurrentSchemaVersion = 10", pipelineSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("GetAwaiter().GetResult()", pipelineSource, StringComparison.Ordinal);
     }
 
     private MusicSettingsStore CreateStore() =>

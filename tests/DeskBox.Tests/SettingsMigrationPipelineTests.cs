@@ -3,10 +3,15 @@ using DeskBox.Services;
 
 namespace DeskBox.Tests;
 
-public sealed class SettingsMigrationPipelineTests
+public sealed class SettingsMigrationPipelineTests : IDisposable
 {
+    private readonly string _tempRoot = Path.Combine(
+        Path.GetTempPath(),
+        "DeskBox.Tests",
+        Guid.NewGuid().ToString("N"));
+
     [Fact]
-    public void VersionTwo_ClearsLegacyWheelOverrideForFollowDefaultGroup()
+    public async Task VersionTwo_ClearsLegacyWheelOverrideForFollowDefaultGroup()
     {
         var settings = new AppSettings
         {
@@ -26,14 +31,14 @@ public sealed class SettingsMigrationPipelineTests
             ]
         };
 
-        Assert.True(new SettingsMigrationPipeline().RunMigrations(settings));
+        Assert.True(await CreatePipeline().RunMigrationsAsync(settings));
         Assert.Equal(SettingsMigrationPipeline.CurrentSchemaVersion, settings.SchemaVersion);
         Assert.Null(settings.WidgetGroups[0].WheelSwitchEnabled);
         Assert.False(settings.WidgetGroups[1].WheelSwitchEnabled);
     }
 
     [Fact]
-    public void VersionThree_RepairsFollowDefaultWheelOverrideCreatedAfterVersionTwo()
+    public async Task VersionThree_RepairsFollowDefaultWheelOverrideCreatedAfterVersionTwo()
     {
         var settings = new AppSettings
         {
@@ -53,7 +58,7 @@ public sealed class SettingsMigrationPipelineTests
             ]
         };
 
-        Assert.True(new SettingsMigrationPipeline().RunMigrations(settings));
+        Assert.True(await CreatePipeline().RunMigrationsAsync(settings));
         Assert.Equal(SettingsMigrationPipeline.CurrentSchemaVersion, settings.SchemaVersion);
         Assert.Null(settings.WidgetGroups[0].WheelSwitchEnabled);
         Assert.False(settings.WidgetGroups[1].WheelSwitchEnabled);
@@ -61,7 +66,7 @@ public sealed class SettingsMigrationPipelineTests
     }
 
     [Fact]
-    public void VersionFour_MarksExistingProfileFileWidgetSetupAsResolved()
+    public async Task VersionFour_MarksExistingProfileFileWidgetSetupAsResolved()
     {
         var settings = new AppSettings
         {
@@ -70,7 +75,7 @@ public sealed class SettingsMigrationPipelineTests
             Widgets = []
         };
 
-        Assert.True(new SettingsMigrationPipeline().RunMigrations(settings));
+        Assert.True(await CreatePipeline().RunMigrationsAsync(settings));
         Assert.Equal(SettingsMigrationPipeline.CurrentSchemaVersion, settings.SchemaVersion);
         Assert.True(settings.HasResolvedInitialFileWidgetSetup);
     }
@@ -79,7 +84,7 @@ public sealed class SettingsMigrationPipelineTests
     [InlineData(50, 200)]
     [InlineData(100, 100)]
     [InlineData(200, 200)]
-    public void VersionFive_MigratesOnlyLegacySearchResultDefault(
+    public async Task VersionFive_MigratesOnlyLegacySearchResultDefault(
         int storedLimit,
         int expectedLimit)
     {
@@ -89,13 +94,13 @@ public sealed class SettingsMigrationPipelineTests
             SearchMaxResults = storedLimit
         };
 
-        Assert.True(new SettingsMigrationPipeline().RunMigrations(settings));
+        Assert.True(await CreatePipeline().RunMigrationsAsync(settings));
         Assert.Equal(SettingsMigrationPipeline.CurrentSchemaVersion, settings.SchemaVersion);
         Assert.Equal(expectedLimit, settings.SearchMaxResults);
     }
 
     [Fact]
-    public void VersionSix_PreservesLegacyGeometryForFirstTopologyCapture()
+    public async Task VersionSix_PreservesLegacyGeometryForFirstTopologyCapture()
     {
         var widget = new WidgetConfig
         {
@@ -110,7 +115,7 @@ public sealed class SettingsMigrationPipelineTests
             Widgets = [widget]
         };
 
-        Assert.True(new SettingsMigrationPipeline().RunMigrations(settings));
+        Assert.True(await CreatePipeline().RunMigrationsAsync(settings));
 
         Assert.Equal(SettingsMigrationPipeline.CurrentSchemaVersion, settings.SchemaVersion);
         Assert.NotNull(settings.WidgetTopologyLayouts);
@@ -123,7 +128,7 @@ public sealed class SettingsMigrationPipelineTests
     }
 
     [Fact]
-    public void VersionSeven_RequiresFreshEverythingConsent()
+    public async Task VersionSeven_RequiresFreshEverythingConsent()
     {
         var settings = new AppSettings
         {
@@ -133,7 +138,7 @@ public sealed class SettingsMigrationPipelineTests
             SearchEverythingAdvancedSyntaxEnabled = true
         };
 
-        Assert.True(new SettingsMigrationPipeline().RunMigrations(settings));
+        Assert.True(await CreatePipeline().RunMigrationsAsync(settings));
 
         Assert.Equal(SettingsMigrationPipeline.CurrentSchemaVersion, settings.SchemaVersion);
         Assert.False(settings.SearchEverythingEnabled);
@@ -144,7 +149,7 @@ public sealed class SettingsMigrationPipelineTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void VersionEight_SplitsLegacyDecorativeEffectsWithoutChangingGlance(
+    public async Task VersionEight_SplitsLegacyDecorativeEffectsWithoutChangingGlance(
         bool legacyEnabled)
     {
         var settings = new AppSettings
@@ -154,7 +159,7 @@ public sealed class SettingsMigrationPipelineTests
             EnableContinuousDecorativeAnimations = legacyEnabled
         };
 
-        Assert.True(new SettingsMigrationPipeline().RunMigrations(settings));
+        Assert.True(await CreatePipeline().RunMigrationsAsync(settings));
 
         Assert.Equal(SettingsMigrationPipeline.CurrentSchemaVersion, settings.SchemaVersion);
         Assert.Equal(legacyEnabled, settings.EnableTextMarqueeAnimations);
@@ -164,7 +169,7 @@ public sealed class SettingsMigrationPipelineTests
     }
 
     [Fact]
-    public void VersionEight_RetiresBestVisualAndUnboundedCleanupValues()
+    public async Task VersionEight_RetiresBestVisualAndUnboundedCleanupValues()
     {
         var settings = new AppSettings
         {
@@ -175,7 +180,7 @@ public sealed class SettingsMigrationPipelineTests
             TransientWindowReleaseDelaySeconds = PerformanceSettingsPolicy.CleanupNever
         };
 
-        Assert.True(new SettingsMigrationPipeline().RunMigrations(settings));
+        Assert.True(await CreatePipeline().RunMigrationsAsync(settings));
 
         Assert.Equal(PerformanceSettingsPolicy.ModeBalanced, settings.PerformanceMode);
         Assert.Equal(30, settings.HiddenCacheCleanupDelaySeconds);
@@ -184,7 +189,7 @@ public sealed class SettingsMigrationPipelineTests
     }
 
     [Fact]
-    public void VersionEight_CustomNeverValuesBecomeLongestFiniteChoices()
+    public async Task VersionEight_CustomNeverValuesBecomeLongestFiniteChoices()
     {
         var settings = new AppSettings
         {
@@ -195,11 +200,32 @@ public sealed class SettingsMigrationPipelineTests
             TransientWindowReleaseDelaySeconds = PerformanceSettingsPolicy.CleanupNever
         };
 
-        Assert.True(new SettingsMigrationPipeline().RunMigrations(settings));
+        Assert.True(await CreatePipeline().RunMigrationsAsync(settings));
 
         Assert.Equal(PerformanceSettingsPolicy.ModeCustom, settings.PerformanceMode);
         Assert.Equal(5 * 60, settings.HiddenCacheCleanupDelaySeconds);
         Assert.Equal(15 * 60, settings.VisibleIdleCacheCleanupDelaySeconds);
         Assert.Equal(10 * 60, settings.TransientWindowReleaseDelaySeconds);
+    }
+
+    private SettingsMigrationPipeline CreatePipeline()
+    {
+        Directory.CreateDirectory(_tempRoot);
+        return new SettingsMigrationPipeline(_tempRoot);
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            if (Directory.Exists(_tempRoot))
+            {
+                Directory.Delete(_tempRoot, recursive: true);
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup for files briefly held by antivirus.
+        }
     }
 }
