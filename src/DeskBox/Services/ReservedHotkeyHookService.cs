@@ -158,6 +158,85 @@ internal sealed class ReservedHotkeyHookService : IDisposable
         return false;
     }
 
+    public async Task<bool> TryStartAsync(IntPtr notificationWindow, uint notificationMessage)
+    {
+        return await TryStartAsync(
+            notificationWindow,
+            notificationMessage,
+            ReservedHotkeyMode.WinSpace).ConfigureAwait(false);
+    }
+
+    public async Task<bool> TryStartAsync(
+        IntPtr notificationWindow,
+        uint notificationMessage,
+        ReservedHotkeyMode mode)
+    {
+        int errorCode = 0;
+        if (notificationWindow == IntPtr.Zero || !Win32Helper.IsWindow(notificationWindow))
+        {
+            errorCode = ErrorInvalidWindowHandle;
+            Volatile.Write(ref _lastErrorCode, errorCode);
+            return false;
+        }
+
+        Stop();
+
+        var ready = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        Thread thread;
+        long generation;
+        lock (_sync)
+        {
+            if (_disposed)
+            {
+                errorCode = ErrorInvalidWindowHandle;
+                return false;
+            }
+
+            if (_thread?.IsAlive == true)
+            {
+                errorCode = ErrorTimeout;
+                return false;
+            }
+
+            _notificationWindow = notificationWindow;
+            _notificationMessage = notificationMessage;
+            _startupError = 0;
+            Volatile.Write(ref _lastErrorCode, 0);
+            ConfigureStateMachine(mode);
+            generation = ++_lifecycleGeneration;
+            thread = new Thread(() => HookThreadMain(ready, generation))
+            {
+                IsBackground = true,
+                Name = "DeskBox.ReservedHotkeyHook"
+            };
+            _thread = thread;
+        }
+
+        thread.Start();
+        if (!await ready.Task.WaitAsync(TimeSpan.FromMilliseconds(StartupTimeoutMilliseconds)).ConfigureAwait(false))
+        {
+            errorCode = ErrorTimeout;
+            Volatile.Write(ref _lastErrorCode, errorCode);
+            Stop();
+            return false;
+        }
+
+        lock (_sync)
+        {
+            if (_hookHandle != IntPtr.Zero && _thread?.IsAlive == true)
+            {
+                return true;
+            }
+
+            errorCode = _startupError == 0 ? ErrorInvalidWindowHandle : _startupError;
+            Volatile.Write(ref _lastErrorCode, errorCode);
+        }
+
+        Stop();
+        return false;
+    }
+
     public void Stop()
     {
         Thread? thread;
@@ -248,6 +327,12 @@ internal sealed class ReservedHotkeyHookService : IDisposable
         }
 
         ResetStateMachine();
+    }
+
+    public async Task StopAsync()
+    {
+        Stop();
+        await Task.CompletedTask.ConfigureAwait(false);
     }
 
     public void Dispose()

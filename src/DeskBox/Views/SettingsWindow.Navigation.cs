@@ -25,6 +25,7 @@ namespace DeskBox.Views;
 public sealed partial class SettingsWindow
 {
     private Storyboard? _settingsSearchHighlightStoryboard;
+    private EventHandler<object>? _settingsSearchHighlightCompletedHandler;
     private FrameworkElement? _settingsSearchHighlightTarget;
     private double _settingsSearchHighlightOriginalOpacity = 1;
     private readonly List<SettingsExpander> _featureSettingsExpanders = [];
@@ -33,46 +34,10 @@ public sealed partial class SettingsWindow
 
     private void InitializeSettingsSectionElements()
     {
-        _settingsSectionElements = new Dictionary<string, FrameworkElement>(StringComparer.Ordinal)
-        {
-            ["General"] = GeneralSection,
-            ["PerformanceSettings"] = PerformanceSettingsSection,
-            ["Appearance"] = AppearanceSection,
-            ["AppearanceMaterialSettings"] = AppearanceMaterialSettingsSection,
-            ["AppearanceDensitySettings"] = AppearanceDensitySettingsSection,
-            ["AppearanceWindowSettings"] = AppearanceWindowSettingsSection,
-            ["AppearanceAnimationSettings"] = AppearanceAnimationSettingsSection,
-            ["CapsuleMode"] = CapsuleModeSection,
-            ["CapsuleBehaviorSettings"] = CapsuleBehaviorSettingsSection,
-            ["CapsuleArrangementSettings"] = CapsuleArrangementSettingsSection,
-            ["CapsuleAnimationSettings"] = CapsuleAnimationSettingsSection,
-            ["CapsuleOverridesSettings"] = CapsuleOverridesSettingsSection,
-            ["WidgetGroups"] = WidgetGroupsSection,
-            ["AppearanceDetail"] = AppearanceDetailSection,
-            ["FileDisplaySettings"] = FileDisplaySettingsSection,
-            ["FileStorageSettings"] = FileStorageSettingsSection,
-            ["FileStackSettings"] = FileStackSettingsSection,
-            ["DesktopOrganizationSettings"] = DesktopOrganizationSettingsSection,
-            ["FeatureWidgets"] = FeatureWidgetsSection,
-            ["QuickCaptureSettings"] = QuickCaptureSettingsSection,
-            ["TodoSettings"] = TodoSettingsSection,
-            ["MusicSettings"] = MusicSettingsSection,
-            ["WeatherSettings"] = WeatherSettingsSection,
-            ["GlanceSettings"] = GlanceSettingsSection,
-            ["SearchSettings"] = SearchSettingsSection,
-            ["Interaction"] = InteractionSection,
-            ["InteractionWindowSettings"] = InteractionWindowSettingsSection,
-            ["ManagedStorage"] = ManagedStorageSection,
-            ["Maintenance"] = MaintenanceSection,
-            ["BackupRestoreSettings"] = BackupRestoreSettingsSection,
-            ["DataHealthSettings"] = DataHealthSettingsSection,
-            ["CompatibilityDiagnosticsSettings"] = CompatibilityDiagnosticsSettingsSection,
-            ["ResetSettings"] = ResetSettingsSection,
-            ["About"] = AboutSection
-        };
-
+        _settingsSectionElements.Add("General", GeneralSection);
         string[] missingRoutes = SectionRoutes.Keys
-            .Where(tag => tag != "Advanced" && !_settingsSectionElements.ContainsKey(tag))
+            .Where(tag => tag is not "Advanced" and not "General" &&
+                !ContentHost.Resources.ContainsKey(tag + "SectionTemplate"))
             .ToArray();
         if (missingRoutes.Length > 0)
         {
@@ -105,13 +70,11 @@ public sealed partial class SettingsWindow
                 title,
                 BuildSettingsRouteBreadcrumb(route),
                 string.Empty,
+                null,
                 null));
         }
 
-        if (_isSettingsRootLoaded)
-        {
-            results.AddRange(CreateSettingItemSearchResults());
-        }
+        results.AddRange(CreateSettingItemSearchResults());
 
         _settingsSearchResults = results;
 
@@ -150,44 +113,26 @@ public sealed partial class SettingsWindow
 
     private IEnumerable<SettingsSearchResult> CreateSettingItemSearchResults()
     {
-        foreach ((string sectionTag, FrameworkElement section) in _settingsSectionElements)
+        foreach (SettingsSearchCatalogEntry entry in SettingsSearchCatalog.Entries)
         {
-            string destinationTag = sectionTag switch
-            {
-                "FileStorageSettings" => "AppearanceDetail",
-                "InteractionWindowSettings" => "Interaction",
-                "ResetSettings" => "Maintenance",
-                _ => sectionTag
-            };
+            string destinationTag = NormalizeSettingsSectionTag(entry.SectionTag);
             if (!TryGetSectionRoute(
                     destinationTag,
-                    out SettingsSectionRoute route))
+                    out SettingsSectionRoute route) ||
+                string.Equals(entry.HeaderKey, route.TitleKey, StringComparison.Ordinal))
             {
                 continue;
             }
 
-            var indexedHeaderKeys = new HashSet<string>(StringComparer.Ordinal);
-            string breadcrumb = BuildSettingsRouteBreadcrumb(route);
-            foreach (FrameworkElement element in FindDescendants<FrameworkElement>(section))
-            {
-                string? headerKey = Localized.GetHeaderKey(element);
-                if (string.IsNullOrWhiteSpace(headerKey) ||
-                    string.Equals(headerKey, route.TitleKey, StringComparison.Ordinal) ||
-                    !indexedHeaderKeys.Add(headerKey))
-                {
-                    continue;
-                }
-
-                string? descriptionKey = Localized.GetDescriptionKey(element);
-                yield return new SettingsSearchResult(
-                    destinationTag,
-                    _localizationService.T(headerKey),
-                    breadcrumb,
-                    string.IsNullOrWhiteSpace(descriptionKey)
-                        ? string.Empty
-                        : _localizationService.T(descriptionKey),
-                    element);
-            }
+            yield return new SettingsSearchResult(
+                destinationTag,
+                _localizationService.T(entry.HeaderKey),
+                BuildSettingsRouteBreadcrumb(route),
+                string.IsNullOrWhiteSpace(entry.DescriptionKey)
+                    ? string.Empty
+                    : _localizationService.T(entry.DescriptionKey),
+                entry.SectionTag,
+                entry.HeaderKey);
         }
     }
 
@@ -279,23 +224,34 @@ public sealed partial class SettingsWindow
 
     private void ScheduleSettingsSearchTarget(SettingsSearchResult result)
     {
-        if (result.TargetElement is not FrameworkElement target)
+        if (result.TargetSectionTag is not string targetSectionTag ||
+            result.TargetHeaderKey is not string targetHeaderKey)
         {
             return;
         }
 
+        int navigationGeneration = _settingsNavigationGeneration;
         DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
-            if (_isClosed || target.XamlRoot is null)
+            if (_isClosed || navigationGeneration != _settingsNavigationGeneration ||
+                !_settingsSectionElements.TryGetValue(targetSectionTag, out FrameworkElement? section))
             {
                 return;
             }
 
+            // Resolve only after navigation has created the target section.
+            // Expander items may not yet be part of the visual tree.
+            section.UpdateLayout();
+            FrameworkElement? target = FindSettingsSearchTarget(section, targetHeaderKey, []);
+            if (target is null)
+            {
+                return;
+            }
             ExpandSettingsSearchTargetAncestors(target);
-            target.UpdateLayout();
+            section.UpdateLayout();
             DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
             {
-                if (_isClosed || target.XamlRoot is null)
+                if (_isClosed || navigationGeneration != _settingsNavigationGeneration || target.XamlRoot is null)
                 {
                     return;
                 }
@@ -356,7 +312,6 @@ public sealed partial class SettingsWindow
             From = target.Opacity,
             To = _settingsSearchHighlightOriginalOpacity,
             Duration = TimeSpan.FromMilliseconds(650),
-            EnableDependentAnimation = true,
             EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
         };
         Storyboard.SetTarget(animation, target);
@@ -364,8 +319,10 @@ public sealed partial class SettingsWindow
 
         var storyboard = new Storyboard();
         storyboard.Children.Add(animation);
-        storyboard.Completed += (_, _) =>
+        EventHandler<object>? completedHandler = null;
+        completedHandler = (_, _) =>
         {
+            storyboard.Completed -= completedHandler;
             if (!ReferenceEquals(_settingsSearchHighlightStoryboard, storyboard))
             {
                 return;
@@ -373,23 +330,67 @@ public sealed partial class SettingsWindow
 
             target.Opacity = _settingsSearchHighlightOriginalOpacity;
             _settingsSearchHighlightStoryboard = null;
+            _settingsSearchHighlightCompletedHandler = null;
             _settingsSearchHighlightTarget = null;
         };
+        _settingsSearchHighlightCompletedHandler = completedHandler;
+        storyboard.Completed += completedHandler;
         _settingsSearchHighlightStoryboard = storyboard;
         storyboard.Begin();
     }
 
     private void ClearSettingsSearchHighlight()
     {
-        _settingsSearchHighlightStoryboard?.Stop();
+        Storyboard? storyboard = _settingsSearchHighlightStoryboard;
+        EventHandler<object>? completedHandler =
+            _settingsSearchHighlightCompletedHandler;
+        if (storyboard is not null && completedHandler is not null)
+        {
+            storyboard.Completed -= completedHandler;
+        }
+
+        storyboard?.Stop();
+        if (storyboard is not null)
+        {
+            storyboard.Children.Clear();
+        }
         if (_settingsSearchHighlightTarget is not null)
         {
             _settingsSearchHighlightTarget.Opacity = _settingsSearchHighlightOriginalOpacity;
         }
 
         _settingsSearchHighlightStoryboard = null;
+        _settingsSearchHighlightCompletedHandler = null;
         _settingsSearchHighlightTarget = null;
         _settingsSearchHighlightOriginalOpacity = 1;
+    }
+
+    /// <summary>
+    /// Explicitly unregisters dependency-property callbacks before the window
+    /// tree is detached. WinUI's callback token is native state; leaving it on
+    /// a closed expander delays release of the complete settings tree until a
+    /// later GC/finalizer pass.
+    /// </summary>
+    private void ClearFeatureSettingsExpanderCallbacks()
+    {
+        foreach (var registration in _featureSettingsExpanderCallbacks.ToArray())
+        {
+            try
+            {
+                registration.Key.UnregisterPropertyChangedCallback(
+                    SettingsExpander.IsExpandedProperty,
+                    registration.Value);
+            }
+            catch (Exception ex)
+            {
+                App.Log(
+                    $"[SettingsLifecycle] Expander callback unregister failed: {ex.Message}");
+            }
+        }
+
+        _featureSettingsExpanderCallbacks.Clear();
+        _featureSettingsExpanders.Clear();
+        _isSynchronizingFeatureSettingsExpanders = false;
     }
 
     private void SettingsNavigationView_BackRequested(NavigationView sender, NavigationViewBackRequestedEventArgs args)
@@ -408,6 +409,7 @@ public sealed partial class SettingsWindow
 
     public void ShowGlanceSection(string widgetId)
     {
+        EnsureSettingsSectionCreated("GlanceSettings");
         GlanceSettingsSection.SelectWidget(widgetId);
         NavigateToSettingsSection("GlanceSettings");
     }
@@ -491,7 +493,21 @@ public sealed partial class SettingsWindow
 
         isNestedSection = !string.IsNullOrWhiteSpace(route.ParentTag);
         _currentSettingsSection = sectionTag;
+        int navigationGeneration = ++_settingsNavigationGeneration;
+        ClearSettingsSearchHighlight();
         string visibleSectionTag = sectionTag == "Advanced" ? "Interaction" : sectionTag;
+        EnsureSettingsSectionCreated(visibleSectionTag);
+        string? inlineSectionTag = sectionTag switch
+        {
+            "AppearanceDetail" => "FileStorageSettings",
+            "Interaction" or "Advanced" => "InteractionWindowSettings",
+            "Maintenance" => "ResetSettings",
+            _ => null
+        };
+        if (inlineSectionTag is not null)
+        {
+            EnsureSettingsSectionCreated(inlineSectionTag);
+        }
         foreach ((string tag, FrameworkElement sectionElement) in _settingsSectionElements)
         {
             bool isPrimarySection = string.Equals(
@@ -542,6 +558,11 @@ public sealed partial class SettingsWindow
         {
             RefreshManagedStorageFolderList();
         }
+        else if (sectionTag == "FileStorageSettings")
+        {
+            RefreshManagedStorageDesktopShortcutState();
+            _ = ViewModel.RefreshQuickAccessStateAsync();
+        }
         else if (sectionTag == "AppearanceDetail")
         {
             _ = ViewModel.RefreshQuickAccessStateAsync();
@@ -553,6 +574,7 @@ public sealed partial class SettingsWindow
         }
         if (sectionTag == "BackupRestoreSettings")
         {
+            ViewModel.RefreshAutomaticBackupStatus();
             _ = RefreshBackupSnapshotInventoryAsync();
         }
         SettingsNavigationView.IsBackButtonVisible = isNestedSection
@@ -561,6 +583,10 @@ public sealed partial class SettingsWindow
         UpdateBreadcrumb(route);
         DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
+            if (_isClosed || navigationGeneration != _settingsNavigationGeneration)
+            {
+                return;
+            }
             PageScroller.ChangeView(null, 0, null, disableAnimation: true);
             RestartSectionLayoutSettleTimer();
         });

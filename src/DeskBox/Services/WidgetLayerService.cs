@@ -89,6 +89,61 @@ public static class WidgetLayerService
         Win32Helper.SetWindowToBottom(windowHandle);
     }
 
+    /// <summary>
+    /// Returns a widget to the resting band by inserting it directly below a
+    /// peer that is already resting there, instead of sinking it with
+    /// HWND_BOTTOM.
+    /// <para>
+    /// The sink is the one Z-order call that must let Windows move the shared
+    /// Explorer owner - blocking that puts the widget under the wallpaper
+    /// (DEF-058) - and moving the owner re-stacks every widget attached to it,
+    /// so all of them re-sample their acrylic backdrop. Users see the whole
+    /// group dim for a frame at the end of every capsule collapse. Inserting
+    /// after a resting peer reaches the same band with one owner-preserving
+    /// move, so only the returning widget re-composites.
+    /// </para>
+    /// </summary>
+    internal static bool TryReturnToRestingBandBelow(
+        IntPtr windowHandle,
+        IntPtr insertAfter)
+    {
+        if (windowHandle == IntPtr.Zero ||
+            insertAfter == IntPtr.Zero ||
+            insertAfter == windowHandle ||
+            !Win32Helper.IsWindow(windowHandle) ||
+            !Win32Helper.IsWindow(insertAfter) ||
+            // A topmost anchor would leave the widget at the top of the normal
+            // band, i.e. above every application window.
+            Win32Helper.IsWindowTopMost(insertAfter))
+        {
+            return false;
+        }
+
+        ApplyDesktopPinnedActivationStyle(windowHandle);
+        if (ShouldAttachRestingWindowToDesktop() &&
+            !TryAttachToDesktopIconLayer(
+                windowHandle,
+                placeAtBottom: false))
+        {
+            return false;
+        }
+
+        if (Win32Helper.IsWindowTopMost(windowHandle))
+        {
+            Win32Helper.ClearWindowTopMost(windowHandle);
+        }
+
+        if (!Win32Helper.PlaceWindowBelow(windowHandle, insertAfter))
+        {
+            return false;
+        }
+
+        App.LogVerbose(
+            $"[ZOrder] Resting band rejoin hwnd=0x{windowHandle.ToInt64():X} " +
+            $"below=0x{insertAfter.ToInt64():X}");
+        return true;
+    }
+
     public static IntPtr ClearTopMostPreservingForeground(IntPtr windowHandle)
     {
         ApplyDesktopPinnedActivationStyle(windowHandle);
@@ -369,9 +424,20 @@ public static class WidgetLayerService
     }
 
     /// <summary>
-    /// Applies and verifies an explicit peer order for an expanded capsule.
-    /// A successful SetWindowPos call is not sufficient for windows owned by
-    /// Explorer because Windows may still preserve an older owner-group order.
+    /// Guarantees the expanded capsule owns the top of the widget group, and
+    /// verifies it, because a successful SetWindowPos call is not sufficient
+    /// for windows owned by Explorer - Windows may still preserve an older
+    /// owner-group order.
+    /// <para>
+    /// The escalation is deliberately ordered cheapest-first. This runs
+    /// synchronously on the UI thread one statement before the expand morph
+    /// starts, and a DeferWindowPos batch over the whole group makes DWM
+    /// re-sample every acrylic widget: measured on a 165Hz display it cost a
+    /// 110ms compositor stall and dropped 34 of the morph's 46 frames, while
+    /// the collapse morph - whose peer-order pass is deferred until after the
+    /// animation - stayed at 0 dropped frames. So the full order is only
+    /// re-imposed when raising the active window alone did not achieve it.
+    /// </para>
     /// </summary>
     public static bool EnsurePeerOrderHighestToLowest(
         IReadOnlyList<IntPtr> windowHandles)
@@ -386,7 +452,6 @@ public static class WidgetLayerService
         }
 
         IntPtr activeWindow = handles[0];
-        _ = ApplyPeerOrderHighestToLowest(handles);
         if (IsHighestPeer(activeWindow, handles))
         {
             return true;
@@ -397,6 +462,11 @@ public static class WidgetLayerService
         if (!raised)
         {
             BringAbovePeerWidgets(activeWindow);
+        }
+
+        if (IsHighestPeer(activeWindow, handles))
+        {
+            return true;
         }
 
         bool reapplied = ApplyPeerOrderHighestToLowest(handles);
@@ -569,6 +639,130 @@ public static class WidgetLayerService
     }
 
     /// <summary>
+    /// Raises the widget group when a title bar is clicked: only the clicked
+    /// widget performs the transient topmost round-trip, and every peer is
+    /// inserted behind it with one DeferWindowPos batch.
+    ///
+    /// <see cref="BringGroupTemporarilyToFront"/> instead flips every widget
+    /// through HWND_TOPMOST and back, which migrates each peer across DWM
+    /// z-order bands twice per title click. Those band migrations force DWM
+    /// to recomposite untouched widgets, and users see them flicker. Peers
+    /// never need the band migration: inserting them into the normal band
+    /// directly behind the just-raised active widget produces the same group
+    /// ordering with a single same-band move.
+    /// </summary>
+    public static void BringTitleActivatedGroupToFront(
+        IReadOnlyList<IntPtr> windowHandles,
+        IntPtr activeWindowHandle)
+    {
+        if (UsesDesktopPinnedMode())
+        {
+            return;
+        }
+
+        var handles = windowHandles
+            .Where(handle => handle != IntPtr.Zero && Win32Helper.IsWindow(handle))
+            .Distinct()
+            .ToList();
+        if (handles.Count == 0)
+        {
+            return;
+        }
+
+        IntPtr activeHandle = handles.Contains(activeWindowHandle)
+            ? activeWindowHandle
+            : handles[0];
+
+        // The clicked widget keeps the established transient-raise trick:
+        // a brief TOPMOST placement drops it at the top of the normal band
+        // when cleared, above every application window.
+        DetachFromDesktopIconLayerIfNeeded(activeHandle);
+        Win32Helper.SetWindowTopMost(activeHandle);
+        Win32Helper.ClearWindowTopMost(activeHandle);
+        Win32Helper.BringWindowToFront(activeHandle);
+        Win32Helper.SetForegroundWindow(activeHandle);
+
+        List<IntPtr> peers = handles
+            .Where(handle => handle != activeHandle)
+            .ToList();
+        if (peers.Count == 0)
+        {
+            return;
+        }
+
+        lock (s_desktopLayerLock)
+        {
+            foreach (IntPtr handle in peers)
+            {
+                DetachFromDesktopIconLayerIfNeeded(handle);
+            }
+
+            const uint flags =
+                Win32Helper.SWP_NOMOVE |
+                Win32Helper.SWP_NOSIZE |
+                Win32Helper.SWP_NOACTIVATE |
+                Win32Helper.SWP_NOOWNERZORDER |
+                Win32Helper.SWP_SHOWWINDOW;
+
+            IntPtr deferred = Win32Helper.BeginDeferWindowPos(peers.Count);
+            IntPtr insertAfter = activeHandle;
+            if (deferred != IntPtr.Zero)
+            {
+                foreach (IntPtr handle in peers)
+                {
+                    deferred = Win32Helper.DeferWindowPos(
+                        deferred,
+                        handle,
+                        insertAfter,
+                        0,
+                        0,
+                        0,
+                        0,
+                        flags);
+                    if (deferred == IntPtr.Zero)
+                    {
+                        break;
+                    }
+
+                    insertAfter = handle;
+                }
+
+                if (deferred != IntPtr.Zero && Win32Helper.EndDeferWindowPos(deferred))
+                {
+                    App.LogVerbose(
+                        $"[ZOrder] Title group raised batch active=0x{activeHandle.ToInt64():X} " +
+                        $"count={peers.Count}");
+                    return;
+                }
+            }
+
+            // Fallback: same ordering with per-window calls, still without
+            // any topmost round-trip on the peers. A failed move leaves the
+            // chain anchored at the previous successful window so the group
+            // stays contiguous.
+            IntPtr fallbackInsertAfter = activeHandle;
+            foreach (IntPtr handle in peers)
+            {
+                if (Win32Helper.SetWindowPos(
+                    handle,
+                    fallbackInsertAfter,
+                    0,
+                    0,
+                    0,
+                    0,
+                    flags))
+                {
+                    fallbackInsertAfter = handle;
+                }
+            }
+
+            App.LogVerbose(
+                $"[ZOrder] Title group raised fallback active=0x{activeHandle.ToInt64():X} " +
+                $"count={peers.Count}");
+        }
+    }
+
+    /// <summary>
     /// Applies a deterministic peer order without activating, moving, or
     /// resizing any widget. The first handle is the visually highest peer.
     /// The current highest DeskBox peer supplies the global Z-order boundary,
@@ -596,6 +790,127 @@ public static class WidgetLayerService
             "idle-peer-order");
     }
 
+    /// <summary>
+    /// True when the HWND chain already equals the target order: each handle
+    /// sits directly below its predecessor and the first handle sits directly
+    /// below the boundary window. Re-applying an unchanged order is not free
+    /// for acrylic-backed widgets - DWM re-samples the backdrop whenever a
+    /// window changes position in the z-order even when nothing visibly
+    /// moves, which users see as an edge flash on every expand, collapse,
+    /// and title click.
+    /// </summary>
+    private static bool IsWindowChainAlreadyHighestToLowest(
+        IReadOnlyList<IntPtr> handles,
+        IntPtr boundary)
+    {
+        if (handles.Count == 0)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < handles.Count - 1; index++)
+        {
+            if (Win32Helper.GetWindow(handles[index], Win32Helper.GW_HWNDNEXT) !=
+                handles[index + 1])
+            {
+                return false;
+            }
+        }
+
+        // HWND_TOP is a sentinel rather than a real window. It is only chosen
+        // when the highest peer already had nothing above it, so the anchor is
+        // verified by the same condition: no window sits above the first
+        // handle. Returning false here unconditionally used to send every
+        // title release and every capsule expand into an explicit reorder even
+        // when the chain was already correct, and each of those moves makes
+        // DWM re-sample the widget's acrylic backdrop - the edge flash users
+        // reported on title-bar clicks.
+        if (boundary == Win32Helper.HWND_TOP)
+        {
+            return Win32Helper.GetWindow(handles[0], Win32Helper.GW_HWNDPREV) ==
+                IntPtr.Zero;
+        }
+
+        return Win32Helper.GetWindow(handles[0], Win32Helper.GW_HWNDPREV) == boundary;
+    }
+
+    /// <summary>
+    /// Applies the target order by moving only the windows that are actually
+    /// out of place. A title release, expand lease, or collapse changes the
+    /// position of a single widget while every peer keeps its relative
+    /// order; re-issuing DeferWindowPos for the untouched peers makes DWM
+    /// re-sample each acrylic backdrop and shows up as an edge flash across
+    /// the whole bar. <see cref="WidgetPeerOrderMovePlanner"/> owns the plan.
+    /// Returns false when the live chain cannot be scanned reliably so the
+    /// caller can fall back to the full reorder.
+    /// </summary>
+    private static bool TryApplyMinimalWindowMoves(
+        IReadOnlyList<IntPtr> handles,
+        IntPtr boundary,
+        string reason)
+    {
+        var handleSet = new HashSet<IntPtr>(handles);
+        List<IntPtr> current = [];
+        IntPtr cursor = FindHighestPeer(handles);
+        while (cursor != IntPtr.Zero)
+        {
+            if (handleSet.Contains(cursor))
+            {
+                current.Add(cursor);
+            }
+
+            cursor = Win32Helper.GetWindow(cursor, Win32Helper.GW_HWNDNEXT);
+        }
+
+        IReadOnlyList<WidgetPeerOrderMovePlanner.PeerOrderMove>? movers =
+            WidgetPeerOrderMovePlanner.Plan(handles, current, boundary);
+        if (movers is null)
+        {
+            return false;
+        }
+
+        if (movers.Count == 0)
+        {
+            return true;
+        }
+
+        const uint flags =
+            Win32Helper.SWP_NOMOVE |
+            Win32Helper.SWP_NOSIZE |
+            Win32Helper.SWP_NOACTIVATE |
+            Win32Helper.SWP_NOOWNERZORDER;
+
+        IntPtr deferred = Win32Helper.BeginDeferWindowPos(movers.Count);
+        foreach (WidgetPeerOrderMovePlanner.PeerOrderMove move in movers)
+        {
+            deferred = Win32Helper.DeferWindowPos(
+                deferred,
+                move.Handle,
+                move.InsertAfter,
+                0,
+                0,
+                0,
+                0,
+                flags);
+            if (deferred == IntPtr.Zero)
+            {
+                break;
+            }
+        }
+
+        if (deferred != IntPtr.Zero && Win32Helper.EndDeferWindowPos(deferred))
+        {
+            App.Log(
+                $"[ZOrder] Window order minimized reason={reason} " +
+                $"total={handles.Count} moved={movers.Count} " +
+                $"kept={handles.Count - movers.Count} " +
+                $"boundary=0x{boundary.ToInt64():X} highest=0x{handles[0].ToInt64():X}");
+            return true;
+        }
+
+        return false;
+    }
+
     private static bool ApplyWindowOrderHighestToLowest(
         IReadOnlyList<IntPtr> handles,
         IntPtr boundary,
@@ -603,6 +918,35 @@ public static class WidgetLayerService
     {
         if (handles.Count == 0)
         {
+            return true;
+        }
+
+        if (IsWindowChainAlreadyHighestToLowest(handles, boundary))
+        {
+            App.LogVerbose(
+                $"[ZOrder] Window order already correct reason={reason} " +
+                $"count={handles.Count} boundary=0x{boundary.ToInt64():X} " +
+                $"highest=0x{handles[0].ToInt64():X}");
+            return true;
+        }
+
+        lock (s_desktopLayerLock)
+        {
+            if (TryApplyMinimalWindowMoves(handles, boundary, reason))
+            {
+                return true;
+            }
+        }
+
+        // Re-check window order after releasing the first lock. The chain
+        // can change in that window — another thread applying a reorder, or
+        // an out-of-lock topmost pulse on this thread — so a chain already
+        // at the target order makes the DeferWindowPos fallback a no-op.
+        if (IsWindowChainAlreadyHighestToLowest(handles, boundary))
+        {
+            App.LogVerbose(
+                $"[ZOrder] Window order re-checked and already correct " +
+                $"reason={reason} count={handles.Count}");
             return true;
         }
 
@@ -829,6 +1173,16 @@ public static class WidgetLayerService
             keepVisible);
     }
 
+    /// <summary>
+    /// Public gate for visibility self-heals: resting widgets must be rescued
+    /// from shell Show Desktop minimize/cloak storms only when the user asked
+    /// for widgets to stay visible on Show Desktop.
+    /// </summary>
+    internal static bool ShouldKeepWidgetsVisibleOnShowDesktop()
+    {
+        return ShouldAttachRestingWindowToDesktop();
+    }
+
     private static bool TryAttachRestingWindowWithoutChangingLevel(
         IntPtr windowHandle)
     {
@@ -892,6 +1246,11 @@ public static class WidgetLayerService
             Win32Helper.ClearWindowTopMost(windowHandle);
             if (placeAtBottom)
             {
+                // No SWP_NOOWNERZORDER here. Sinking an owned window to the
+                // bottom only keeps it visible because Windows moves its owner
+                // - Explorer's desktop view - down with it. Blocking that put
+                // the widget underneath the wallpaper, and it rendered blank
+                // until some later Z-order pass lifted it back.
                 uint flags = Win32Helper.SWP_NOMOVE |
                     Win32Helper.SWP_NOSIZE |
                     Win32Helper.SWP_NOACTIVATE;
@@ -970,7 +1329,8 @@ public static class WidgetLayerService
             0,
             Win32Helper.SWP_NOMOVE |
                 Win32Helper.SWP_NOSIZE |
-                Win32Helper.SWP_NOACTIVATE);
+                Win32Helper.SWP_NOACTIVATE |
+                Win32Helper.SWP_NOOWNERZORDER);
         s_desktopLayerAttachments.Remove(windowHandle);
         App.LogVerbose($"[WidgetLayer] DesktopPinned owner detached hwnd=0x{windowHandle.ToInt64():X}");
     }
@@ -1009,6 +1369,17 @@ public static class WidgetLayerService
         // The caller already has a bottom-of-desktop fallback and can retry on a
         // later layer operation after Explorer finishes initializing.
         return IntPtr.Zero;
+    }
+
+    /// <summary>
+    /// The desktop icon view Explorer has already created, or zero. Shared with
+    /// the icon-geometry reader so there is exactly one discovery path: this one
+    /// deliberately never forces WorkerW creation, which during login can race
+    /// Explorer's icon-layout restoration.
+    /// </summary>
+    internal static IntPtr GetDesktopIconViewHandle()
+    {
+        return FindDesktopIconView();
     }
 
     private static IntPtr FindHighestPeer(IReadOnlyCollection<IntPtr> handles)

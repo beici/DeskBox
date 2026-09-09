@@ -54,6 +54,7 @@ public sealed partial class TodoWidgetViewModel : ObservableObject, IDisposable
     private TodoColorFilter _selectedColorFilter = TodoColorFilter.All;
     private string _inputText = string.Empty;
     private double _textSize = SettingsService.DefaultTextSize;
+    private double _contentTextSize = SettingsService.DefaultTextSize;
     private double _layoutDensityScale = SettingsService.DefaultLayoutDensityScale;
     private string _newTaskPosition = SettingsService.TodoNewTaskPositionTop;
     private string _tabStyle = SettingsService.WidgetTabStyleButton;
@@ -89,7 +90,10 @@ public sealed partial class TodoWidgetViewModel : ObservableObject, IDisposable
         _settingsService = settingsService;
         if (_settingsService is not null)
         {
-            _textSize = SettingsService.NormalizeTextSize(_settingsService.Settings.TextSize);
+            _textSize = SettingsService.NormalizeTextSize(
+                (_settingsService.Settings.TodoListTextSize > 0 ? _settingsService.Settings.TodoListTextSize : _settingsService.Settings.TextSize));
+            _contentTextSize = SettingsService.NormalizeTextSize(
+                (_settingsService.Settings.TodoContentTextSize > 0 ? _settingsService.Settings.TodoContentTextSize : _settingsService.Settings.TextSize));
             _layoutDensityScale = NormalizeDensity(_settingsService.Settings.LayoutDensityScale);
             ApplyTodoSettings(_settingsService.Settings, updateFilter: false);
         }
@@ -621,6 +625,20 @@ public sealed partial class TodoWidgetViewModel : ObservableObject, IDisposable
         }
     }
 
+    public double ContentTextSize
+    {
+        get => _contentTextSize;
+        private set
+        {
+            if (SetProperty(ref _contentTextSize, value))
+            {
+                OnPropertyChanged(nameof(ContentSecondaryTextSize));
+                OnPropertyChanged(nameof(ContentDetailHeaderTextSize));
+                OnPropertyChanged(nameof(ContentTitleTextSize));
+            }
+        }
+    }
+
     public double LayoutDensityScale
     {
         get => _layoutDensityScale;
@@ -649,6 +667,12 @@ public sealed partial class TodoWidgetViewModel : ObservableObject, IDisposable
     public double DetailHeaderTextSize => Math.Max(SettingsService.MinTextSize, TextSize - 1);
 
     public double TitleTextSize => Math.Min(SettingsService.MaxTextSize + 1, TextSize + 1);
+
+    public double ContentSecondaryTextSize => Math.Max(SettingsService.MinTextSize, ContentTextSize - 1);
+
+    public double ContentDetailHeaderTextSize => Math.Max(SettingsService.MinTextSize, ContentTextSize - 1);
+
+    public double ContentTitleTextSize => Math.Min(SettingsService.MaxTextSize + 1, ContentTextSize + 1);
 
     public double FilterTextSize => Math.Max(SettingsService.MinTextSize, TextSize);
 
@@ -724,6 +748,83 @@ public sealed partial class TodoWidgetViewModel : ObservableObject, IDisposable
     {
         get => _isInitialized;
         private set => SetProperty(ref _isInitialized, value);
+    }
+
+    /// <summary>
+    /// Merges a store mutation made by TodoReminderService (DEF-043) into the
+    /// in-memory state. Called on the UI thread via the App relay, so this can
+    /// touch observable collections directly. Merging instead of reloading
+    /// keeps user-selected detail/editor state intact while guaranteeing the
+    /// next user-driven save includes the reminder bookkeeping fields.
+    /// </summary>
+    public void ApplyExternalStoreChange(TodoItem? changedItem, TodoItem? insertedItem)
+    {
+        if (_isDisposed || !IsInitialized)
+        {
+            return;
+        }
+
+        bool listChanged = false;
+        if (changedItem is not null)
+        {
+            TodoItemViewModel? match = Items.FirstOrDefault(item =>
+                string.Equals(item.Item.Id, changedItem.Id, StringComparison.Ordinal));
+            if (match is null)
+            {
+                // The user deleted the item after the reminder fired; the
+                // in-memory list is authoritative for deletes, so do not
+                // resurrect it here.
+                return;
+            }
+
+            match.Item.ReminderLastNotifiedAt = changedItem.ReminderLastNotifiedAt;
+            match.Item.ReminderDismissedForDueDate = changedItem.ReminderDismissedForDueDate;
+            match.Item.SnoozedUntil = changedItem.SnoozedUntil;
+            match.Item.SnoozeLastNotifiedAt = changedItem.SnoozeLastNotifiedAt;
+            match.Item.UpdatedAt = changedItem.UpdatedAt;
+
+            if (changedItem.IsCompleted && !match.Item.IsCompleted)
+            {
+                match.Item.IsCompleted = true;
+                match.Item.CompletedAt = changedItem.CompletedAt;
+                match.Item.GeneratedNextItemId = changedItem.GeneratedNextItemId;
+                // The internal setter mirrors the flag onto the wrapped item
+                // and raises every completion-related UI notification.
+                match.IsCompleted = true;
+                listChanged = true;
+            }
+        }
+
+        if (insertedItem is not null &&
+            Items.All(entry => !string.Equals(entry.Item.Id, insertedItem.Id, StringComparison.Ordinal)))
+        {
+            int anchorIndex = -1;
+            if (changedItem is not null)
+            {
+                for (int index = 0; index < Items.Count; index++)
+                {
+                    if (string.Equals(Items[index].Item.Id, changedItem.Id, StringComparison.Ordinal))
+                    {
+                        anchorIndex = index;
+                        break;
+                    }
+                }
+            }
+
+            var nextViewModel = new TodoItemViewModel(insertedItem, _localizationService);
+            Items.Insert(anchorIndex < 0 ? Items.Count : Math.Clamp(anchorIndex + 1, 0, Items.Count), nextViewModel);
+            listChanged = true;
+        }
+
+        if (listChanged)
+        {
+            RefreshVisibleItems();
+            RefreshCountProperties();
+        }
+        else
+        {
+            OnPropertyChanged(nameof(IsInitialized));
+        }
     }
 
     public void Dispose()

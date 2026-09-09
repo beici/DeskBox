@@ -11,6 +11,42 @@ namespace DeskBox.ViewModels;
 
 public partial class WidgetViewModel
 {
+    private double _systemTextScaleFactor =
+        WindowsCompatibilityService.MinSystemTextScaleFactor;
+    private double _iconCellWidth;
+    private double _iconCellHeight;
+
+    /// <summary>
+    /// Uniform slot dimensions consumed by the main ItemsWrapGrid. They
+    /// include the item's outer margin so the panel never derives its global
+    /// cell size from whichever file happens to be realized first.
+    /// </summary>
+    public double IconCellWidth
+    {
+        get => _iconCellWidth;
+        private set => SetProperty(ref _iconCellWidth, value);
+    }
+
+    public double IconCellHeight
+    {
+        get => _iconCellHeight;
+        private set => SetProperty(ref _iconCellHeight, value);
+    }
+
+    internal void UpdateSystemTextScaleFactor(double textScaleFactor)
+    {
+        double normalized =
+            WindowsCompatibilityService.NormalizeSystemTextScaleFactor(
+                textScaleFactor);
+        if (Math.Abs(normalized - _systemTextScaleFactor) < 0.001)
+        {
+            return;
+        }
+
+        _systemTextScaleFactor = normalized;
+        ApplyLayoutSettings();
+    }
+
     private void UpdateDependentProperties()
     {
         string mappedFolderName = GetMappedFolderDisplayName();
@@ -103,53 +139,28 @@ public partial class WidgetViewModel
             settings.VerticalSpacingScale,
             SettingsService.MinSpacingScale,
             SettingsService.MaxSpacingScale);
-        double fileNameWidthScale = Math.Clamp(
-            settings.FileNameWidthScale,
-            SettingsService.MinSpacingScale,
-            SettingsService.MaxSpacingScale);
-        int fileNameLineCount = SettingsService.NormalizeFileNameLineCount(settings.FileNameLineCount);
-
         double horizontalT = NormalizeScale(horizontalScale, SettingsService.MinSpacingScale, SettingsService.MaxSpacingScale);
         double verticalT = NormalizeScale(verticalScale, SettingsService.MinSpacingScale, SettingsService.MaxSpacingScale);
-        double nameWidthT = NormalizeScale(fileNameWidthScale, SettingsService.MinSpacingScale, SettingsService.MaxSpacingScale);
         double densityT = NormalizeScale(
             densityScale,
             SettingsService.MinLayoutDensityScale,
             SettingsService.MaxLayoutDensityScale);
 
-        double labelMaxWidth = Math.Max(iconSize, Lerp(iconSize, textSize * 10.5, nameWidthT));
-        IconLabelMaxWidth = labelMaxWidth;
-        IconTileWidth = Math.Max(iconSize + Lerp(6, 28, horizontalT), labelMaxWidth + Lerp(4, 16, horizontalT));
-        double twoLineTileHeight = iconSize + Lerp(24, 70, verticalT);
-        double oneLineTileHeight = Math.Max(
-            iconSize + textSize + 8,
-            twoLineTileHeight - textSize - 3);
-        IconTileHeight = fileNameLineCount switch
-        {
-            SettingsService.HiddenFileNameLineCount => Math.Max(
-                iconSize + 8,
-                oneLineTileHeight - textSize - 3),
-            SettingsService.MinFileNameLineCount => oneLineTileHeight,
-            _ => twoLineTileHeight
-        };
-        IconTileMargin = new Thickness(
-            Lerp(0, 2, horizontalT),
-            Lerp(0, 2, verticalT),
-            Lerp(0, 2, horizontalT),
-            Lerp(0, 2, verticalT));
-        IconTilePadding = new Thickness(
-            Lerp(1, 5, horizontalT),
-            Lerp(1, 6, verticalT),
-            Lerp(1, 5, horizontalT),
-            Lerp(1, 6, verticalT));
-        IconContentSpacing = Lerp(1, 7, verticalT);
-        IconImageSize = iconSize;
-        IconLabelFontSize = textSize;
-        IconLabelMaxLines = Math.Max(SettingsService.MinFileNameLineCount, fileNameLineCount);
-        IconLabelVisibility = fileNameLineCount == SettingsService.HiddenFileNameLineCount
-            ? Visibility.Collapsed
-            : Visibility.Visible;
-        _iconDecodePixelWidth = ResolveIconDecodePixelWidth(iconSize);
+        FileWidgetIconLayout iconLayout = FileWidgetIconLayout.Calculate(
+            settings, Config.IconSizeOverride, _systemTextScaleFactor);
+        IconLabelMaxWidth = iconLayout.LabelMaxWidth;
+        IconTileWidth = iconLayout.TileWidth;
+        IconTileMargin = iconLayout.TileMargin;
+        IconTilePadding = iconLayout.TilePadding;
+        IconContentSpacing = iconLayout.ContentSpacing;
+        IconImageSize = iconLayout.ImageSize;
+        IconLabelFontSize = iconLayout.LabelFontSize;
+        IconLabelMaxLines = iconLayout.LabelMaxLines;
+        IconLabelVisibility = iconLayout.ShowLabel ? Visibility.Visible : Visibility.Collapsed;
+        IconTileHeight = iconLayout.TileHeight;
+        IconCellWidth = iconLayout.CellWidth;
+        IconCellHeight = iconLayout.CellHeight;
+        _iconDecodePixelWidth = iconLayout.DecodePixelWidth;
 
         double listScale = Lerp(0.68, 0.90, densityT);
         double listItemMarginY = Lerp(0, 2, verticalT);
@@ -175,16 +186,16 @@ public partial class WidgetViewModel
             : (value - min) / (max - min);
     }
 
-    private static int ResolveIconDecodePixelWidth(double iconSize)
-    {
-        return iconSize switch
-        {
-            <= 28 => 48,
-            <= 34 => 64,
-            <= 42 => 80,
-            _ => 128
-        };
-    }
+    internal static double ResolveIconTileHeight(
+        double iconSize,
+        double textSize,
+        int fileNameLineCount,
+        double verticalScale,
+        double systemTextScaleFactor) => FileWidgetIconLayout.ResolveTileHeight(
+            iconSize, textSize, fileNameLineCount, verticalScale, systemTextScaleFactor);
+
+    private static int ResolveIconDecodePixelWidth(double iconSize) =>
+        FileWidgetIconLayout.ResolveDecodePixelWidth(iconSize);
 
     public double EffectiveIconSize => SettingsService.NormalizeIconSize(
         Config.IconSizeOverride ?? _settingsService.Settings.IconSize);

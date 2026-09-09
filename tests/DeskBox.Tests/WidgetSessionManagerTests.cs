@@ -85,4 +85,48 @@ public sealed class WidgetSessionManagerTests
         Assert.Equal(WidgetSessionState.RaisedSession, manager.State);
         Assert.False(manager.IsInteractionActive);
     }
+
+    [Fact]
+    public void ForceReset_FromDesktopInteraction_ReturnsToPreInteractionState()
+    {
+        var manager = new WidgetSessionManager();
+
+        manager.BeginInteraction("leaked-begin");
+        manager.ForceResetInteractions("watchdog");
+
+        Assert.Equal(WidgetSessionState.DesktopResting, manager.State);
+        Assert.False(manager.IsInteractionActive);
+
+        // After the reset, normal pairing resumes cleanly: a stray End must
+        // not push the depth negative or change the state again.
+        manager.EndInteraction("stray-after-reset");
+        Assert.Equal(WidgetSessionState.DesktopResting, manager.State);
+        Assert.False(manager.IsInteractionActive);
+    }
+
+    [Fact]
+    public void ForceReset_FromRaisedSession_RestoresRaisedState()
+    {
+        var manager = new WidgetSessionManager();
+        manager.MarkRaisedSession("raised");
+
+        manager.BeginInteraction("leaked-begin");
+        manager.ForceResetInteractions("watchdog");
+
+        Assert.Equal(WidgetSessionState.RaisedSession, manager.State);
+        Assert.True(manager.IsRaised);
+        Assert.False(manager.IsInteractionActive);
+    }
+
+    [Fact]
+    public void ForceReset_WithoutLeak_IsANoOp()
+    {
+        var manager = new WidgetSessionManager();
+        manager.MarkRaisedSession("raised");
+
+        manager.ForceResetInteractions("watchdog");
+
+        Assert.Equal(WidgetSessionState.RaisedSession, manager.State);
+        Assert.False(manager.IsInteractionActive);
+    }
 }

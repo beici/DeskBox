@@ -64,13 +64,11 @@ public sealed class AotStage4E2ContractTests
     [Fact]
     public void InlineEditorConsumers_SaveAndResetThroughTheTextDependencyProperty()
     {
-        string quickCapture = ReadRepositoryFile(
-            "src/DeskBox/Views/QuickCaptureWidgetWindow.Editing.cs");
+        // DEF-027: the dead-host inline editor was removed; the todo content
+        // pins the same inline-editor contract for the surviving consumer.
         string todo = ReadRepositoryFile(
             "src/DeskBox/Controls/WidgetContents/TodoWidgetContent.EditingAndUndo.cs");
 
-        Assert.Contains("string body = QuickCaptureInlineEditor.Text;", quickCapture, StringComparison.Ordinal);
-        Assert.Contains("QuickCaptureInlineEditor.Text = string.Empty;", quickCapture, StringComparison.Ordinal);
         Assert.Contains("UpdateItemTextAsync(item.Id, TodoInlineEditor.Text)", todo, StringComparison.Ordinal);
         Assert.Contains("TodoInlineEditor.Text = string.Empty;", todo, StringComparison.Ordinal);
     }
@@ -91,7 +89,7 @@ public sealed class AotStage4E2ContractTests
     {
         string audit = ReadRepositoryFile("scripts/publish-aot-audit.ps1");
 
-        Assert.Contains("$auditProfileVersion = 58", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 61", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage4E2SourceFiles", audit, StringComparison.Ordinal);
         Assert.Contains("stage4E2LegacyBindingSourceMatches", audit, StringComparison.Ordinal);
@@ -105,7 +103,7 @@ public sealed class AotStage4E2ContractTests
     {
         string audit = ReadRepositoryFile("scripts/publish-aot-audit.ps1");
 
-        Assert.Contains("$stage4E2MaximumWmc1510Count = 1243", audit, StringComparison.Ordinal);
+        Assert.Contains("$stage4E2MaximumWmc1510Count = 870", audit, StringComparison.Ordinal);
         Assert.Contains("Stage 4E-2 WMC1510 count regressed above its ceiling", audit, StringComparison.Ordinal);
     }
 

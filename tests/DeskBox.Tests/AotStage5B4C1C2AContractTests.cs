@@ -53,7 +53,7 @@ public sealed class AotStage5B4C1C2AContractTests
     }
 
     [Fact]
-    public void NativePointerFallback_OnlyClearsStaleTargetsUsingRealScreenBounds()
+    public void NativePointerFallback_ClearsStaleTargetsAndMaintainsExternalPreviewUsingRealScreenBounds()
     {
         string surface = ReadRepositoryFile(
             "src/DeskBox/Controls/WidgetContents/FileSurfaceContent.xaml.cs");
@@ -69,6 +69,11 @@ public sealed class AotStage5B4C1C2AContractTests
         Assert.Contains("ClearDragSessionVisualState();", method, StringComparison.Ordinal);
         Assert.Contains("ClearFolderDropTarget();", method, StringComparison.Ordinal);
         Assert.Contains("ClearStackMemberDropTarget();", method, StringComparison.Ordinal);
+        Assert.Contains("IReadOnlyList<string>? pathHints = null", method, StringComparison.Ordinal);
+        Assert.Contains("WidgetItem? nativeTarget = null", method, StringComparison.Ordinal);
+        Assert.Contains("ApplyNativeFolderDropTarget(nativeTarget)", method, StringComparison.Ordinal);
+        Assert.Contains("ApplyNativeStackDropTarget(nativeStack)", method, StringComparison.Ordinal);
+        Assert.Contains("UpdateExternalDropPreview(", method, StringComparison.Ordinal);
         Assert.DoesNotContain("SetFolderDropTarget", method, StringComparison.Ordinal);
         Assert.DoesNotContain("SetStackMemberDropTarget", method, StringComparison.Ordinal);
     }
@@ -182,7 +187,7 @@ public sealed class AotStage5B4C1C2AContractTests
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
         string rust = ReadRepositoryFile("native/deskbox-native/src/lib.rs");
 
-        Assert.Contains("$auditProfileVersion = 58", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 61", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1C2ARequiredProductPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1C2AMissingSmokeScriptPatterns", audit, StringComparison.Ordinal);
@@ -191,7 +196,7 @@ public sealed class AotStage5B4C1C2AContractTests
         Assert.Contains("$sourceFile -eq $stage5B4C1ASourceFiles[4]", audit, StringComparison.Ordinal);
         Assert.Contains("$pattern -eq 'NativeDrop'", audit, StringComparison.Ordinal);
         Assert.Contains("C1C2A applies its own narrow gate", audit, StringComparison.Ordinal);
-        Assert.Contains("$RequiredAuditProfileVersion = 58", launcher, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 61", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("Native AOT stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("assert_eq!(deskbox_native_capabilities(), 511);", rust, StringComparison.Ordinal);

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+using DeskBox.Helpers;
 using DeskBox.Models;
 using DeskBox.Services;
 using Microsoft.UI;
@@ -10,6 +11,8 @@ namespace DeskBox.ViewModels;
 
 public sealed partial class TodoItemViewModel : ObservableObject
 {
+    private const byte ColorMarkerWashAlpha = 0x20;
+
     private readonly TodoItem _item;
     private readonly LocalizationService? _localizationService;
     private string _text;
@@ -21,7 +24,7 @@ public sealed partial class TodoItemViewModel : ObservableObject
     private DateTimeOffset? _completedAt;
     private int? _reminderOffsetMinutes;
     private DateTimeOffset? _snoozedUntil;
-        private bool _isEditing;
+    private bool _isEditing;
     private bool _isCopySelected;
     private bool _isExpanded;
     private string _editText = string.Empty;
@@ -188,10 +191,12 @@ public sealed partial class TodoItemViewModel : ObservableObject
             if (SetProperty(ref _colorMarker, normalizedValue))
             {
                 _item.ColorMarker = normalizedValue;
+                RefreshColorMarkerColors();
                 OnPropertyChanged(nameof(HasRedMarker));
                 OnPropertyChanged(nameof(HasColorMarker));
                 OnPropertyChanged(nameof(ColorMarkerVisibility));
-                OnPropertyChanged(nameof(ColorMarkerBrush));
+                OnPropertyChanged(nameof(ColorMarkerColor));
+                OnPropertyChanged(nameof(ColorMarkerWashColor));
                 OnPropertyChanged(nameof(MarkerGlyph));
                 OnPropertyChanged(nameof(MetadataColorText));
             }
@@ -361,7 +366,25 @@ public sealed partial class TodoItemViewModel : ObservableObject
 
     public Visibility ColorMarkerVisibility => HasColorMarker ? Visibility.Visible : Visibility.Collapsed;
 
-    public Brush ColorMarkerBrush => new SolidColorBrush(ParseColor(TodoItem.GetColorMarkerHex(ColorMarker)));
+    /// <summary>
+    /// The marker color as data. Brushes are derived in the view layer's color
+    /// converter: constructing WinUI brushes here would make the view model
+    /// untestable headlessly (every TodoItemViewModel test would need a XAML
+    /// island) and is an architecture-contract violation.
+    /// </summary>
+    public Windows.UI.Color ColorMarkerColor => RefreshColorMarkerColors();
+
+    public Windows.UI.Color ColorMarkerWashColor =>
+        Windows.UI.Color.FromArgb(
+            ColorMarkerWashAlpha,
+            ColorMarkerColor.R,
+            ColorMarkerColor.G,
+            ColorMarkerColor.B);
+
+    private Windows.UI.Color RefreshColorMarkerColors()
+    {
+        return ParseColor(TodoItem.GetColorMarkerHex(ColorMarker));
+    }
 
     public string MarkerGlyph => HasRedMarker ? "\uE915" : "\uE915";
 

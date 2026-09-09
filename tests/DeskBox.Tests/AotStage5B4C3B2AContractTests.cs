@@ -116,15 +116,15 @@ public sealed class AotStage5B4C3B2AContractTests
         string launcher = Read("scripts/start-aot-preview.ps1");
         string project = Read("src/DeskBox/DeskBox.csproj");
         string rust = Read("native/deskbox-native/src/lib.rs");
-        string report = Read("docs/architecture/aot-stage-5b-4c3b2a-report.md");
+        string report = Read("docs/architecture/stage-reports/aot-stage-5b-4c3b2a-report.md");
         string roadmap = Read("docs/architecture/rust-native-aot-roadmap.md");
 
-        Assert.Contains("$auditProfileVersion = 58", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 61", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C3B2ARequiredScenarioPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C3B2AMissingSmokeScriptPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C3B2ARustAbiUnchanged", audit, StringComparison.Ordinal);
-        Assert.Contains("$RequiredAuditProfileVersion = 58", launcher, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 61", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("Native AOT stage 5B-4C3B2B2A", project, StringComparison.Ordinal);
         Assert.Contains("real Windows notification click provenance", project, StringComparison.Ordinal);

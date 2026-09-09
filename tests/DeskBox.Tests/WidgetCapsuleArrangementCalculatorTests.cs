@@ -116,4 +116,67 @@ public sealed class WidgetCapsuleArrangementCalculatorTests
 
         Assert.Equal(new RectInt32(100, 50, 320, 180), result["one"]);
     }
+
+    [Fact]
+    public void TinyWorkArea_TruncatesOverflowingCapsulesInsteadOfSpillingOut()
+    {
+        // DEF-026 (LAY-04): count × 1px + spacing > work-area length used to
+        // overflow silently. The bar must fit: dropped tail capsules are not
+        // arranged (they fall back to free placement upstream), arranged ones
+        // stay inside the work area, and spacing is squeezed before sizes.
+        var items = Enumerable.Range(0, 80)
+            .Select(index => new WidgetCapsuleArrangementItem($"c{index}", 120, 40))
+            .ToArray();
+
+        IReadOnlyDictionary<string, RectInt32> result =
+            WidgetCapsuleArrangementCalculator.Calculate(
+                items,
+                new RectInt32(0, 0, 50, 200),
+                new PointInt32(25, 10),
+                WidgetPositionAnchors.LeftTop,
+                SettingsService.WidgetCapsuleBarDirectionHorizontal,
+                10);
+
+        Assert.True(result.Count < items.Length,
+            "an un-fittable bar must drop tail capsules instead of overflowing");
+        Assert.All(result.Values, bounds =>
+        {
+            Assert.True(bounds.X >= 0 && bounds.X + bounds.Width <= 50,
+                $"arranged capsule must stay inside the work area, got x={bounds.X} w={bounds.Width}");
+            Assert.True(bounds.Y >= 0 && bounds.Y + bounds.Height <= 200);
+        });
+        // Arranged capsules are contiguous: no silent gaps from dropped
+        // middle items — the tail is what gets truncated.
+        RectInt32[] ordered = result.Values.OrderBy(b => b.X).ToArray();
+        for (int index = 1; index < ordered.Length; index++)
+        {
+            Assert.True(ordered[index].X >= ordered[index - 1].X + ordered[index - 1].Width,
+                "arranged capsules must not overlap");
+        }
+    }
+
+    [Fact]
+    public void TinyWorkArea_VerticalOrientation_AlsoBounded()
+    {
+        var items = Enumerable.Range(0, 80)
+            .Select(index => new WidgetCapsuleArrangementItem($"c{index}", 120, 40))
+            .ToArray();
+
+        IReadOnlyDictionary<string, RectInt32> result =
+            WidgetCapsuleArrangementCalculator.Calculate(
+                items,
+                new RectInt32(0, 0, 200, 30),
+                new PointInt32(10, 15),
+                WidgetPositionAnchors.LeftTop,
+                SettingsService.WidgetCapsuleBarDirectionVertical,
+                6);
+
+        Assert.True(result.Count < items.Length);
+        Assert.All(result.Values, bounds =>
+        {
+            Assert.True(bounds.X >= 0 && bounds.X + bounds.Width <= 200);
+            Assert.True(bounds.Y >= 0 && bounds.Y + bounds.Height <= 30,
+                $"arranged capsule must stay inside the work area, got y={bounds.Y} h={bounds.Height}");
+        });
+    }
 }

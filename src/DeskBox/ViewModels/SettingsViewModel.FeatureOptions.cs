@@ -359,6 +359,7 @@ public partial class SettingsViewModel
             }
 
             _settingsService.Settings.MusicDisplayMode = normalizedValue;
+            _musicSettingsStore.Update(store => store.DisplayMode = normalizedValue);
             _settingsService.SaveDebounced();
         }
     }
@@ -389,30 +390,6 @@ public partial class SettingsViewModel
     {
         get => _managedStorageRootPath;
         private set => SetProperty(ref _managedStorageRootPath, value);
-    }
-
-    public bool ManagedStorageDesktopShortcutEnabled
-    {
-        get => _managedStorageDesktopShortcutEnabled;
-        set
-        {
-            if (!SetProperty(ref _managedStorageDesktopShortcutEnabled, value))
-            {
-                return;
-            }
-
-            if (_isRestoringDefaults || _isApplyingSettingsSnapshot)
-            {
-                return;
-            }
-
-            _settingsService.Settings.ManagedStorageDesktopShortcutEnabled = value;
-            _settingsService.SaveDebounced();
-            if (App.Current?.ManagedStorageDesktopShortcutService is { } shortcutService)
-            {
-                _ = shortcutService.SyncAsync();
-            }
-        }
     }
 
     public QuickAccessPinState ManagedStorageQuickAccessPinState
@@ -815,6 +792,13 @@ set => WidgetOpacity = Math.Clamp(1.0 - value / 100d, SettingsService.MinWidgetO
                     _settingsService.Settings.MusicUseArtworkBackdrop = true;
                     _settingsService.Settings.MusicEnableCoverHoverMotion = true;
                     _settingsService.Settings.MusicDisplayMode = SettingsService.MusicDisplayModeAuto;
+                    _musicSettingsStore.Update(store =>
+                    {
+                        store.UseArtworkBackdrop = true;
+                        store.EnableCoverHoverMotion = true;
+                        store.DisplayMode = SettingsService.MusicDisplayModeAuto;
+                    });
+                    _settingsService.SaveDebounced();
                     break;
                 case WidgetKind.Weather:
                     WeatherAutoLocation = true;

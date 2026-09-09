@@ -52,7 +52,6 @@ public sealed class DeskBoxDataPathIsolationTests
     [InlineData("src/DeskBox/Services/SearchHistoryService.cs")]
     [InlineData("src/DeskBox/Services/LegacySearchIndexCleanupService.cs")]
     [InlineData("src/DeskBox/Services/DesktopOrganizationRecoveryStore.cs")]
-    [InlineData("src/DeskBox/Views/QuickCaptureWidgetWindow.xaml.cs")]
     public void AppOwnedStorage_UsesSharedDataRoot(string relativePath)
     {
         string source = File.ReadAllText(TestPaths.FromRepository(relativePath));

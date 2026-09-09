@@ -14,7 +14,22 @@ internal static class ShellThumbnailProxy
     private enum ShellImageMode
     {
         Thumbnail,
-        Icon
+        Icon,
+        IconWithOverlays
+    }
+
+    private readonly record struct BitmapPayloadInfo(
+        int Width,
+        int Height,
+        int SignedHeight,
+        int PixelOffset,
+        int MinX,
+        int MinY,
+        int MaxX,
+        int MaxY)
+    {
+        public int VisibleWidth => MaxX - MinX + 1;
+        public int VisibleHeight => MaxY - MinY + 1;
     }
 
     internal const string ExecutableName = "DeskBox.ThumbnailProxy.exe";
@@ -61,9 +76,15 @@ internal static class ShellThumbnailProxy
 
     public static async Task<byte[]?> TryLoadIconAsync(
         string path,
-        int requestedSize)
+        int requestedSize,
+        bool includeOverlays = false)
     {
-        return await TryLoadAsync(path, requestedSize, ShellImageMode.Icon);
+        return await TryLoadAsync(
+            path,
+            requestedSize,
+            includeOverlays
+                ? ShellImageMode.IconWithOverlays
+                : ShellImageMode.Icon);
     }
 
     private static async Task<byte[]?> TryLoadAsync(
@@ -104,9 +125,12 @@ internal static class ShellThumbnailProxy
             RedirectStandardError = true,
             CreateNoWindow = true
         };
-        if (mode == ShellImageMode.Icon)
+        if (mode is ShellImageMode.Icon or ShellImageMode.IconWithOverlays)
         {
-            startInfo.ArgumentList.Add("--icon-only");
+            startInfo.ArgumentList.Add(
+                mode == ShellImageMode.IconWithOverlays
+                    ? "--icon-with-overlays"
+                    : "--icon-only");
         }
 
         startInfo.ArgumentList.Add(normalizedPath);
@@ -181,6 +205,28 @@ internal static class ShellThumbnailProxy
             return null;
         }
 
+        if (mode is ShellImageMode.Icon or ShellImageMode.IconWithOverlays)
+        {
+            byte[]? normalizedOutput = NormalizeIconPayload(output);
+            if (normalizedOutput is null)
+            {
+                RecordFailure(failureKey);
+                App.LogVerbose(
+                    $"[ShellThumbnailProxy] Unable to normalize Shell-item icon " +
+                    $"path={normalizedPath}");
+                return null;
+            }
+
+            if (normalizedOutput.Length != output.Length)
+            {
+                App.LogVerbose(
+                    $"[ShellThumbnailProxy] Cropped padded Shell-item icon " +
+                    $"path={normalizedPath}");
+            }
+
+            output = normalizedOutput;
+        }
+
         s_recentFailures.TryRemove(failureKey, out _);
         return output;
     }
@@ -193,6 +239,9 @@ internal static class ShellThumbnailProxy
             out _);
         s_recentFailures.TryRemove(
             BuildFailureKey(normalizedPath, ShellImageMode.Icon),
+            out _);
+        s_recentFailures.TryRemove(
+            BuildFailureKey(normalizedPath, ShellImageMode.IconWithOverlays),
             out _);
     }
 
@@ -239,34 +288,145 @@ internal static class ShellThumbnailProxy
         extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase) ||
         extension.Equals(".url", StringComparison.OrdinalIgnoreCase);
 
-    private static async Task<byte[]> ReadBoundedOutputAsync(
+    internal static async Task<byte[]> ReadBoundedOutputAsync(
         Stream stream,
         int maximumBytes)
     {
-        using var output = new MemoryStream();
-        byte[] buffer = new byte[16 * 1024];
-        while (true)
+        // The native proxy emits one BMP with its total length in the file
+        // header. Read directly into the final array to avoid MemoryStream's
+        // growth buffers and the additional full-size ToArray copy.
+        byte[] header = new byte[14];
+        int headerBytes = await stream.ReadAtLeastAsync(
+            header,
+            header.Length,
+            throwOnEndOfStream: false).ConfigureAwait(false);
+        if (headerBytes == 0)
         {
-            int read = await stream.ReadAsync(buffer);
-            if (read == 0)
-            {
-                break;
-            }
-
-            if (output.Length + read > maximumBytes)
-            {
-                throw new InvalidDataException(
-                    "The thumbnail proxy payload exceeded its limit.");
-            }
-
-            await output.WriteAsync(buffer.AsMemory(0, read));
+            return [];
         }
 
-        return output.ToArray();
+        if (headerBytes != header.Length ||
+            header[0] != (byte)'B' || header[1] != (byte)'M')
+        {
+            throw new InvalidDataException(
+                "The thumbnail proxy returned an invalid bitmap header.");
+        }
+
+        uint declaredSize = BitConverter.ToUInt32(header, 2);
+        if (declaredSize < 138 || declaredSize > maximumBytes)
+        {
+            throw new InvalidDataException(
+                "The thumbnail proxy payload size was outside its limit.");
+        }
+
+        byte[] output = new byte[(int)declaredSize];
+        header.CopyTo(output, 0);
+        await stream.ReadExactlyAsync(
+            output.AsMemory(header.Length)).ConfigureAwait(false);
+        if (await stream.ReadAsync(header.AsMemory(0, 1)).ConfigureAwait(false) != 0)
+        {
+            throw new InvalidDataException(
+                "The thumbnail proxy returned data beyond its bitmap payload.");
+        }
+
+        return output;
     }
 
     internal static bool IsVisibleBitmapPayload(byte[] bytes)
     {
+        return TryReadVisibleBitmapPayload(bytes, out _);
+    }
+
+    internal static bool IsLikelyPaddedIconPayload(byte[] bytes)
+    {
+        return TryReadVisibleBitmapPayload(
+                   bytes,
+                   out BitmapPayloadInfo payload) &&
+               IconBitmapQuality.IsLikelyPadded(
+                   payload.Width,
+                   payload.Height,
+                   payload.VisibleWidth,
+                   payload.VisibleHeight);
+    }
+
+    /// <summary>
+    /// Crops the transparent border from a Shell icon only when the visible
+    /// artwork is clearly a small glyph inside a Jumbo canvas. The normalized
+    /// payload remains a 32-bit top-down BMP so the caller can decode it through
+    /// the same BitmapImage path as an unmodified proxy result.
+    /// </summary>
+    internal static byte[]? NormalizeIconPayload(byte[] bytes)
+    {
+        if (!TryReadVisibleBitmapPayload(
+                bytes,
+                out BitmapPayloadInfo payload))
+        {
+            return null;
+        }
+
+        if (!IconBitmapQuality.IsLikelyPadded(
+                payload.Width,
+                payload.Height,
+                payload.VisibleWidth,
+                payload.VisibleHeight))
+        {
+            return bytes;
+        }
+
+        try
+        {
+            int cropWidth = payload.VisibleWidth;
+            int cropHeight = payload.VisibleHeight;
+            int rowByteCount = checked(cropWidth * 4);
+            int pixelByteCount = checked(rowByteCount * cropHeight);
+            int outputSize = checked(payload.PixelOffset + pixelByteCount);
+            byte[] normalized = new byte[outputSize];
+            Buffer.BlockCopy(
+                bytes,
+                0,
+                normalized,
+                0,
+                payload.PixelOffset);
+            WriteInt32(normalized, 2, outputSize);
+            WriteInt32(normalized, 18, cropWidth);
+            WriteInt32(normalized, 22, -cropHeight);
+            WriteInt32(normalized, 34, pixelByteCount);
+
+            int sourceRowByteCount = checked(payload.Width * 4);
+            for (int y = 0; y < cropHeight; y++)
+            {
+                int sourceY = payload.SignedHeight < 0
+                    ? payload.MinY + y
+                    : payload.MaxY - y;
+                int sourceOffset = checked(
+                    payload.PixelOffset +
+                    (sourceY * sourceRowByteCount) +
+                    (payload.MinX * 4));
+                int destinationOffset = checked(
+                    payload.PixelOffset + (y * rowByteCount));
+                Buffer.BlockCopy(
+                    bytes,
+                    sourceOffset,
+                    normalized,
+                    destinationOffset,
+                    rowByteCount);
+            }
+
+            return normalized;
+        }
+        catch (Exception ex)
+        {
+            App.LogVerbose(
+                $"[ShellThumbnailProxy] Icon payload crop failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static bool TryReadVisibleBitmapPayload(
+        byte[] bytes,
+        out BitmapPayloadInfo payload)
+    {
+        payload = default;
         if (bytes.Length < 138 || bytes[0] != (byte)'B' || bytes[1] != (byte)'M')
         {
             return false;
@@ -275,14 +435,15 @@ internal static class ShellThumbnailProxy
         uint declaredSize = BitConverter.ToUInt32(bytes, 2);
         uint pixelOffset = BitConverter.ToUInt32(bytes, 10);
         uint dibHeaderSize = BitConverter.ToUInt32(bytes, 14);
-        int width = BitConverter.ToInt32(bytes, 18);
         int signedHeight = BitConverter.ToInt32(bytes, 22);
         ushort bitsPerPixel = BitConverter.ToUInt16(bytes, 28);
-        long height = Math.Abs((long)signedHeight);
+        long absoluteHeight = Math.Abs((long)signedHeight);
+        int parsedWidth = BitConverter.ToInt32(bytes, 18);
         if (declaredSize != bytes.Length ||
             dibHeaderSize < 40 ||
-            width <= 0 ||
-            height <= 0 ||
+            parsedWidth <= 0 ||
+            absoluteHeight <= 0 ||
+            absoluteHeight > int.MaxValue ||
             bitsPerPixel != 32 ||
             pixelOffset < 54 ||
             pixelOffset >= bytes.Length)
@@ -290,26 +451,56 @@ internal static class ShellThumbnailProxy
             return false;
         }
 
-        long availablePixelBytes = bytes.Length - pixelOffset;
-        if ((long)width > availablePixelBytes / 4 / height)
+        long pixelByteCount = (long)parsedWidth * absoluteHeight * 4;
+        if (pixelByteCount > bytes.Length - pixelOffset)
         {
             return false;
         }
 
-        long pixelByteCount = (long)width * height * 4;
-
-        int pixelEnd = checked((int)(pixelOffset + pixelByteCount));
-        for (int index = checked((int)pixelOffset) + 3;
-             index < pixelEnd;
-             index += 4)
+        int pixelStart = checked((int)pixelOffset);
+        int rowByteCount = checked(parsedWidth * 4);
+        int parsedHeight = (int)absoluteHeight;
+        int minX = parsedWidth;
+        int minY = parsedHeight;
+        int maxX = -1;
+        int maxY = -1;
+        for (int y = 0; y < parsedHeight; y++)
         {
-            if (bytes[index] != 0)
+            int rowStart = checked(pixelStart + (y * rowByteCount));
+            for (int x = 0; x < parsedWidth; x++)
             {
-                return true;
+                if (bytes[rowStart + (x * 4) + 3] == 0)
+                {
+                    continue;
+                }
+
+                minX = Math.Min(minX, x);
+                maxX = Math.Max(maxX, x);
+                minY = Math.Min(minY, y);
+                maxY = Math.Max(maxY, y);
             }
         }
 
-        return false;
+        if (maxX < minX || maxY < minY)
+        {
+            return false;
+        }
+
+        payload = new BitmapPayloadInfo(
+            parsedWidth,
+            parsedHeight,
+            signedHeight,
+            checked((int)pixelOffset),
+            minX,
+            minY,
+            maxX,
+            maxY);
+        return true;
+    }
+
+    private static void WriteInt32(byte[] bytes, int offset, int value)
+    {
+        BitConverter.GetBytes(value).CopyTo(bytes, offset);
     }
 
     private static string BuildFailureKey(

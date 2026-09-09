@@ -162,6 +162,41 @@ public sealed class QuickCaptureClipboardServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CaptureCurrentForTestingAsync_RecordsUserTextThatDiffersFromDeskBoxWrite()
+    {
+        var settingsService = await CreateLoadedSettingsServiceAsync();
+        EnableClipboardCapture(settingsService);
+        var quickCaptureService = CreateQuickCaptureService();
+        var reader = new FakeClipboardReader { Text = "user copied something else" };
+        using var service = new QuickCaptureClipboardService(settingsService, quickCaptureService, reader);
+
+        DeskBoxClipboardWriteScope.MarkWrite(text: "copied inside DeskBox");
+        await service.CaptureCurrentForTestingAsync();
+
+        var data = await quickCaptureService.GetDataAsync();
+        var item = Assert.Single(data.RecentItems);
+        Assert.Equal("user copied something else", item.Body);
+    }
+
+    [Fact]
+    public async Task CaptureCurrentForTestingAsync_RecordsSameTextAfterIgnoreWindowExpires()
+    {
+        var settingsService = await CreateLoadedSettingsServiceAsync();
+        EnableClipboardCapture(settingsService);
+        var quickCaptureService = CreateQuickCaptureService();
+        var reader = new FakeClipboardReader { Text = "copied inside DeskBox" };
+        using var service = new QuickCaptureClipboardService(settingsService, quickCaptureService, reader);
+
+        DeskBoxClipboardWriteScope.MarkWrite(text: "copied inside DeskBox");
+        await Task.Delay(TimeSpan.FromSeconds(2.1));
+        await service.CaptureCurrentForTestingAsync();
+
+        var data = await quickCaptureService.GetDataAsync();
+        var item = Assert.Single(data.RecentItems);
+        Assert.Equal("copied inside DeskBox", item.Body);
+    }
+
+    [Fact]
     public async Task CaptureCurrentForTestingAsync_IgnoresImageWhenImageRecordingDisabled()
     {
         var settingsService = await CreateLoadedSettingsServiceAsync();

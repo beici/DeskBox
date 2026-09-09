@@ -67,6 +67,7 @@ public sealed class AotStage5B4C1B1ContractTests
         Assert.Contains("items => DeleteItemsAsync(items)", surface, StringComparison.Ordinal);
         Assert.Contains("bool permanently = false", surfaceOperations, StringComparison.Ordinal);
         Assert.Contains("public async Task<FileDeleteBatchResult> DeleteItemsAsync", viewModel, StringComparison.Ordinal);
+        Assert.Contains("_fileService.DeleteEntriesWithShellAsync(", viewModel, StringComparison.Ordinal);
         Assert.Contains("_fileService.DeleteEntryAsync(", viewModel, StringComparison.Ordinal);
         Assert.Contains("DeleteEntryWithShell(normalizedPath, ownerHandle, allowUndo: true)", fileService, StringComparison.Ordinal);
         Assert.Contains("SHFileOperation(ref operation)", fileService, StringComparison.Ordinal);
@@ -243,16 +244,16 @@ public sealed class AotStage5B4C1B1ContractTests
         string launcher = ReadRepositoryFile("scripts/start-aot-preview.ps1");
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
         string report = ReadRepositoryFile(
-            "docs/architecture/aot-stage-5b-4c1b1-report.md");
+            "docs/architecture/stage-reports/aot-stage-5b-4c1b1-report.md");
         string abi = ReadRepositoryFile(
             "docs/architecture/recycle-bin-native-abi-v1.md");
         string roadmap = ReadRepositoryFile(
             "docs/architecture/rust-native-aot-roadmap.md");
 
-        Assert.Contains("$auditProfileVersion = 58", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 61", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1B1", audit, StringComparison.Ordinal);
-        Assert.Contains("$RequiredAuditProfileVersion = 58", launcher, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 61", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredRustCapabilities = 511", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredRustExportCount = 10", launcher, StringComparison.Ordinal);

@@ -55,8 +55,12 @@ public sealed class ShellThumbnailProxyContractTests
 
         Assert.Contains("SIIGBF_THUMBNAILONLY", source, StringComparison.Ordinal);
         Assert.Contains("SIIGBF_ICONONLY", source, StringComparison.Ordinal);
+        Assert.Contains("SHGFI_ADDOVERLAYS", source, StringComparison.Ordinal);
         Assert.Contains("--icon-only", source, StringComparison.Ordinal);
+        Assert.Contains("--icon-with-overlays", source, StringComparison.Ordinal);
         Assert.Contains("IShellItemImageFactory", source, StringComparison.Ordinal);
+        Assert.Contains("if !path.exists()", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("if !path.is_file()", source, StringComparison.Ordinal);
         Assert.Contains("BITMAP_V5_HEADER_SIZE", source, StringComparison.Ordinal);
         Assert.Contains("0xFF00_0000", source, StringComparison.Ordinal);
         Assert.Contains("empty transparent bitmap", source, StringComparison.Ordinal);
@@ -71,6 +75,28 @@ public sealed class ShellThumbnailProxyContractTests
             CreateBitmapPayload(alpha: 0)));
         Assert.True(ShellThumbnailProxy.IsVisibleBitmapPayload(
             CreateBitmapPayload(alpha: 0xFF)));
+    }
+
+    [Fact]
+    public void ShortcutIconPayload_CropsClearlyPaddedCanvas()
+    {
+        byte[] payload = CreateBitmapPayload(
+            width: 256,
+            height: 256,
+            visibleLeft: 104,
+            visibleTop: 104,
+            visibleWidth: 48,
+            visibleHeight: 48,
+            alpha: 0xFF);
+
+        Assert.True(ShellThumbnailProxy.IsLikelyPaddedIconPayload(payload));
+
+        byte[] normalized = Assert.IsType<byte[]>(
+            ShellThumbnailProxy.NormalizeIconPayload(payload));
+        Assert.True(ShellThumbnailProxy.IsVisibleBitmapPayload(normalized));
+        Assert.False(ShellThumbnailProxy.IsLikelyPaddedIconPayload(normalized));
+        Assert.Equal(48, BitConverter.ToInt32(normalized, 18));
+        Assert.Equal(-48, BitConverter.ToInt32(normalized, 22));
     }
 
     [Fact]
@@ -90,36 +116,73 @@ public sealed class ShellThumbnailProxyContractTests
                 "shell:RecycleBinFolder",
                 "DeskBox issue 119 regression");
 
-            string proxyPath = GetBuiltProxyPath();
-            Assert.True(File.Exists(proxyPath), $"Proxy not found: {proxyPath}");
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = proxyPath,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-            startInfo.ArgumentList.Add("--icon-only");
-            startInfo.ArgumentList.Add(shortcutPath);
-            startInfo.ArgumentList.Add("64");
-
-            using var process = Process.Start(startInfo);
-            Assert.NotNull(process);
-            using var output = new MemoryStream();
-            Task outputTask = process.StandardOutput.BaseStream.CopyToAsync(output);
-            Task<string> errorTask = process.StandardError.ReadToEndAsync();
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            await process.WaitForExitAsync(timeout.Token);
-            await outputTask;
-            string error = await errorTask;
-
+            byte[] output = await RunIconProxyAsync(shortcutPath, 64);
             Assert.True(
-                process.ExitCode == 0,
-                $"Icon-only proxy failed with {process.ExitCode}: {error}");
-            Assert.True(
-                ShellThumbnailProxy.IsVisibleBitmapPayload(output.ToArray()),
+                ShellThumbnailProxy.IsVisibleBitmapPayload(output),
                 "Icon-only proxy returned an empty or transparent bitmap.");
+        }
+        finally
+        {
+            Directory.Delete(temporaryDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task IconOnlyProxy_ReturnsVisiblePixelsForFolder()
+    {
+        string temporaryDirectory = Path.Combine(
+            Path.GetTempPath(),
+            $"DeskBox-folder-icon-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temporaryDirectory);
+        try
+        {
+            byte[] output = await RunIconProxyAsync(
+                temporaryDirectory,
+                256);
+            Assert.True(
+                ShellThumbnailProxy.IsVisibleBitmapPayload(output),
+                "Folder icon proxy returned an empty or transparent bitmap.");
+        }
+        finally
+        {
+            Directory.Delete(temporaryDirectory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task IconProxy_ReturnsVisiblePixelsForInternetShortcut(
+        bool includeOverlays)
+    {
+        string temporaryDirectory = Path.Combine(
+            Path.GetTempPath(),
+            $"DeskBox-url-icon-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(temporaryDirectory);
+        try
+        {
+            string shortcutPath = Path.Combine(
+                temporaryDirectory,
+                "Steam game.url");
+            string shellIconPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                "System32",
+                "shell32.dll");
+            await File.WriteAllTextAsync(
+                shortcutPath,
+                $"[InternetShortcut]\n" +
+                $"URL=steam://rungameid/123\n" +
+                $"IconFile={shellIconPath}\n" +
+                $"IconIndex=0\n");
+
+            byte[] output = await RunIconProxyAsync(
+                shortcutPath,
+                256,
+                includeOverlays);
+            Assert.True(
+                ShellThumbnailProxy.IsVisibleBitmapPayload(output),
+                $"Internet shortcut proxy returned a blank icon " +
+                $"(includeOverlays={includeOverlays}).");
         }
         finally
         {
@@ -212,23 +275,87 @@ public sealed class ShellThumbnailProxyContractTests
             ShellThumbnailProxy.ExecutableName));
     }
 
+    private static async Task<byte[]> RunIconProxyAsync(
+        string path,
+        int requestedSize,
+        bool includeOverlays = false)
+    {
+        string proxyPath = GetBuiltProxyPath();
+        Assert.True(File.Exists(proxyPath), $"Proxy not found: {proxyPath}");
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = proxyPath,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        startInfo.ArgumentList.Add(
+            includeOverlays ? "--icon-with-overlays" : "--icon-only");
+        startInfo.ArgumentList.Add(path);
+        startInfo.ArgumentList.Add(requestedSize.ToString(
+            System.Globalization.CultureInfo.InvariantCulture));
+
+        using var process = Process.Start(startInfo);
+        Assert.NotNull(process);
+        using var output = new MemoryStream();
+        Task outputTask = process.StandardOutput.BaseStream.CopyToAsync(output);
+        Task<string> errorTask = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await process.WaitForExitAsync(timeout.Token);
+        await outputTask;
+        string error = await errorTask;
+
+        Assert.True(
+            process.ExitCode == 0,
+            $"Icon-only proxy failed with {process.ExitCode}: {error}");
+        return output.ToArray();
+    }
+
     private static byte[] CreateBitmapPayload(byte alpha)
     {
+        return CreateBitmapPayload(
+            width: 1,
+            height: 1,
+            visibleLeft: 0,
+            visibleTop: 0,
+            visibleWidth: 1,
+            visibleHeight: 1,
+            alpha: alpha);
+    }
+
+    private static byte[] CreateBitmapPayload(
+        int width,
+        int height,
+        int visibleLeft,
+        int visibleTop,
+        int visibleWidth,
+        int visibleHeight,
+        byte alpha)
+    {
         const int pixelOffset = 138;
-        byte[] payload = new byte[pixelOffset + 4];
+        byte[] payload = new byte[pixelOffset + (width * height * 4)];
         payload[0] = (byte)'B';
         payload[1] = (byte)'M';
         BitConverter.GetBytes(payload.Length).CopyTo(payload, 2);
         BitConverter.GetBytes(pixelOffset).CopyTo(payload, 10);
         BitConverter.GetBytes(124).CopyTo(payload, 14);
-        BitConverter.GetBytes(1).CopyTo(payload, 18);
-        BitConverter.GetBytes(-1).CopyTo(payload, 22);
+        BitConverter.GetBytes(width).CopyTo(payload, 18);
+        BitConverter.GetBytes(-height).CopyTo(payload, 22);
         BitConverter.GetBytes((ushort)1).CopyTo(payload, 26);
         BitConverter.GetBytes((ushort)32).CopyTo(payload, 28);
-        payload[pixelOffset] = 0x11;
-        payload[pixelOffset + 1] = 0x22;
-        payload[pixelOffset + 2] = 0x33;
-        payload[pixelOffset + 3] = alpha;
+        for (int y = visibleTop; y < visibleTop + visibleHeight; y++)
+        {
+            for (int x = visibleLeft; x < visibleLeft + visibleWidth; x++)
+            {
+                int offset = pixelOffset + ((y * width + x) * 4);
+                payload[offset] = 0x11;
+                payload[offset + 1] = 0x22;
+                payload[offset + 2] = 0x33;
+                payload[offset + 3] = alpha;
+            }
+        }
+
         return payload;
     }
 }

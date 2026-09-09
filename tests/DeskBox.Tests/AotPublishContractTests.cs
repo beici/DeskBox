@@ -51,6 +51,7 @@ public sealed class AotPublishContractTests
         foreach (string projectPath in new[]
                  {
                      "src/DeskBox/DeskBox.csproj",
+                     "src/DeskBox.Abstractions/DeskBox.Abstractions.csproj",
                      "src/DeskBox.Updater/DeskBox.Updater.csproj"
                  })
         {
@@ -400,7 +401,7 @@ public sealed class AotPublishContractTests
         Assert.Contains("FolderShortcutWriteCreatesParentAndInvalidatesStoredMetadataCache", differentialTests, StringComparison.Ordinal);
         Assert.Contains("ResolveWithUi_ValidShortcutForwardsOwnerAndFrozenFlags", differentialTests, StringComparison.Ordinal);
         Assert.Contains("ApplicationShortcutUiResolveKeepsLinkAndInvalidatesStoredMetadataCache", differentialTests, StringComparison.Ordinal);
-        Assert.Contains("ViewModel.OpenItem(item, _hostWindowHandle)", fileNavigation, StringComparison.Ordinal);
+        Assert.Contains("await OpenFileItemAsync(item)", fileNavigation, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -430,6 +431,11 @@ public sealed class AotPublishContractTests
         Assert.Contains(
             "public static OpenItemResult OpenItem(WidgetItem item, IntPtr ownerHwnd)",
             fileService,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "public static async Task<OpenItemResult> OpenItemAsync(",
+            File.ReadAllText(TestPaths.FromRepository(
+                "src/DeskBox/Services/FileService.OpenItem.cs")),
             StringComparison.Ordinal);
         Assert.DoesNotContain(
             "OpenItem(WidgetItem item, IntPtr ownerHwnd = default)",
@@ -513,7 +519,7 @@ public sealed class AotPublishContractTests
         Assert.Contains("exactly one root-level deskbox_native.dll", script, StringComparison.Ordinal);
         Assert.DoesNotContain("deskbox_search_core.dll", script, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", script, StringComparison.Ordinal);
-        Assert.Contains("auditProfileVersion = 58", script, StringComparison.Ordinal);
+        Assert.Contains("auditProfileVersion = 61", script, StringComparison.Ordinal);
         Assert.Contains("warningCodeCounts", script, StringComparison.Ordinal);
         Assert.Contains("targetedWarningCounts", script, StringComparison.Ordinal);
         Assert.Contains("workingTreeFingerprintBefore", script, StringComparison.Ordinal);
@@ -538,7 +544,7 @@ public sealed class AotPublishContractTests
 
     [Theory]
     [InlineData("src/DeskBox/ViewModels/SearchPopupViewModel.cs", 15)]
-    [InlineData("src/DeskBox/ViewModels/SettingsViewModel.cs", 68)]
+    [InlineData("src/DeskBox/ViewModels/SettingsViewModel.cs", 75)]
     public void AotSensitiveViewModels_UseObservablePartialProperties(
         string relativePath,
         int expectedCount)

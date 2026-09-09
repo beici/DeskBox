@@ -67,6 +67,32 @@ public sealed partial class SettingsWindow
         }
 
         var result = ViewModel.RepairDragDropPermission();
+        if (result.RequiresStartupSettings)
+        {
+            var dialog = new ContentDialog
+            {
+                XamlRoot = SettingsRoot.XamlRoot,
+                Title = _localizationService.T("Settings.AutoStart.Title"),
+                PrimaryButtonText = _localizationService.T(
+                    "Settings.AutoStart.OpenSystemSettings"),
+                CloseButtonText = _localizationService.T("Common.Cancel"),
+                DefaultButton = ContentDialogButton.Primary,
+                Content = new TextBlock
+                {
+                    Text = _localizationService.T(
+                        "Settings.AutoStart.WindowsDisabled"),
+                    TextWrapping = TextWrapping.Wrap
+                }
+            };
+
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            {
+                await OpenStartupAppsSettingsAsync();
+            }
+
+            return;
+        }
+
         if (result.NeedsRelaunch)
         {
             var dialog = new ContentDialog
@@ -299,10 +325,49 @@ public sealed partial class SettingsWindow
         }
     }
 
+    private async void ChangeAutomaticBackupDirectoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (SettingsRoot.XamlRoot is null)
+        {
+            return;
+        }
+
+        string? folderPath = await FolderPickerService.PickFolderAsync(_hWnd);
+        if (string.IsNullOrWhiteSpace(folderPath))
+        {
+            return;
+        }
+
+        if (!App.Current.DataBackupService.IsValidCustomAutomaticBackupDirectory(
+                folderPath,
+                out string? rejectionReasonKey))
+        {
+            await ShowInfoDialogAsync(
+                _localizationService.T("Settings.DataBackup.AutomaticBackupDirectory.InvalidTitle"),
+                _localizationService.T(rejectionReasonKey ?? "Settings.DataBackup.AutomaticBackupDirectory.InvalidPath"));
+            return;
+        }
+
+        ViewModel.UpdateAutomaticBackupDirectory(folderPath);
+        await RefreshBackupSnapshotInventoryAsync();
+    }
+
+    private async void ResetAutomaticBackupDirectoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.UpdateAutomaticBackupDirectory(string.Empty);
+        await RefreshBackupSnapshotInventoryAsync();
+    }
+
     private void OpenBackupFolderButton_Click(object sender, RoutedEventArgs e)
     {
-        string directory = Path.GetDirectoryName(App.Current.DataBackupService.AutomaticSnapshotDirectory)
-                           ?? App.Current.DataBackupService.AutomaticSnapshotDirectory;
+        // With a custom folder configured, open it directly; otherwise keep the
+        // pre-existing behavior of opening the recovery root that contains the
+        // default "automatic" snapshot folder.
+        AutomaticBackupDirectoryStatus status = App.Current.DataBackupService.GetAutomaticBackupDirectoryStatus();
+        string directory = status.IsCustomDirectoryActive
+            ? status.EffectiveDirectory
+            : Path.GetDirectoryName(App.Current.DataBackupService.AutomaticSnapshotDirectory)
+              ?? App.Current.DataBackupService.AutomaticSnapshotDirectory;
         Directory.CreateDirectory(directory);
         Win32Helper.ShowInExplorer(directory);
     }

@@ -5,6 +5,9 @@ namespace DeskBox.Views;
 
 public sealed partial class OnboardingWindow
 {
+    // R1 观察项复核（F7 批次）：此字段曾被判 CS0414 未使用；现由
+    // OrganizationCompleted/Undone 维护并保留语义锚点（桌面整理步骤完成
+    // 状态），供后续 footer 状态扩展使用。
     private bool _desktopOrganizationCompleted;
     private DesktopOrganizationWindow? _desktopOrganizationWindow;
 

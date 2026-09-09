@@ -1,4 +1,4 @@
-﻿﻿using DeskBox.Models;
+﻿using DeskBox.Models;
 using DeskBox.Helpers;
 using DeskBox.Controls.WidgetContents;
 using DeskBox.ViewModels;
@@ -57,6 +57,17 @@ internal interface IDesktopWidgetWindow
     bool Visible { get; }
     bool IsRaisedAboveDesktopLayer { get; }
     bool IsCompactArrangementActive { get; }
+    /// <summary>
+    /// True while a compact expand/collapse morph is rendering on this host;
+    /// peer z-order normalization defers while any visible window reports
+    /// this so an order batch never lands mid-morph.
+    /// </summary>
+    bool IsCompactAnimationRendering { get; }
+    /// <summary>
+    /// True while the host is in the collapsed capsule bounds state —
+    /// transient geometry that must never be persisted as resting config.
+    /// </summary>
+    bool IsCompactCollapsedState { get; }
     bool CanParticipateInCoordinatedMove { get; }
     Windows.Graphics.RectInt32 CoordinatedMoveBounds { get; }
     Windows.Foundation.Rect AnimationBounds { get; }
@@ -70,6 +81,14 @@ internal interface IDesktopWidgetWindow
     void ApplyCompactArrangement(Windows.Graphics.RectInt32 bounds, bool constrainSize);
     void ClearCompactArrangementConstraint();
     void PreviewCompactArrangement(Windows.Graphics.RectInt32 bounds);
+    /// <summary>
+    /// Re-derives and persists the capsule placement from the live expanded
+    /// bounds after a non-interactive move (margin entry: single widget,
+    /// batch, and dialog-cancel restore). Manager-driven persist paths call
+    /// this so a later collapse does not snap the capsule back to its stale
+    /// pre-move position.
+    /// </summary>
+    void RefreshCompactPlacementAfterBoundsMove();
     void SetTrayAnimationOffsetOverride(double? offsetX, double? offsetY);
     void CancelTrayAnimationAndRestorePosition();
     void PrepareTrayShowAnimation();
@@ -132,6 +151,7 @@ public sealed partial class WidgetManager
     private readonly SemaphoreSlim _trayVisibilityOperationGate = new(1, 1);
     private readonly TrayToggleRequestQueue _trayToggleRequestQueue;
     private EffectivePerformanceSettings _lastPerformanceSettings;
+    private bool? _lastNativeWidgetVisibilityForMemoryCleanup;
 
     internal IReadOnlyDictionary<string, ContentWidgetWindow> ContentWidgets => _contentWidgets;
 
@@ -160,6 +180,86 @@ public sealed partial class WidgetManager
     internal int LoadedWidgetCount => _widgetSurfaces.Count;
 
     internal int VisibleWidgetCount => GetLoadedDesktopWindows().Count(window => window.Visible);
+
+    internal WidgetMemoryVisibilitySnapshot
+        CaptureMemoryCleanupVisibilitySnapshot(
+        bool? observedNativeVisibility = null)
+    {
+        IReadOnlyList<IDesktopWidgetWindow> windows =
+            GetLoadedDesktopWindows();
+        int logicalVisibleCount = windows.Count(window => window.Visible);
+        int nativeVisibleCount = windows.Count(window =>
+            window.WindowHandle != IntPtr.Zero &&
+            Win32Helper.IsWindowVisible(window.WindowHandle));
+        if (observedNativeVisibility == true && nativeVisibleCount == 0)
+        {
+            // AppWindow.Show can report its visibility change before the paired
+            // ShowWindow call becomes observable through IsWindowVisible.
+            nativeVisibleCount = 1;
+        }
+
+        return new WidgetMemoryVisibilitySnapshot(
+            windows.Count,
+            logicalVisibleCount,
+            nativeVisibleCount);
+    }
+
+    internal void ReconcileBackgroundMemoryCleanupForWidgetVisibility(
+        string reason,
+        bool forceScheduleWhenHidden = false,
+        bool? observedNativeVisibility = null)
+    {
+        if (!HasUiThreadAccess())
+        {
+            DispatcherQueue? dispatcherQueue = App.UiDispatcherQueue;
+            bool enqueued = dispatcherQueue?.TryEnqueue(() =>
+                ReconcileBackgroundMemoryCleanupForWidgetVisibility(
+                    reason,
+                    forceScheduleWhenHidden,
+                    observedNativeVisibility)) == true;
+            if (!enqueued)
+            {
+                App.Log(
+                    $"[Memory] Widget visibility reconciliation failed " +
+                    $"reason={reason} error=dispatcher-unavailable");
+            }
+
+            return;
+        }
+
+        WidgetMemoryVisibilitySnapshot visibility =
+            CaptureMemoryCleanupVisibilitySnapshot(
+                observedNativeVisibility);
+        bool hasNativeVisibleWidgets = visibility.HasNativeVisibleWidgets;
+        bool stateChanged =
+            _lastNativeWidgetVisibilityForMemoryCleanup is null ||
+            _lastNativeWidgetVisibilityForMemoryCleanup.Value !=
+                hasNativeVisibleWidgets;
+        _lastNativeWidgetVisibilityForMemoryCleanup = hasNativeVisibleWidgets;
+
+        App.Current.ObserveWidgetVisibilityForImmediateWorkingSetTrim(visibility, reason);
+
+        if (!stateChanged &&
+            !(forceScheduleWhenHidden && !hasNativeVisibleWidgets))
+        {
+            return;
+        }
+
+        App.Log(
+            $"[Memory] Widget visibility state changed " +
+            $"hasNativeVisibleWidgets={hasNativeVisibleWidgets} " +
+            $"loadedCount={visibility.LoadedWindowCount} " +
+            $"logicalVisibleCount={visibility.LogicalVisibleCount} " +
+            $"nativeVisibleCount={visibility.NativeVisibleCount} " +
+            $"reason={reason} forced={forceScheduleWhenHidden}");
+        if (hasNativeVisibleWidgets)
+        {
+            App.CancelBackgroundMemoryCleanup($"widgets-visible:{reason}");
+            return;
+        }
+
+        App.ScheduleBackgroundMemoryCleanup($"widgets-hidden:{reason}");
+    }
 
     public bool IsWidgetWindow(IntPtr hwnd)
     {
@@ -199,6 +299,11 @@ public sealed partial class WidgetManager
     {
         App.NotifyMemoryCleanupActivity();
         _idlePeerOrderGeneration++;
+        if (!_sessionManager.IsInteractionActive)
+        {
+            StartInteractionLeakWatchdog();
+        }
+
         _sessionManager.BeginInteraction(reason);
     }
 
@@ -207,6 +312,7 @@ public sealed partial class WidgetManager
         _sessionManager.EndInteraction(reason);
         if (!_sessionManager.IsInteractionActive)
         {
+            StopInteractionLeakWatchdog();
             RestoreTemporarilyRaisedWidgetsToDesktopLayer(
                 $"{reason}-interaction-ended");
             QueueIdleWidgetZOrderNormalization(reason);
@@ -896,7 +1002,9 @@ public sealed partial class WidgetManager
     public async Task CreateFolderWidgetAsync(string folderPath)
     {
         string normalizedPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folderPath));
-        EnsureFileWidgetPathAvailable(normalizedPath);
+        EnsureFileWidgetPathAvailable(
+            normalizedPath,
+            candidateFollowsDefaultStoragePath: false);
 
         string folderName = Path.GetFileName(normalizedPath);
         if (string.IsNullOrWhiteSpace(folderName))
@@ -922,15 +1030,34 @@ public sealed partial class WidgetManager
         await CreateWidgetFromConfigAsync(config, revealAfterCreate: true);
     }
 
-    public void EnsureFileWidgetPathAvailable(string folderPath, string? excludedWidgetId = null)
+    public void EnsureFileWidgetPathAvailable(
+        string folderPath,
+        string? excludedWidgetId = null,
+        bool candidateFollowsDefaultStoragePath = false)
     {
         string normalizedPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folderPath));
+        if (!candidateFollowsDefaultStoragePath)
+        {
+            string managedStorageRoot =
+                SettingsService.NormalizeManagedStorageRootPath(
+                    _settingsService.Settings.DefaultManagedStorageRootPath);
+            if (FileService.PathsOverlap(normalizedPath, managedStorageRoot))
+            {
+                throw new InvalidOperationException(_localizationService.Format(
+                    "Widget.Error.FileWidgetPathConflict",
+                    _localizationService.T("WidgetTitleIcon.Label.ManagedStorage")));
+            }
+        }
+
         WidgetConfig? conflict = _settingsService.Settings.Widgets.FirstOrDefault(widget =>
             widget.WidgetKind == WidgetKind.File &&
             !IsDeleted(widget.Id) &&
             !string.Equals(widget.Id, excludedWidgetId, StringComparison.Ordinal) &&
             !string.IsNullOrWhiteSpace(widget.MappedFolderPath) &&
-            FileService.PathsOverlap(normalizedPath, widget.MappedFolderPath));
+            IsFileWidgetPathConflict(
+                normalizedPath,
+                candidateFollowsDefaultStoragePath,
+                widget));
 
         if (conflict is null)
         {
@@ -940,6 +1067,49 @@ public sealed partial class WidgetManager
         throw new InvalidOperationException(_localizationService.Format(
             "Widget.Error.FileWidgetPathConflict",
             conflict.Name));
+    }
+
+    internal static bool IsFileWidgetPathConflict(
+        string candidatePath,
+        bool candidateFollowsDefaultStoragePath,
+        WidgetConfig existingWidget)
+    {
+        if (string.IsNullOrWhiteSpace(existingWidget.MappedFolderPath))
+        {
+            return false;
+        }
+
+        if (!FileService.TryIsPathUnderDirectoryResolved(
+                candidatePath,
+                existingWidget.MappedFolderPath,
+                out bool candidateUnderExisting) ||
+            !FileService.TryIsPathUnderDirectoryResolved(
+                existingWidget.MappedFolderPath,
+                candidatePath,
+                out bool existingUnderCandidate))
+        {
+            // Mapping aliases that cannot be resolved safely must not bypass
+            // exact-path or managed-storage isolation.
+            return true;
+        }
+
+        if (!candidateUnderExisting && !existingUnderCandidate)
+        {
+            return false;
+        }
+
+        if (candidateUnderExisting && existingUnderCandidate)
+        {
+            // Two logical aliases for the same physical directory still
+            // represent one storage surface and remain forbidden.
+            return true;
+        }
+
+        // Strict parent/child mappings are supported only when both widgets
+        // are external mappings. Managed storage keeps exclusive ownership of
+        // its tree so migration and cleanup cannot touch an overlapping widget.
+        return candidateFollowsDefaultStoragePath ||
+               existingWidget.FollowsDefaultStoragePath;
     }
 
     /// <summary>
@@ -1255,7 +1425,9 @@ public sealed partial class WidgetManager
         SaveBatchVisibilityState();
         await _trayBatchAnimationDriver.WaitForIdleAsync();
         App.LogVerbose($"[TrayBatch] SetAllVisible completed visible=false prepared={windowsToHide.Count}");
-        App.ScheduleBackgroundMemoryCleanup();
+        ReconcileBackgroundMemoryCleanupForWidgetVisibility(
+            "tray-batch-hidden",
+            forceScheduleWhenHidden: true);
 
         return;
     }
@@ -1483,6 +1655,20 @@ public sealed partial class WidgetManager
                 if (!hasRemainingGlanceWidget)
                 {
                     SetFeatureWidgetEnabledState(WidgetKind.Glance, false);
+                }
+            }
+            else if (config.WidgetKind == WidgetKind.Todo)
+            {
+                // Todo widgets can coexist; deleting one removes its store and
+                // attachments, and only disables the feature when the last
+                // instance goes away (mirroring the Glance branch above).
+                await TodoWidgetStore.DeleteForWidgetAsync(config.Id);
+                bool hasRemainingTodoWidget = _settingsService.Settings.Widgets.Any(widget =>
+                    widget.WidgetKind == WidgetKind.Todo &&
+                    !IsDeleted(widget.Id));
+                if (!hasRemainingTodoWidget)
+                {
+                    SetFeatureWidgetEnabledState(WidgetKind.Todo, false);
                 }
             }
             else

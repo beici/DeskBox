@@ -355,7 +355,11 @@ public sealed class FileSurfaceParityContractTests
             surface,
             StringComparison.Ordinal);
         Assert.Contains(
-            "e.AcceptedOperation = ResolveSurfaceDropOperation(payload.DataView);",
+            "ResolveSurfaceDropOperation(",
+            surface,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "e.AllowedOperations);",
             surface,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -390,7 +394,11 @@ public sealed class FileSurfaceParityContractTests
         Assert.True(externalEnd > externalStart);
         string externalFeedback = feedback[externalStart..externalEnd];
         Assert.Contains(
-            "e.AcceptedOperation = ResolveSurfaceDropOperation(payload.DataView);",
+            "ResolveSurfaceDropOperation(",
+            externalFeedback,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "e.AllowedOperations);",
             externalFeedback,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -515,7 +523,7 @@ public sealed class FileSurfaceParityContractTests
                 "Text=\"{Binding FullPath}\"",
                 StringSplitOptions.None).Length - 1);
         Assert.Contains(
-            "Visibility=\"{x:Bind TransferStatusVisibility, Mode=OneWay}\"",
+            "Visibility=\"{x:Bind ActivityStatusVisibility, Mode=OneWay}\"",
             xaml,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -952,12 +960,15 @@ public sealed class FileSurfaceParityContractTests
             "Win32Helper.SetForegroundWindow(WindowHandle)",
             stackPopoverRenameWindow,
             StringComparison.Ordinal);
+        // The editor focuses through InlineEditorFocus: the freshly created
+        // window content is not focusable until its first layout pass, and a
+        // bare Focus call at this point fails silently.
         Assert.Contains(
-            "Editor.Focus(FocusState.Programmatic)",
+            "InlineEditorFocus.FocusWhenLoaded(",
             stackPopoverRenameWindow,
             StringComparison.Ordinal);
         Assert.Contains(
-            "Editor.SelectAll()",
+            "static editor => editor.SelectAll()",
             stackPopoverRenameWindow,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -1057,6 +1068,18 @@ public sealed class FileSurfaceParityContractTests
             stackPopover,
             StringComparison.Ordinal);
         Assert.Contains(
+            "TryCompleteReleasedStackPopoverReorder(",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ShouldCommitReleasedStackPopoverReorder(",
+            stackPopover,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "host.WindowHandle",
+            stackPopover,
+            StringComparison.Ordinal);
+        Assert.Contains(
             "QueueStackPopoverReconciliation(\n" +
             "                        targetStackKey,\n" +
             "                        targetStackMemberAnchors)",
@@ -1099,6 +1122,22 @@ public sealed class FileSurfaceParityContractTests
             source,
             StringComparison.Ordinal);
         Assert.Contains(
+            "ResolveInternalArrangementFeedbackOperation(",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ResolveInternalArrangementFeedbackOperation(",
+            stackPopover,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ResolveInternalArrangementCompletionOperation(",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "ResolveInternalArrangementCompletionOperation(",
+            stackPopover,
+            StringComparison.Ordinal);
+        Assert.Contains(
             "DeskBoxDragData.SourceStackKeyProperty",
             source,
             StringComparison.Ordinal);
@@ -1119,7 +1158,15 @@ public sealed class FileSurfaceParityContractTests
             stackPopover,
             StringComparison.Ordinal);
         Assert.Contains(
-            "if (IsItemInStackPopover(item) ||",
+            "isFolderShortcut || (!isStackPopoverItem && item.IsFolder)",
+            navigation,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "NavigateIntoFolderShortcutAsync(",
+            navigation,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "await OpenFileItemAsync(item)",
             navigation,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -1135,7 +1182,7 @@ public sealed class FileSurfaceParityContractTests
             source,
             StringComparison.Ordinal);
         Assert.Contains(
-            "ViewModel.StabilizeStackDisplay()",
+            "ViewModel.PrepareStackDisplayForReuse()",
             source,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -1279,7 +1326,7 @@ public sealed class FileSurfaceParityContractTests
     }
 
     [Fact]
-    public void ManagedShortcutDrag_UsesMoveOnlyWithoutPostDropDesktopMove()
+    public void ManagedShortcutDrag_PrefersMoveButAllowsSafeInternalLink()
     {
         string root = FindRepositoryRoot();
         XDocument document = XDocument.Load(Path.Combine(
@@ -1301,9 +1348,30 @@ public sealed class FileSurfaceParityContractTests
             "Items_DragStarting",
             (string?)view.Attribute("DragStarting")));
         Assert.Contains(
-            "e.AllowedOperations = DataPackageOperation.Move",
+            "FileItemDragPackage.SupportedOperations",
             source,
             StringComparison.Ordinal);
+        Assert.Contains(
+            "FileItemDragPackage.ResolveSupportedOperations(",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "DeskBoxDragData.DragSessionIdProperty",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "CanReuseDragPayloadSnapshot(",
+            source,
+            StringComparison.Ordinal);
+        int allowedOperationsIndex = source.IndexOf(
+            "e.AllowedOperations = FileItemDragPackage.SupportedOperations;",
+            StringComparison.Ordinal);
+        Assert.True(allowedOperationsIndex >= 0);
+        int sourcePathGuardIndex = source.IndexOf(
+            "if (sourcePaths.Length > 0)",
+            allowedOperationsIndex,
+            StringComparison.Ordinal);
+        Assert.True(sourcePathGuardIndex > allowedOperationsIndex);
         Assert.DoesNotContain(
             "CompleteVirtualShortcutDesktopMoveAsync",
             source,
@@ -1322,6 +1390,23 @@ public sealed class FileSurfaceParityContractTests
             StringComparison.Ordinal);
         Assert.Contains(
             "return !fromStackPopover &&",
+            source,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EmptyState_UsesSourceCollectionInsteadOfDeferredStackProjection()
+    {
+        string source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src/DeskBox/Controls/WidgetContents/FileSurfaceContent.xaml.cs"));
+
+        Assert.Contains(
+            "ShouldShowEmptyState(ViewModel.IsLoading, ViewModel.Items.Count)",
+            source,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "!ViewModel.VisibleItems.Any()",
             source,
             StringComparison.Ordinal);
     }
@@ -1346,6 +1431,105 @@ public sealed class FileSurfaceParityContractTests
         Assert.Contains(
             "RemoveStackMemberOverridePaths(normalizedPaths);",
             method,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RootImportInsertion_DetachesHistoricalStackMembershipBeforeResolvingUnits()
+    {
+        string source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src/DeskBox/ViewModels/WidgetViewModel.Stacks.cs"));
+
+        int methodStart = source.IndexOf(
+            "internal void ApplyImportedStackInsertion(",
+            StringComparison.Ordinal);
+        int methodEnd = source.IndexOf(
+            "public bool FileStacksEnabled",
+            methodStart,
+            StringComparison.Ordinal);
+        Assert.True(methodStart >= 0);
+        Assert.True(methodEnd > methodStart);
+        string method = source[methodStart..methodEnd];
+
+        int detachIndex = method.IndexOf(
+            "DetachImportedRootInsertionStackMembership(",
+            StringComparison.Ordinal);
+        int rebuildIndex = method.IndexOf(
+            "RebuildStackDisplayItems();",
+            StringComparison.Ordinal);
+        int resolveIndex = method.IndexOf(
+            ".Select(ResolveDisplayUnitOrderKey)",
+            StringComparison.Ordinal);
+        Assert.True(detachIndex >= 0);
+        Assert.True(rebuildIndex > detachIndex);
+        Assert.True(resolveIndex > rebuildIndex);
+        Assert.Contains(
+            "PersistStackCustomizations();",
+            method,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExternalDragOutReconciliation_DoesNotPruneReappearedPaths()
+    {
+        string source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src/DeskBox/Controls/WidgetContents/FileSurfaceContent.xaml.cs"));
+
+        int methodStart = source.IndexOf(
+            "private async Task ObserveExternalDragOutAsync(",
+            StringComparison.Ordinal);
+        int methodEnd = source.IndexOf(
+            "private async Task RenameItemAsync(",
+            methodStart,
+            StringComparison.Ordinal);
+        Assert.True(methodStart >= 0);
+        Assert.True(methodEnd > methodStart);
+        string method = source[methodStart..methodEnd];
+        Assert.Contains("stillMissingPaths", method, StringComparison.Ordinal);
+        Assert.Contains("reappearedPaths", method, StringComparison.Ordinal);
+        Assert.Contains(
+            "HandleItemsMovedOutAsync(stillMissingPaths)",
+            method,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "HandleItemsMovedOutAsync(missingPaths)",
+            method,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MoveBackToDesktop_PrunesPersistedStackMembership()
+    {
+        string source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src/DeskBox/ViewModels/WidgetViewModel.Operations.cs"));
+
+        int singleStart = source.IndexOf(
+            "public async Task<int> MoveItemBackToDesktopAsync(",
+            StringComparison.Ordinal);
+        int batchStart = source.IndexOf(
+            "public async Task<int> MoveItemsBackToDesktopAsync(",
+            singleStart,
+            StringComparison.Ordinal);
+        Assert.True(singleStart >= 0);
+        Assert.True(batchStart > singleStart);
+        string single = source[singleStart..batchStart];
+        Assert.Contains(
+            "RemoveStackMemberOverridePaths([item.Path]);",
+            single,
+            StringComparison.Ordinal);
+
+        int batchEnd = source.IndexOf(
+            "public async Task RefreshFromConfigAsync(",
+            batchStart,
+            StringComparison.Ordinal);
+        Assert.True(batchEnd > batchStart);
+        string batch = source[batchStart..batchEnd];
+        Assert.Contains(
+            "RemoveStackMemberOverridePaths(movedSourcePaths);",
+            batch,
             StringComparison.Ordinal);
     }
 

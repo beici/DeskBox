@@ -8,6 +8,8 @@ using Microsoft.UI;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using System.Diagnostics;
 using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
@@ -22,10 +24,13 @@ using WinRT.Interop;
 namespace DeskBox.Views;
 
 /// <summary>
-/// Shared base class for all desktop widget windows (file, content, quick-capture).
+/// Shared base class for all desktop widget windows (file, content,
+/// quick-capture surfaces).
 /// Consolidates window setup, backdrop management, layer/Z-order control,
 /// drag/resize logic, and display-change restoration that was previously
-/// duplicated across ContentWidgetWindow and QuickCaptureWidgetWindow.
+/// duplicated across host implementations. (DEF-027: the dedicated
+/// QuickCaptureWidgetWindow host was removed; QuickCapture runs on the
+/// shared ContentWidgetWindow path.)
 /// </summary>
 public abstract partial class WidgetWindowBase : Window
 {
@@ -45,14 +50,13 @@ public abstract partial class WidgetWindowBase : Window
     protected AppWindow AppWindow = null!;
     protected WidgetWindowDiagnostics Diagnostics = null!;
     protected WidgetTrayAnimationController TrayAnimation = null!;
-    
-    // Smart Animation Adapter - for future enhancement
-    private static SmartAnimationAdapter? _smartAdapter;
-    
     /// <summary>
-    /// 智能动画适配器（静态访问点）
+    /// True while the tray animation controller holds the window DWM-cloaked
+    /// for an intentional tray hide. The Show Desktop self-heal skips such
+    /// windows so it never undoes a deliberate hide.
     /// </summary>
-    public static SmartAnimationAdapter? SmartAnimationAdapter => _smartAdapter;
+    internal bool IsTrayCloakActive => TrayAnimation.IsCloakedForTrayShow;
+
     internal WidgetDisplayChangeWatcher? DisplayChangeWatcher;
 
     // ── Protected state: backdrop controllers ──────────────────
@@ -64,8 +68,6 @@ public abstract partial class WidgetWindowBase : Window
     private bool _isInteractionBackdropDowngraded;
     private Windows.UI.Color _lastLegacyAccentTintColor;
     private double _lastLegacyAccentOpacity;
-    private bool? _acrylicControllerUsesBase;
-    private bool? _micaControllerUsesAlt;
     private BackdropSignature? _lastAppliedBackdropSignature;
     private WinUIEx.TransparentTintBackdrop? _solidColorBackdrop;
     protected SystemBackdropConfiguration? BackdropConfiguration;
@@ -90,13 +92,22 @@ public abstract partial class WidgetWindowBase : Window
     protected SizeInt32 InitialWindowSize;
     protected FrameworkElement? DragCaptureElement;
     private bool _isCoordinatedMoveDrag;
+    // A title-bar or drag-handle press only *arms* a drag. Every side effect
+    // that the shell can see - the Z-order raise, the backdrop downgrade, the
+    // snap-guide session - waits until the pointer actually crosses the move
+    // threshold, so a plain click leaves the whole widget group untouched.
+    private bool _isWindowDragEngaged;
+    private bool _windowDragRequestsCoordinatedMove;
+    private bool _windowDragActivatesTitleGroup;
     private bool _deferTitleBarDragConfigUpdates;
     private bool _deferInteractiveResizeConfigUpdates;
     private PendingTitleBarDragFrame? _pendingTitleBarDragFrame;
     private IDisposable? _titleBarDragFrameRegistration;
-    private RectInt32? _pendingInteractiveResizeBounds;
+    private BoundsInteractionFrameMetrics? _titleBarDragFrameMetrics;
+    private PointInt32? _pendingInteractiveResizePointer;
     private IDisposable? _interactiveResizeFrameRegistration;
     private IDisposable? _interactiveResizeClockBoostLease;
+    private BoundsInteractionFrameMetrics? _interactiveResizeFrameMetrics;
     private SizeInt32 _interactiveResizeMinimumSize;
     private bool _isDisplayTopologyTransitionActive;
     private long _displayTopologyTransitionGeneration;
@@ -128,25 +139,6 @@ public abstract partial class WidgetWindowBase : Window
     /// </summary>
     protected WidgetWindowBase()
     {
-        // 初始化智能动画适配器（只在第一次）
-        if (_smartAdapter is null)
-        {
-            try
-            {
-                _smartAdapter = new SmartAnimationAdapter(
-                    DispatcherQueue.GetForCurrentThread(),
-                    msg => Debug.WriteLine($"[SmartAnimation] {msg}"));
-                
-                var level = _smartAdapter.GetCurrentHardwareLevel();
-                Debug.WriteLine($"[SmartAnimation] Hardware Level: {level}");
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[SmartAnimation] Failed to initialize: {ex.Message}");
-                // 回退到默认模式
-                _smartAdapter = null;
-            }
-        }
     }
 
     // ── Abstract members: each subclass must provide ───────────
@@ -221,8 +213,37 @@ public abstract partial class WidgetWindowBase : Window
     protected virtual bool HasBlockingFlyoutOpen()
     {
         XamlRoot? xamlRoot = RootElement.XamlRoot;
-        return xamlRoot is not null &&
-            VisualTreeHelper.GetOpenPopupsForXamlRoot(xamlRoot).Count > 0;
+        if (xamlRoot is null)
+        {
+            return false;
+        }
+
+        foreach (Popup popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(xamlRoot))
+        {
+            if (IsToolTipPopup(popup))
+            {
+                // ToolTips are non-interactive previews. Counting them as a
+                // blocking surface let a stationary pointer keep its own
+                // tooltip open and defer hover expansion until the pointer
+                // left the capsule, which surfaced as "hover stops responding
+                // until a click on the desktop".
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsToolTipPopup(Popup popup)
+    {
+        if (popup.Child is ToolTip)
+        {
+            return true;
+        }
+
+        return popup.Child is FrameworkElement { Parent: ToolTip };
     }
 
     /// <summary>Allows hosts with custom title bars to update collapse actions.</summary>
@@ -317,13 +338,18 @@ public abstract partial class WidgetWindowBase : Window
     protected void CleanupBase()
     {
         CancelPendingTitleBarDragFrame();
+        CompleteBoundsInteractionFrameMetrics(ref _titleBarDragFrameMetrics, "drag", "closed");
         CancelPendingInteractiveResizeFrame();
-        EndInteractiveResizePerformanceSession();
+        EndInteractiveResizePerformanceSession("closed");
         RemoveDesktopPinnedPointerRouting();
         RemoveDesktopPinnedActivationGuard();
         WidgetShellControl.HostedContentChanged -= WidgetShellControl_HostedContentChanged;
         CleanupWidgetGrouping();
         CleanupWidgetCollapse();
+        try { TrayAnimation?.Dispose(); }
+        catch (Exception ex) { App.LogVerbose($"[Composition] Tray cleanup failed: {ex.Message}"); }
+        try { WidgetShellControl.ReleaseOwnedCompositionResources(); }
+        catch (Exception ex) { App.LogVerbose($"[Composition] Shell cleanup failed: {ex.Message}"); }
         StopBackdropRefreshTimer();
         StopInactiveBackdropCleanupTimer();
         ReleaseTopMostSafetyTimer();
@@ -338,42 +364,35 @@ public abstract partial class WidgetWindowBase : Window
         TrackWindowClosedForDiagnostics();
     }
 
-    private void QueueInteractiveResizeBounds(RectInt32 bounds)
+    private void QueueInteractiveResizePointer(PointInt32 pointer)
     {
-        _pendingInteractiveResizeBounds = bounds;
-        // Both Win11 and Win10 commit through the shared frame coordinator so
-        // resize follows the same present-aligned cadence as drag and capsule
-        // transitions. On Win10 this replaces the legacy 8ms burst commits,
-        // which could reach ~125Hz of full XAML re-layout on pointer-move
-        // bursts; the coordinator consumes only the newest pending bounds per
-        // tick, keeping first-commit latency within a single frame.
+        _pendingInteractiveResizePointer = pointer;
+        _interactiveResizeFrameMetrics?.RecordPointerSample();
+        // Coalesce input before calculating size, snapping or updating guides.
+        // The owning display sets the cadence for this direct manipulation;
+        // intermediate mouse reports never trigger extra layout or snap work.
         _interactiveResizeFrameRegistration ??=
-            WidgetCompactAnimationCoordinator.Register(ApplyPendingInteractiveResizeBounds);
+            WidgetCompactAnimationCoordinator.Register(ApplyPendingInteractiveResizeBounds, HWnd, paceToDisplay: true);
     }
 
     private void ApplyPendingInteractiveResizeBounds()
     {
-        if (!IsResizing || _pendingInteractiveResizeBounds is not { } bounds)
+        if (!IsResizing)
         {
             CancelPendingInteractiveResizeFrame();
             return;
         }
 
-        _pendingInteractiveResizeBounds = null;
-        ApplyWindowBounds(
-            bounds.X,
-            bounds.Y,
-            bounds.Width,
-            bounds.Height,
-            persist: false,
-            updateConfig: false);
-    }
-
-    private void FlushPendingInteractiveResizeBounds()
-    {
-        if (_pendingInteractiveResizeBounds is { } bounds)
+        if (_pendingInteractiveResizePointer is not { } pointer)
         {
-            _pendingInteractiveResizeBounds = null;
+            return;
+        }
+
+        _pendingInteractiveResizePointer = null;
+        long started = Stopwatch.GetTimestamp();
+        try
+        {
+            RectInt32 bounds = ResolveInteractiveResizeBounds(pointer);
             ApplyWindowBounds(
                 bounds.X,
                 bounds.Y,
@@ -382,27 +401,99 @@ public abstract partial class WidgetWindowBase : Window
                 persist: false,
                 updateConfig: false);
         }
+        finally
+        {
+            _interactiveResizeFrameMetrics?.RecordUpdate(
+                Stopwatch.GetElapsedTime(started).TotalMilliseconds,
+                WidgetCompactAnimationCoordinator.GetFrameBudgetMilliseconds(HWnd));
+        }
+    }
 
+    private void FlushPendingInteractiveResizeBounds()
+    {
+        ApplyPendingInteractiveResizeBounds();
         CancelPendingInteractiveResizeFrame();
     }
 
     private void CancelPendingInteractiveResizeFrame()
     {
-        _pendingInteractiveResizeBounds = null;
+        _pendingInteractiveResizePointer = null;
         _interactiveResizeFrameRegistration?.Dispose();
         _interactiveResizeFrameRegistration = null;
     }
 
     private void BeginInteractiveResizePerformanceSession()
     {
+        CancelPendingInteractiveResizeFrame();
+        _interactiveResizeFrameMetrics = new BoundsInteractionFrameMetrics();
         _interactiveResizeClockBoostLease ??= CompositorClockBoostCoordinator.Acquire();
     }
 
-    private void EndInteractiveResizePerformanceSession()
+    private void EndInteractiveResizePerformanceSession(string outcome = "completed")
     {
+        CompleteBoundsInteractionFrameMetrics(ref _interactiveResizeFrameMetrics, "resize", outcome);
         _interactiveResizeClockBoostLease?.Dispose();
         _interactiveResizeClockBoostLease = null;
         _interactiveResizeMinimumSize = default;
+    }
+
+    private void CompleteBoundsInteractionFrameMetrics(
+        ref BoundsInteractionFrameMetrics? session,
+        string interaction,
+        string outcome = "completed")
+    {
+        BoundsInteractionFrameMetrics? metrics = session;
+        session = null;
+        if (metrics is null || metrics.PointerSamples == 0)
+        {
+            return;
+        }
+
+        string details = $"interaction={interaction} outcome={outcome} " +
+            $"hwnd=0x{HWnd.ToInt64():X} pointerSamples={metrics.PointerSamples} " +
+            $"frameUpdates={metrics.Updates} coalescedSamples={Math.Max(0, metrics.PointerSamples - metrics.Updates)} " +
+            $"maxInputToUpdateMs={metrics.MaximumInputToUpdateMilliseconds:F2} " +
+            $"maxUpdateWorkMs={metrics.MaximumUpdateMilliseconds:F2} " +
+            $"overBudgetUpdates={metrics.OverBudgetUpdates} latestBudgetMs={metrics.LatestFrameBudgetMilliseconds:F2}";
+        // These measure UI callbacks, not actual presentation. Capsule-bar
+        // batches can finish their native commit after the callback returns.
+        PerformanceLogger.Mark("WidgetBoundsInteraction", details);
+        App.LogVerbose($"[WidgetBoundsInteraction] {details}");
+    }
+
+    private sealed class BoundsInteractionFrameMetrics
+    {
+        private long _lastPointerTimestamp;
+
+        public int PointerSamples { get; private set; }
+        public int Updates { get; private set; }
+        public int OverBudgetUpdates { get; private set; }
+        public double MaximumInputToUpdateMilliseconds { get; private set; }
+        public double MaximumUpdateMilliseconds { get; private set; }
+        public double LatestFrameBudgetMilliseconds { get; private set; }
+
+        public void RecordPointerSample()
+        {
+            PointerSamples++;
+            _lastPointerTimestamp = Stopwatch.GetTimestamp();
+        }
+
+        public void RecordUpdate(double updateMilliseconds, double frameBudgetMilliseconds)
+        {
+            Updates++;
+            LatestFrameBudgetMilliseconds = frameBudgetMilliseconds;
+            MaximumUpdateMilliseconds = Math.Max(MaximumUpdateMilliseconds, updateMilliseconds);
+            if (_lastPointerTimestamp != 0)
+            {
+                MaximumInputToUpdateMilliseconds = Math.Max(
+                    MaximumInputToUpdateMilliseconds,
+                    Stopwatch.GetElapsedTime(_lastPointerTimestamp).TotalMilliseconds);
+            }
+            if (updateMilliseconds > frameBudgetMilliseconds)
+            {
+                OverBudgetUpdates++;
+            }
+        }
     }
 
     private readonly record struct PendingTitleBarDragFrame(

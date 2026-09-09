@@ -478,4 +478,108 @@ public sealed class WidgetPositioningServiceTests
         Assert.InRange(fallbackBounds.X, primary100.X, primary100.X + primary100.Width - fallbackBounds.Width);
         Assert.InRange(fallbackBounds.Y, primary100.Y, primary100.Y + primary100.Height - fallbackBounds.Height);
     }
+
+    [Fact]
+    public void BatchMarginPersistSequence_KeepsMovedPositionAcrossRestartResolve()
+    {
+        var workArea = new RectInt32(0, 0, 1920, 1040);
+        var config = new WidgetConfig
+        {
+            BoundsCoordinateVersion = WidgetConfig.CurrentBoundsCoordinateVersion,
+            Width = 300,
+            Height = 200,
+            PositionAnchor = WidgetPositionAnchors.RightTop,
+            PositionMarginX = 40,
+            PositionMarginY = 80,
+            PositionMonitorKey = WidgetPositioningService.CreateMonitorKey(workArea)
+        };
+
+        // Before the batch move the valid anchor resolves to the old
+        // right-top spot, which is exactly what made the pre-fix batch path
+        // revert on restart.
+        RectInt32 stale = ResolveAtScale(config, workArea, 1.0);
+        Assert.Equal(1580, stale.X);
+        Assert.Equal(80, stale.Y);
+
+        // Batch margin move: persist the new physical bounds exactly the way
+        // the MoveVisibleWidgets success branch does — bounds first, then an
+        // anchor capture from the same target/work area — and resolve again
+        // as a restart would. The scale is threaded through every step so
+        // the round-trip holds on any host DPI.
+        var target = new RectInt32(120, 640, 300, 200);
+        double dpi = WidgetPositioningService.GetDpiScale(workArea);
+        WidgetPositioningService.UpdateConfigFromPhysicalBoundsForTest(config, target, workArea, _ => dpi);
+        WidgetPositioningService.CaptureAnchor(config, target, workArea);
+
+        Assert.Equal(WidgetPositionAnchors.LeftBottom, config.PositionAnchor);
+
+        RectInt32 restored = ResolveAtScale(config, workArea, dpi);
+
+        Assert.Equal(target.X, restored.X);
+        Assert.Equal(target.Y, restored.Y);
+        Assert.Equal(target.Width, restored.Width);
+        Assert.Equal(target.Height, restored.Height);
+    }
+
+    [Fact]
+    public void BatchMarginPersistSequenceWithoutAnchorCapture_RevertsToStaleAnchorPosition()
+    {
+        // Documents the defect side of the contract: persisting X/Y alone
+        // (the old batch behavior) leaves the stale anchor valid, and the
+        // restart chain rebuilds the OLD anchored position, discarding the
+        // batch move entirely.
+        var workArea = new RectInt32(0, 0, 1920, 1040);
+        var config = new WidgetConfig
+        {
+            BoundsCoordinateVersion = WidgetConfig.CurrentBoundsCoordinateVersion,
+            Width = 300,
+            Height = 200,
+            PositionAnchor = WidgetPositionAnchors.RightTop,
+            PositionMarginX = 40,
+            PositionMarginY = 80,
+            PositionMonitorKey = WidgetPositioningService.CreateMonitorKey(workArea)
+        };
+        var target = new RectInt32(120, 640, 300, 200);
+
+        WidgetPositioningService.UpdateConfigFromPhysicalBoundsForTest(config, target, workArea, _ => 1.0);
+        RectInt32 restored = ResolveAtScale(config, workArea, 1.0);
+
+        Assert.Equal(1580, restored.X);
+        Assert.Equal(80, restored.Y);
+        Assert.NotEqual(target.X, restored.X);
+    }
+
+    [Fact]
+    public void EnsureVisible_ClampsOversizedMarginTargetsBackIntoTheWorkArea()
+    {
+        var workArea = new RectInt32(0, 0, 1600, 900);
+
+        // Over-constrained dialog input: a 1500-wide widget pushed to a
+        // 200px right margin starts 100px before the work-area left edge.
+        RectInt32 overflowLeft = WidgetPositioningService.EnsureVisible(
+            new RectInt32(-100, 300, 1500, 200),
+            workArea);
+        Assert.Equal(0, overflowLeft.X);
+        Assert.Equal(300, overflowLeft.Y);
+        Assert.Equal(1500, overflowLeft.Width);
+
+        // The mirrored uniform-entry case overflows the right edge instead.
+        RectInt32 overflowRight = WidgetPositioningService.EnsureVisible(
+            new RectInt32(200, 300, 1500, 200),
+            workArea);
+        Assert.Equal(100, overflowRight.X);
+        Assert.InRange(
+            overflowRight.X,
+            workArea.X,
+            workArea.X + workArea.Width - overflowRight.Width);
+
+        // A target pushed fully out of the work area falls back to the same
+        // visible spot the restart chain uses, so the applied position is
+        // final either way.
+        RectInt32 fullyOutside = WidgetPositioningService.EnsureVisible(
+            new RectInt32(2000, 300, 1500, 200),
+            workArea);
+        Assert.Equal(workArea.X + 32, fullyOutside.X);
+        Assert.Equal(workArea.Y + 32, fullyOutside.Y);
+    }
 }

@@ -17,6 +17,12 @@ public sealed class GlobalHotkeyService : IDisposable
     private const uint ModNoRepeat = 0x4000;
     private static readonly UIntPtr SubclassId = new(0x4442);
 
+    public readonly record struct HotkeyApplyResult(bool Succeeded, string? Error)
+    {
+        public static HotkeyApplyResult Success(string? error) => new(true, error);
+        public static HotkeyApplyResult Failure(string? error) => new(false, error);
+    };
+
     private readonly SettingsService _settingsService;
     private readonly LocalizationService _localizationService;
     private readonly Func<Task> _invokeAsync;
@@ -191,6 +197,90 @@ public sealed class GlobalHotkeyService : IDisposable
         NotifyRegistrationChanged();
     }
 
+    public async Task<HotkeyApplyResult> RefreshRegistrationAsync()
+    {
+        Unregister();
+        LastError = null;
+
+        App.Log($"[GlobalHotkey] RefreshRegistrationAsync hwnd=0x{_windowHandle.ToInt64():X} enabled={_settingsService.Settings.GlobalHotkeyEnabled} gesture={CurrentGestureText}");
+
+        if (_windowHandle == IntPtr.Zero || !_settingsService.Settings.GlobalHotkeyEnabled)
+        {
+            App.Log("[GlobalHotkey] RefreshRegistrationAsync skipped: handle=0 or disabled");
+            NotifyRegistrationChanged();
+            return HotkeyApplyResult.Success(null);
+        }
+
+        GlobalHotkeyActivation activation = CurrentActivation;
+        if (!IsValidActivation(activation))
+        {
+            App.Log("[GlobalHotkey] RefreshRegistrationAsync skipped: invalid activation");
+            LastError = _localizationService.T("Settings.GlobalHotkey.Status.Invalid");
+            NotifyRegistrationChanged();
+            return HotkeyApplyResult.Failure(_localizationService.T("Settings.GlobalHotkey.Status.Invalid"));
+        }
+
+        if (!_isSubclassInstalled)
+        {
+            App.Log("[GlobalHotkey] RefreshRegistrationAsync skipped: window subclass unavailable");
+            LastError = _localizationService.T("Settings.GlobalHotkey.Status.Unavailable");
+            NotifyRegistrationChanged();
+            return HotkeyApplyResult.Failure(_localizationService.T("Settings.GlobalHotkey.Status.Unavailable"));
+        }
+
+        if (TryGetReservedHookMode(activation, out ReservedHotkeyMode reservedMode))
+        {
+            if (IsReservedHookDisabledByEnvironment())
+            {
+                App.Log("[GlobalHotkey] Reserved hotkey hook disabled by environment");
+                LastError = _localizationService.T("Settings.GlobalHotkey.Status.Unavailable");
+                NotifyRegistrationChanged();
+                return HotkeyApplyResult.Failure(_localizationService.T("Settings.GlobalHotkey.Status.Unavailable"));
+            }
+
+            try
+            {
+                if (await _reservedHotkeyHook.TryStartAsync(
+                        _windowHandle,
+                        WmReservedHotkey,
+                        reservedMode))
+                {
+                    _isRegistered = true;
+                    _usesReservedHook = true;
+                    App.Log(
+                        $"[GlobalHotkey] Registered reserved gesture={CurrentGestureText} " +
+                        $"mode=hook hwnd=0x{_windowHandle.ToInt64():X}");
+                    NotifyRegistrationChanged();
+                    return HotkeyApplyResult.Success(null);
+                }
+            }
+            catch (Exception ex)
+            {
+                App.Log($"[GlobalHotkey] Reserved hook startup threw: {ex}");
+            }
+
+            App.Log(
+                $"[GlobalHotkey] Reserved hook registration failed gesture={CurrentGestureText} " +
+                $"error={_reservedHotkeyHook.LastErrorCode}");
+            LastError = _localizationService.T("Settings.GlobalHotkey.Status.Unavailable");
+            NotifyRegistrationChanged();
+            return HotkeyApplyResult.Failure(_localizationService.T("Settings.GlobalHotkey.Status.Unavailable"));
+        }
+
+        if (Register(_windowHandle, MainHotkeyId, activation.Gesture, out int registerError))
+        {
+            _isRegistered = true;
+            App.Log($"[GlobalHotkey] Registered gesture={CurrentGestureText} hwnd=0x{_windowHandle.ToInt64():X}");
+            NotifyRegistrationChanged();
+            return HotkeyApplyResult.Success(null);
+        }
+
+        App.Log($"[GlobalHotkey] RegisterHotKey failed gesture={CurrentGestureText} error={registerError}");
+        LastError = _localizationService.T("Settings.GlobalHotkey.Status.Conflict");
+        NotifyRegistrationChanged();
+        return HotkeyApplyResult.Failure(_localizationService.T("Settings.GlobalHotkey.Status.Conflict"));
+    }
+
     public bool TryApplyGesture(GlobalHotkeyGesture gesture, out string? error)
     {
         return TryApplyActivation(GlobalHotkeyActivation.FromChord(gesture), out error);
@@ -270,6 +360,87 @@ public sealed class GlobalHotkeyService : IDisposable
 
         error = registrationError;
         return false;
+    }
+
+    public Task<HotkeyApplyResult> TryApplyGestureAsync(GlobalHotkeyGesture gesture)
+    {
+        return TryApplyActivationAsync(GlobalHotkeyActivation.FromChord(gesture));
+    }
+
+    public async Task<HotkeyApplyResult> TryApplyActivationAsync(GlobalHotkeyActivation activation)
+    {
+        activation = NormalizeActivation(
+            activation.Kind,
+            (int)activation.Gesture.Modifiers,
+            activation.Gesture.VirtualKey);
+        if (!IsValidActivation(activation))
+        {
+            string error = _localizationService.T("Settings.GlobalHotkey.Status.Invalid");
+            LastError = error;
+            return HotkeyApplyResult.Failure(error);
+        }
+
+        var settings = _settingsService.Settings;
+        HotkeyActivationKind previousKind = settings.GlobalHotkeyActivationKind;
+        int previousModifiers = settings.GlobalHotkeyModifiers;
+        int previousVirtualKey = settings.GlobalHotkeyKey;
+        GlobalHotkeyActivation previousActivation = NormalizeActivation(
+            previousKind,
+            previousModifiers,
+            previousVirtualKey);
+        bool isCurrentActivation = activation.Equals(previousActivation);
+        bool shouldBeActive = _windowHandle != IntPtr.Zero && settings.GlobalHotkeyEnabled;
+
+        if (isCurrentActivation)
+        {
+            if (shouldBeActive && !IsRegistered)
+            {
+                HotkeyApplyResult refreshResult = await RefreshRegistrationAsync();
+                if (!IsRegistered)
+                {
+                    return refreshResult.Error is not null
+                        ? HotkeyApplyResult.Failure(refreshResult.Error)
+                        : HotkeyApplyResult.Failure(_localizationService.T("Settings.GlobalHotkey.Status.Unavailable"));
+                }
+            }
+
+            return HotkeyApplyResult.Success(null);
+        }
+
+        settings.GlobalHotkeyActivationKind = activation.Kind;
+        settings.GlobalHotkeyModifiers = (int)activation.Gesture.Modifiers;
+        settings.GlobalHotkeyKey = activation.Gesture.VirtualKey;
+
+        if (!shouldBeActive)
+        {
+            _settingsService.SaveDebounced();
+            return HotkeyApplyResult.Success(null);
+        }
+
+        // The real registration is the commit point. A probe can become stale
+        // before the subsequent RegisterHotKey call, so register the requested
+        // gesture first and roll back both settings and registration on failure.
+        HotkeyApplyResult result = await RefreshRegistrationAsync();
+        if (IsRegistered)
+        {
+            _settingsService.SaveDebounced();
+            return result;
+        }
+
+        string registrationError = result.Error ??
+            _localizationService.T("Settings.GlobalHotkey.Status.Unavailable");
+        settings.GlobalHotkeyActivationKind = previousKind;
+        settings.GlobalHotkeyModifiers = previousModifiers;
+        settings.GlobalHotkeyKey = previousVirtualKey;
+        result = await RefreshRegistrationAsync();
+        if (!IsRegistered)
+        {
+            App.Log(
+                $"[GlobalHotkey] Rollback registration failed previousActivation=" +
+                $"{FormatActivation(previousActivation, _localizationService)}");
+        }
+
+        return HotkeyApplyResult.Failure(registrationError);
     }
 
     public void SetEnabled(bool enabled)

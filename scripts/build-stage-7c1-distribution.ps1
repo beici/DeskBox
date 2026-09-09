@@ -147,6 +147,7 @@ if ($directRetailSummary.productProfile -ne "retail" -or
     $directRetailSummary.deploymentProfile -ne "full" -or
     -not [bool]$directRetailSummary.selfContained -or
     -not [bool]$directRetailSummary.windowsAppSdkSelfContained -or
+    $null -eq $directRetailSummary.windowsAppRuntimeInsightsResource -or
     [bool]$directRetailSummary.smokeHarnessEnabled) {
     throw "The Direct installer payload is not a smoke-free Full Native AOT retail build."
 }
@@ -172,6 +173,7 @@ $directRequiredFiles = @(
     "Microsoft.UI.Input.dll",
     "Microsoft.ui.xaml.dll",
     "Microsoft.WindowsAppRuntime.dll",
+    "Microsoft.WindowsAppRuntime.Insights.Resource.dll",
     "ThirdParty/Everything/LICENSE.txt",
     "DeskBox.pri",
     "DeskBox.InstallManifest.txt"
@@ -182,6 +184,7 @@ $directForbiddenPatterns = @(
     '(^|/)DeskBox\.dll$',
     '(^|/)DeskBox\.deps\.json$',
     '(^|/)DeskBox\.runtimeconfig\.json$',
+    '(^|/)DeskBox\.Abstractions\.dll$',
     '(^|/)(?:coreclr|clrjit|hostfxr|hostpolicy)\.dll$',
     '(^|/)Assets/Store/',
     'store-assets-html'
@@ -211,10 +214,13 @@ $thumbnailProxyMachine = Get-PeMachine -Path (
     Join-Path $directPublishDirectory "DeskBox.ThumbnailProxy.exe")
 $everythingSdkMachine = Get-PeMachine -Path (
     Join-Path $directPublishDirectory "EverythingSdk.dll")
+$windowsAppRuntimeInsightsMachine = Get-PeMachine -Path (
+    Join-Path $directPublishDirectory "Microsoft.WindowsAppRuntime.Insights.Resource.dll")
 if ($deskBoxMachine -ne $expectedMachine -or
     $updaterMachine -ne $expectedMachine -or
     $thumbnailProxyMachine -ne $expectedMachine -or
-    $everythingSdkMachine -ne $expectedMachine) {
+    $everythingSdkMachine -ne $expectedMachine -or
+    $windowsAppRuntimeInsightsMachine -ne $expectedMachine) {
     throw "The Direct AOT executable architecture does not match $Platform."
 }
 
@@ -371,6 +377,7 @@ $summary = [ordered]@{
         executableMachine = "0x$($deskBoxMachine.ToString('X4'))"
         updaterMachine = "0x$($updaterMachine.ToString('X4'))"
         thumbnailProxyMachine = "0x$($thumbnailProxyMachine.ToString('X4'))"
+        windowsAppRuntimeInsightsMachine = "0x$($windowsAppRuntimeInsightsMachine.ToString('X4'))"
         rustNative = $nativeContract
         crtLinkage = "Static"
         vcRuntimeImports = $vcImports

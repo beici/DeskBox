@@ -853,6 +853,15 @@ public partial class App
             return;
         }
 
+        // H.NotifyIcon owns the tray icon on the UI thread's message window;
+        // re-post when reached from a non-UI caller (DEF-010) instead of
+        // mutating the icon cross-thread.
+        if (App.UiDispatcherQueue is { HasThreadAccess: false } dispatcherQueue)
+        {
+            dispatcherQueue.TryEnqueue(UpdateTrayIconAppearance);
+            return;
+        }
+
         string style = SettingsService.Settings.TrayIconStyle ?? "System";
         _trayIcon.Icon = AppBranding.CreateTrayIcon(style, IsDarkThemeActive());
     }

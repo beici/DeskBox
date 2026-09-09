@@ -12,12 +12,55 @@ internal static class WidgetCompactFrameSkipPolicy
     public const int SixtyFpsLevel = 2;
     public const int ThirtyFpsLevel = 3;
 
+    /// <summary>
+    /// User-selectable animation frame-rate tiers in fps (the General
+    /// settings tab exposes exactly these four, labeled 低/中/高/最高 via
+    /// localization).
+    /// </summary>
+    public static readonly int[] SelectableFrameRates = { 30, 60, 90, 120 };
+
+    public const int DefaultFrameRate = 60;
+
+    /// <summary>
+    /// Clamps an arbitrary stored value onto the four selectable tiers
+    /// (30/60/90/120); unknown values fall back to
+    /// <see cref="DefaultFrameRate"/>.
+    /// </summary>
+    public static int NormalizeFrameRate(int value)
+    {
+        return value switch
+        {
+            30 => 30,
+            90 => 90,
+            120 => 120,
+            _ => DefaultFrameRate
+        };
+    }
+
     // A tick counts as overrun when its interval exceeds the frame budget by
     // this factor (same threshold as WidgetCompactAnimationFrameTracker).
     public const double OverrunBudgetFactor = 1.5;
 
     public const int TickWindow = 8;
     public const int MinimumOverrunTicksToEscalate = 6;
+
+    /// <summary>
+    /// Resolves the ladder level for a user frame-rate cap when the cap maps
+    /// onto the classic ladder (60 → SixtyFpsLevel, 30 → ThirtyFpsLevel).
+    /// Caps of 90/120 have no ladder rung — use
+    /// <see cref="ResolveSkipForFrameRate"/> for those.
+    /// </summary>
+    public static int ResolveLevelForFrameRate(int refreshRateHz, int targetFrameRateHz)
+    {
+        int rate = Math.Max(1, refreshRateHz);
+        int target = Math.Max(1, targetFrameRateHz);
+        if (target >= rate)
+        {
+            return FullRateLevel;
+        }
+
+        return Math.Max(SixtyFpsLevel, (int)Math.Round(rate / (double)target));
+    }
 
     public static int ResolveSkip(int refreshRateHz, int level)
     {
@@ -28,6 +71,33 @@ internal static class WidgetCompactFrameSkipPolicy
             >= ThirtyFpsLevel => Math.Max(1, (int)Math.Round(rate / 30.0)),
             _ => 1
         };
+    }
+
+    /// <summary>
+    /// Per-tick skip for an explicit frame-rate cap: the HWND resize advances
+    /// only on every N-th tick, delivering refresh/N fps. N is the largest
+    /// divisor that still reaches the selected rate, so the delivered cadence
+    /// is never below what the user asked for.
+    /// <para>
+    /// Rounding the divisor to nearest used to undershoot badly on refresh
+    /// rates that are not a multiple of the tier: at 165Hz the default 60fps
+    /// tier resolved to skip 3 = 55fps, below the tier's own label and below
+    /// the project's 60fps floor, and the capsule geometry then stepped at
+    /// 55Hz while its Composition opacity/scale animations ran at the full
+    /// 165Hz - the visible "not smooth enough" mismatch. At 165Hz the tiers
+    /// now resolve to 33 / 82.5 / 165 / 165 fps.
+    /// </para>
+    /// </summary>
+    public static int ResolveSkipForFrameRate(int refreshRateHz, int targetFrameRateHz)
+    {
+        int rate = Math.Max(1, refreshRateHz);
+        int target = Math.Max(1, targetFrameRateHz);
+        if (target >= rate)
+        {
+            return 1;
+        }
+
+        return Math.Max(1, rate / target);
     }
 
     public static bool IsOverrun(double intervalMs, double frameBudgetMs)

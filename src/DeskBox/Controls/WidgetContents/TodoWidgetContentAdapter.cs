@@ -53,6 +53,11 @@ public sealed class TodoWidgetContentAdapter :
         Config = config;
         ViewModel = viewModel;
         _viewFactory = viewFactory ?? (vm => new TodoWidgetContent(vm));
+        // DEF-043: the reminder-relay subscription lives on TodoWidgetContent
+        // (Loaded/Unloaded). Keeping it out of the adapter lets unit tests
+        // construct the adapter without a WinUI Application - touching
+        // App.Current here performs COM activation and throws
+        // REGDB_E_CLASSNOTREG in the test host.
     }
 
     public WidgetConfig Config { get; }

@@ -14,6 +14,8 @@ public sealed partial class WidgetTitleIcon : UserControl
 {
     private const double DesktopTitleIconScale = 1.3d;
     private string? _currentColorAssetName;
+    private XamlPath? _activeMonoIconPath;
+    private readonly Dictionary<string, XamlPath> _monoIconPaths = new(StringComparer.Ordinal);
     private double? _surfaceCornerRadiusOverride;
     private bool _isCompactPresentation;
 
@@ -58,6 +60,24 @@ public sealed partial class WidgetTitleIcon : UserControl
             typeof(double),
             typeof(WidgetTitleIcon),
             new PropertyMetadata(14d, OnAppearancePropertyChanged));
+
+    public static readonly DependencyProperty CustomImageSourceProperty =
+        DependencyProperty.Register(
+            nameof(CustomImageSource),
+            typeof(ImageSource),
+            typeof(WidgetTitleIcon),
+            new PropertyMetadata(null, OnAppearancePropertyChanged));
+
+    /// <summary>
+    /// User-picked title icon image. When set it replaces every built-in
+    /// icon kind; the image is centered and uniformly scaled into the icon
+    /// surface ("尺寸适配与居中裁剪"). Null restores the built-in icon.
+    /// </summary>
+    public ImageSource? CustomImageSource
+    {
+        get => (ImageSource?)GetValue(CustomImageSourceProperty);
+        set => SetValue(CustomImageSourceProperty, value);
+    }
 
     public WidgetTitleIcon()
     {
@@ -174,6 +194,13 @@ public sealed partial class WidgetTitleIcon : UserControl
         IconSurface.Height = Math.Clamp(Math.Round(iconSize + 2), 15, 34);
         IconSurface.MinWidth = 0;
 
+        if (CustomImageSource is not null)
+        {
+            ApplyCustomImageIcon(iconSize);
+            ApplySurfaceCornerRadiusOverride();
+            return;
+        }
+
         switch (mode)
         {
             case WidgetTitleIconMode.LineMono:
@@ -230,6 +257,28 @@ public sealed partial class WidgetTitleIcon : UserControl
         ColorIcon.Visibility = Visibility.Visible;
     }
 
+    /// <summary>
+    /// Shows the user-picked image inside the color-icon host. The host is
+    /// centered with uniform stretch, so any PNG/ICO/JPG input is adapted to
+    /// the title icon size without distortion; ICO inputs render their
+    /// embedded best-fitting frame.
+    /// </summary>
+    private void ApplyCustomImageIcon(double iconSize)
+    {
+        double imageSize = Math.Clamp(Math.Round(iconSize + 3), 18, 34);
+        IconSurface.Width = imageSize;
+        IconSurface.Height = imageSize;
+        ColorIcon.Width = imageSize;
+        ColorIcon.Height = imageSize;
+        if (!ReferenceEquals(ColorIcon.Source, CustomImageSource))
+        {
+            ColorIcon.Source = CustomImageSource;
+            _currentColorAssetName = string.Empty;
+        }
+
+        ColorIcon.Visibility = Visibility.Visible;
+    }
+
     private void ApplyMonoIcon(WidgetTitleIconKind kind, double iconSize, Color accent, bool filled)
     {
         var iconPath = GetMonoIconPath(kind, filled);
@@ -259,65 +308,59 @@ public sealed partial class WidgetTitleIcon : UserControl
 
     private void HideMonoIconPaths()
     {
-        foreach (var iconPath in GetAllMonoIconPaths())
+        if (_activeMonoIconPath is { } iconPath)
         {
             iconPath.Visibility = Visibility.Collapsed;
         }
     }
 
-    private IEnumerable<XamlPath> GetAllMonoIconPaths()
-    {
-        yield return LineDefaultPath;
-        yield return LineManagedStoragePath;
-        yield return LineMappedFolderPath;
-        yield return LineQuickCapturePath;
-        yield return LineTodoPath;
-        yield return LineMusicPath;
-        yield return LineWeatherPath;
-        yield return LineTagsPath;
-        yield return LineSearchPath;
-        yield return LineSystemMonitorPath;
-        yield return FilledDefaultPath;
-        yield return FilledManagedStoragePath;
-        yield return FilledMappedFolderPath;
-        yield return FilledQuickCapturePath;
-        yield return FilledTodoPath;
-        yield return FilledMusicPath;
-        yield return FilledWeatherPath;
-        yield return FilledTagsPath;
-        yield return FilledSearchPath;
-        yield return FilledSystemMonitorPath;
-    }
-
     private XamlPath GetMonoIconPath(WidgetTitleIconKind kind, bool filled)
     {
-        return filled
+        string pathName = filled
             ? kind switch
             {
-                WidgetTitleIconKind.ManagedStorage => FilledManagedStoragePath,
-                WidgetTitleIconKind.MappedFolder => FilledMappedFolderPath,
-                WidgetTitleIconKind.QuickCapture => FilledQuickCapturePath,
-                WidgetTitleIconKind.Todo => FilledTodoPath,
-                WidgetTitleIconKind.Music => FilledMusicPath,
-                WidgetTitleIconKind.Weather => FilledWeatherPath,
-                WidgetTitleIconKind.Tags => FilledTagsPath,
-                WidgetTitleIconKind.Search => FilledSearchPath,
-                WidgetTitleIconKind.SystemMonitor => FilledSystemMonitorPath,
-                _ => FilledDefaultPath
+                WidgetTitleIconKind.ManagedStorage => "FilledManagedStoragePath",
+                WidgetTitleIconKind.MappedFolder => "FilledMappedFolderPath",
+                WidgetTitleIconKind.QuickCapture => "FilledQuickCapturePath",
+                WidgetTitleIconKind.Todo => "FilledTodoPath",
+                WidgetTitleIconKind.Music => "FilledMusicPath",
+                WidgetTitleIconKind.Weather => "FilledWeatherPath",
+                WidgetTitleIconKind.Tags => "FilledTagsPath",
+                WidgetTitleIconKind.Search => "FilledSearchPath",
+                WidgetTitleIconKind.SystemMonitor => "FilledSystemMonitorPath",
+                _ => "FilledDefaultPath"
             }
             : kind switch
             {
-                WidgetTitleIconKind.ManagedStorage => LineManagedStoragePath,
-                WidgetTitleIconKind.MappedFolder => LineMappedFolderPath,
-                WidgetTitleIconKind.QuickCapture => LineQuickCapturePath,
-                WidgetTitleIconKind.Todo => LineTodoPath,
-                WidgetTitleIconKind.Music => LineMusicPath,
-                WidgetTitleIconKind.Weather => LineWeatherPath,
-                WidgetTitleIconKind.Tags => LineTagsPath,
-                WidgetTitleIconKind.Search => LineSearchPath,
-                WidgetTitleIconKind.SystemMonitor => LineSystemMonitorPath,
-                _ => LineDefaultPath
+                WidgetTitleIconKind.ManagedStorage => "LineManagedStoragePath",
+                WidgetTitleIconKind.MappedFolder => "LineMappedFolderPath",
+                WidgetTitleIconKind.QuickCapture => "LineQuickCapturePath",
+                WidgetTitleIconKind.Todo => "LineTodoPath",
+                WidgetTitleIconKind.Music => "LineMusicPath",
+                WidgetTitleIconKind.Weather => "LineWeatherPath",
+                WidgetTitleIconKind.Tags => "LineTagsPath",
+                WidgetTitleIconKind.Search => "LineSearchPath",
+                WidgetTitleIconKind.SystemMonitor => "LineSystemMonitorPath",
+                _ => "LineDefaultPath"
             };
+
+        // Materialize only the selected geometry, then keep it for immediate
+        // reuse when icon mode or widget kind changes again.
+        if (_activeMonoIconPath is { } activePath && activePath.Name == pathName)
+        {
+            return activePath;
+        }
+
+        if (!_monoIconPaths.TryGetValue(pathName, out var iconPath))
+        {
+            iconPath = (Resources[pathName + "Template"] as DataTemplate)?.LoadContent() as XamlPath ??
+                throw new InvalidOperationException($"Missing title icon template: {pathName}");
+            (filled ? FilledIconHost : LineIconHost).Children.Add(iconPath);
+            _monoIconPaths.Add(pathName, iconPath);
+        }
+
+        _activeMonoIconPath = iconPath;
+        return iconPath;
     }
 
     private static bool IsFluentFilledPathKind(WidgetTitleIconKind kind)

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DeskBox.Models;
@@ -18,6 +19,18 @@ internal sealed partial class TodoJsonContext : JsonSerializerContext
 
 public sealed class TodoWidgetStore
 {
+    // DEF-043: Todo data is written by two independent flows - the widget
+    // view model (user edits) and TodoReminderService (background reminder
+    // bookkeeping). Both follow a load/modify/save-whole-document pattern,
+    // so interleaved writers used to let a stale snapshot overwrite a newer
+    // document (lost user edits or lost reminder marks). The gate is keyed
+    // by store path so every TodoWidgetStore instance targeting the same
+    // file shares one serialization point, mirroring the existing pattern
+    // in WeatherCacheStore.
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> s_pathGates =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim _gate;
+
     private readonly string _storePath;
 
     public TodoWidgetStore(string widgetId)
@@ -40,6 +53,7 @@ public sealed class TodoWidgetStore
         string dataDir = Path.Combine(widgetsDataRoot, safeWidgetId);
         Directory.CreateDirectory(dataDir);
         _storePath = Path.Combine(dataDir, "todo.json");
+        _gate = s_pathGates.GetOrAdd(_storePath, static _ => new SemaphoreSlim(1, 1));
     }
 
     internal string StorePath => _storePath;
@@ -47,6 +61,62 @@ public sealed class TodoWidgetStore
     internal string AttachmentDirectory => Path.Combine(Path.GetDirectoryName(_storePath)!, "attachments");
 
     public async Task<TodoWidgetData> LoadAsync()
+    {
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            return await LoadUnsafeAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public async Task SaveAsync(TodoWidgetData data)
+    {
+        data = Normalize(data);
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await SaveUnsafeAsync(data).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Runs a load/modify/save cycle while holding the store gate across the
+    /// whole sequence (DEF-043). Background writers must use this instead of
+    /// separate Load/Save calls: holding the gate prevents a concurrent
+    /// writer's whole-document save from being overwritten by this writer's
+    /// stale snapshot, and vice versa.
+    /// </summary>
+    public async Task<TodoWidgetData> MutateAsync(Func<TodoWidgetData, bool> mutate)
+    {
+        ArgumentNullException.ThrowIfNull(mutate);
+
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            TodoWidgetData data = await LoadUnsafeAsync().ConfigureAwait(false);
+            bool changed = mutate(data);
+            if (changed)
+            {
+                await SaveUnsafeAsync(data).ConfigureAwait(false);
+            }
+
+            return data;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task<TodoWidgetData> LoadUnsafeAsync()
     {
         return await ResilientJsonStore.LoadAsync(
             _storePath,
@@ -57,13 +127,18 @@ public sealed class TodoWidgetStore
             nameof(TodoWidgetStore));
     }
 
-    public async Task SaveAsync(TodoWidgetData data)
+    /// <summary>
+    /// Persists an already-normalized document. Callers must hold
+    /// <see cref="_gate"/> (Load/Save/Mutate wrappers do); the JSON
+    /// serialization call sites intentionally stay at the frozen
+    /// JsonSerializationBaseline inventory count for this file.
+    /// </summary>
+    private async Task SaveUnsafeAsync(TodoWidgetData data)
     {
-        data = Normalize(data);
         string json = JsonSerializer.Serialize(
             data,
             TodoJsonContext.Default.StoreData);
-        await ResilientJsonStore.SaveAsync(_storePath, json);
+        await ResilientJsonStore.SaveAsync(_storePath, json).ConfigureAwait(false);
     }
 
     private static TodoWidgetData Normalize(TodoWidgetData? data)
@@ -171,6 +246,78 @@ public sealed class TodoWidgetStore
     public Task ClearAsync()
     {
         return SaveAsync(new TodoWidgetData());
+    }
+
+    /// <summary>
+    /// Deletes every persisted artifact of a widget's todo data: the store
+    /// file, its resilient backup, the attachments directory, and the widget
+    /// directory itself when it becomes empty. Callers invoke this when the
+    /// widget is removed (WidgetManager.RemoveWidgetAsync and the duplicate
+    /// cleanup in ResetFeatureWidgetAsync) so deleting a todo widget leaves
+    /// no orphaned data behind, mirroring GlanceWidgetStore.
+    /// </summary>
+    public static Task DeleteForWidgetAsync(string widgetId) =>
+        DeleteForWidgetAsync(
+            Path.Combine(
+                DeskBoxDataPathService.Current.DataDirectory,
+                "widgets"),
+            widgetId);
+
+    internal static Task DeleteForWidgetAsync(string widgetsDataRoot, string widgetId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(widgetId);
+        string dataDir = Path.Combine(widgetsDataRoot, SanitizeWidgetId(widgetId));
+        string storePath = Path.Combine(dataDir, "todo.json");
+        TryDeleteFile(storePath);
+        TryDeleteFile(ResilientJsonStore.GetBackupPath(storePath));
+        TryDeleteDirectory(Path.Combine(dataDir, "attachments"));
+        TryDeleteDirectoryIfEmpty(dataDir);
+        return Task.CompletedTask;
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[TodoWidgetStore] Failed to delete '{path}': {ex.Message}");
+        }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[TodoWidgetStore] Failed to delete directory '{path}': {ex.Message}");
+        }
+    }
+
+    private static void TryDeleteDirectoryIfEmpty(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path) && !Directory.EnumerateFileSystemEntries(path).Any())
+            {
+                Directory.Delete(path);
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[TodoWidgetStore] Failed to remove empty directory '{path}': {ex.Message}");
+        }
     }
 
     private static void NormalizeSteps(List<TodoStep> steps)

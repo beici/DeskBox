@@ -24,13 +24,21 @@ public sealed partial class ContentWidgetWindow
 {
     private bool _isCloseWidgetPending;
 
+    private WidgetChromeMode ResolveTitleBarChromeMode() =>
+        App.Current.WidgetManager?.ResolveWidgetChromeMode(_config, _descriptor) ??
+        _chromeModeResolver.Resolve(_config, _descriptor);
+
+    protected override void OnWidgetGroupPresentationChanged(WidgetGroupPresentation? presentation)
+    {
+        if (!IsClosing && ContentWidgetShell.ChromeMode != ResolveTitleBarChromeMode())
+        {
+            ApplyTitleBarLayout();
+        }
+    }
+
     private void ApplyTitleBarLayout()
     {
-        WidgetChromeMode chromeMode =
-            App.Current.WidgetManager?.ResolveWidgetChromeMode(
-                _config,
-                _descriptor) ??
-            _chromeModeResolver.Resolve(_config, _descriptor);
+        WidgetChromeMode chromeMode = ResolveTitleBarChromeMode();
         double titleTextSize = chromeMode == WidgetChromeMode.Compact
             ? SettingsService.NormalizeTextSize(SettingsService.Settings.TextSize)
             : _titleViewModel.TitleTextSize;
@@ -40,32 +48,9 @@ public sealed partial class ContentWidgetWindow
             includeInnerPadding: false,
             chromeMode);
 
-        ContentWidgetShell.ChromeMode = chromeMode;
-        ContentWidgetShell.TitleIconElement.IconSize = metrics.TitleIconSize;
-        ContentWidgetShell.TitleTextElement.FontSize = metrics.TitleTextSize;
+        ContentWidgetShell.ApplyTitleBarMetrics(metrics, chromeMode);
         ApplyTitleActionButtonConfiguration();
         ApplyLockActionIconState();
-
-        WidgetTitleBarMetricsCalculator.ApplyActionButton(ContentWidgetShell.PositionLockActionButton, metrics);
-        WidgetTitleBarMetricsCalculator.ApplyActionButton(ContentWidgetShell.SizeLockActionButton, metrics);
-        WidgetTitleBarMetricsCalculator.ApplyActionButton(ContentWidgetShell.AddActionButton, metrics);
-        WidgetTitleBarMetricsCalculator.ApplyActionButton(ContentWidgetShell.MoreActionButton, metrics);
-        WidgetTitleBarMetricsCalculator.ApplyActionButton(ContentWidgetShell.CloseActionButton, metrics);
-
-        WidgetActionIconHelper.ApplyPairSize(
-            ContentWidgetShell.PositionLockActionIcon,
-            ContentWidgetShell.PositionLockFilledActionIcon,
-            metrics);
-        WidgetActionIconHelper.ApplyPairSize(
-            ContentWidgetShell.SizeLockActionIcon,
-            ContentWidgetShell.SizeLockFilledActionIcon,
-            metrics);
-        WidgetTitleBarMetricsCalculator.ApplyActionIcon(ContentWidgetShell.AddActionIcon, metrics);
-        WidgetTitleBarMetricsCalculator.ApplyActionIcon(ContentWidgetShell.MoreActionIcon, metrics);
-        WidgetTitleBarMetricsCalculator.ApplyActionIcon(ContentWidgetShell.CloseActionIcon, metrics);
-
-        ContentWidgetShell.SetTitleBarRowHeight(metrics.RowHeight);
-        ContentWidgetShell.SetTitleBarPadding(WidgetTitleBarMetricsCalculator.CreateOuterPadding(chromeMode));
     }
 
     private void ApplyTitleActionButtonConfiguration()
@@ -208,6 +193,114 @@ public sealed partial class ContentWidgetWindow
             e.PointerPosition);
     }
 
+    private MenuFlyoutSubItem CreateClipboardItemColorMenu(Action hideFlyout)
+    {
+        var localization = App.Current.LocalizationService;
+        if (CurrentContent is not QuickCaptureSurfaceContent quickCaptureSurface)
+        {
+            return new MenuFlyoutSubItem
+            {
+                Text = localization.T("QuickCapture.ClipboardColor.Menu"),
+                IsEnabled = false
+            };
+        }
+
+        var menu = new MenuFlyoutSubItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.Menu"),
+            Icon = new FontIcon { Glyph = "\uE790" }
+        };
+
+        var followTheme = new ToggleMenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.FollowTheme"),
+            IsChecked = !quickCaptureSurface.IsClipboardItemTextCustom &&
+                !quickCaptureSurface.IsClipboardItemBackgroundCustom
+        };
+        followTheme.Click += (_, _) =>
+        {
+            quickCaptureSurface.SetClipboardItemFollowTheme(isBackground: false);
+            quickCaptureSurface.SetClipboardItemFollowTheme(isBackground: true);
+            quickCaptureSurface.SetClipboardItemHoverTextFollowTheme();
+        };
+        menu.Items.Add(followTheme);
+
+        var textColor = new MenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.Text"),
+            Icon = new FontIcon { Glyph = "\uE8D2" }
+        };
+        textColor.Click += (_, _) =>
+        {
+            hideFlyout();
+            _pendingClipboardColorPicker = ClipboardColorPickerTarget.Text;
+        };
+        menu.Items.Add(textColor);
+
+        var hoverTextColor = new MenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.HoverText"),
+            Icon = new FontIcon { Glyph = "\uE7E6" }
+        };
+        hoverTextColor.Click += (_, _) =>
+        {
+            hideFlyout();
+            _pendingClipboardColorPicker = ClipboardColorPickerTarget.HoverText;
+        };
+        menu.Items.Add(hoverTextColor);
+
+        var backgroundColor = new MenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.Background"),
+            Icon = new FontIcon { Glyph = "\uE790" }
+        };
+        backgroundColor.Click += (_, _) =>
+        {
+            hideFlyout();
+            _pendingClipboardColorPicker = ClipboardColorPickerTarget.Background;
+        };
+        menu.Items.Add(backgroundColor);
+
+        var reset = new MenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.Reset"),
+            Icon = new FontIcon { Glyph = "\uE777" }
+        };
+        reset.Click += (_, _) => quickCaptureSurface.ResetClipboardItemColors();
+        menu.Items.Add(reset);
+
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(new ToggleMenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.TextCustom"),
+            IsChecked = quickCaptureSurface.IsClipboardItemTextCustom,
+            IsEnabled = false
+        });
+        menu.Items.Add(new ToggleMenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.HoverTextCustom"),
+            IsChecked = quickCaptureSurface.IsClipboardItemHoverTextCustom,
+            IsEnabled = false
+        });
+        menu.Items.Add(new ToggleMenuFlyoutItem
+        {
+            Text = localization.T("QuickCapture.ClipboardColor.BackgroundCustom"),
+            IsChecked = quickCaptureSurface.IsClipboardItemBackgroundCustom,
+            IsEnabled = false
+        });
+
+        return menu;
+    }
+
+    private enum ClipboardColorPickerTarget
+    {
+        Text,
+        Background,
+        HoverText
+    }
+
+    private ClipboardColorPickerTarget? _pendingClipboardColorPicker;
+
     private void PositionLockButton_Click(object sender, RoutedEventArgs e)
     {
         SetPositionLocked(!_config.IsPositionLocked);
@@ -265,7 +358,6 @@ public sealed partial class ContentWidgetWindow
 
     private void ContentWidgetShell_TitleDoubleTapped(object? sender, DoubleTappedRoutedEventArgs e)
     {
-        CancelPendingTitleBarClickCollapse();
         e.Handled = true;
         DispatcherQueue.TryEnqueue(() =>
         {
@@ -313,6 +405,20 @@ public sealed partial class ContentWidgetWindow
                 QueueCloseWidgetFlyout(closeWidgetFlyoutHandoff);
                 closeWidgetFlyoutHandoff = null;
             }
+            else if (_pendingClipboardColorPicker.HasValue)
+            {
+                ClipboardColorPickerTarget pickerTarget = _pendingClipboardColorPicker.Value;
+                _pendingClipboardColorPicker = null;
+                DispatcherQueue.TryEnqueue(async () =>
+                {
+                    if (CurrentContent is QuickCaptureSurfaceContent quickCaptureSurface)
+                    {
+                        await quickCaptureSurface.ShowClipboardItemColorPickerAsync(
+                            isBackground: pickerTarget == ClipboardColorPickerTarget.Background,
+                            isHoverText: pickerTarget == ClipboardColorPickerTarget.HoverText);
+                    }
+                });
+            }
             else if (showForegroundColorPickerWhenClosed)
             {
                 DispatcherQueue.TryEnqueue(async () =>
@@ -344,7 +450,12 @@ public sealed partial class ContentWidgetWindow
             App.Current.LocalizationService,
             SetWidgetForegroundModeOverride,
             () => showForegroundColorPickerWhenClosed = true));
-
+        flyout.Items.Add(CreateTitleAppearanceMenu(flyout.Hide));
+        flyout.Items.Add(CreateMarginMenuEntry(flyout.Hide));
+        if (_config.WidgetKind is WidgetKind.QuickCapture)
+        {
+            flyout.Items.Add(CreateClipboardItemColorMenu(flyout.Hide));
+        }
         if (_config.WidgetKind is WidgetKind.File)
         {
             flyout.Items.Add(
@@ -811,30 +922,40 @@ public sealed partial class ContentWidgetWindow
         }
 
         _isCancellingTitleRename = false;
+        _titleRenameOpenedAtTick = Environment.TickCount64;
         BeginCompactInteraction();
         App.Current.WidgetManager?.BeginWidgetInteraction("content-title-rename-opened");
         var editor = CreateTitleRenameEditor();
         ContentWidgetShell.TitleEditorContent = editor;
         HoldTemporaryTopMost();
-        AppWindow.Show();
-        base.Activate();
-        Win32Helper.SetForegroundWindow(HWnd);
-        FocusTitleRenameEditor(editor);
+        ActivateForTitleRename();
         DispatcherQueue.TryEnqueue(() =>
         {
             if (ReferenceEquals(ContentWidgetShell.TitleEditorContent, editor))
             {
-                base.Activate();
-                Win32Helper.SetForegroundWindow(HWnd);
-                FocusTitleRenameEditor(editor);
+                ActivateForTitleRename();
             }
         });
+        InlineEditorFocus.FocusWhenLoaded(
+            editor,
+            static focused => focused.SelectAll(),
+            DispatcherQueue,
+            "ContentTitleRename");
     }
 
-    private static void FocusTitleRenameEditor(TextBox editor)
+    private void ActivateForTitleRename()
     {
-        editor.Focus(FocusState.Programmatic);
-        editor.SelectAll();
+        if (WidgetLayerService.UsesDesktopPinnedMode())
+        {
+            // Resting desktop-pinned widgets carry WS_EX_NOACTIVATE; strip it
+            // before the explicit activation so the editor window can take
+            // keyboard focus without waiting for the GotFocus routing.
+            WidgetLayerService.PrepareForDesktopPinnedKeyboardInput(HWnd);
+        }
+
+        AppWindow.Show();
+        base.Activate();
+        Win32Helper.SetForegroundWindow(HWnd);
     }
 
     private TextBox CreateTitleRenameEditor()
@@ -873,6 +994,13 @@ public sealed partial class ContentWidgetWindow
         if (_isCancellingTitleRename)
         {
             _isCancellingTitleRename = false;
+            return;
+        }
+
+        if (InlineEditorFocus.TryRecoverFocusWithinGrace(
+                _titleRenameOpenedAtTick,
+                sender as TextBox))
+        {
             return;
         }
 
@@ -916,8 +1044,11 @@ public sealed partial class ContentWidgetWindow
         catch (Exception ex)
         {
             await ShowErrorDialogAsync(App.Current.LocalizationService.T("Widget.RenameFailed"), ex.Message);
-            editor.Focus(FocusState.Programmatic);
-            editor.SelectAll();
+            InlineEditorFocus.FocusWhenLoaded(
+                editor,
+                static focused => focused.SelectAll(),
+                DispatcherQueue,
+                "ContentTitleRename");
         }
         finally
         {

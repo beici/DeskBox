@@ -197,13 +197,13 @@ public sealed class AotStage5B4C1B2BContractTests
         string launcher = ReadRepositoryFile("scripts/start-aot-preview.ps1");
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
 
-        Assert.Contains("$auditProfileVersion = 58", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 61", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1B2BMissingRunnerPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1B2BForbiddenScopePatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1B2BRustAbiUnchanged", audit, StringComparison.Ordinal);
-        Assert.Contains("stage5B4C1B2BExpectedWmc1510Count = 1241", audit, StringComparison.Ordinal);
-        Assert.Contains("$RequiredAuditProfileVersion = 58", launcher, StringComparison.Ordinal);
+        Assert.Contains("stage5B4C1B2BExpectedWmc1510Count = 867", audit, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 61", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("actual SHObjectProperties dialog", project, StringComparison.Ordinal);
@@ -213,7 +213,7 @@ public sealed class AotStage5B4C1B2BContractTests
     public void ReportAndRoadmap_RecordCompletedBoundaryAndNextPickerStage()
     {
         string report = ReadRepositoryFile(
-            "docs/architecture/aot-stage-5b-4c1b2b-report.md");
+            "docs/architecture/stage-reports/aot-stage-5b-4c1b2b-report.md");
         string roadmap = ReadRepositoryFile(
             "docs/architecture/rust-native-aot-roadmap.md");
 

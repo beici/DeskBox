@@ -31,26 +31,8 @@ public sealed class QuickCaptureMaterialRefreshContractTests
             StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void LegacyWindow_RefreshesMaterialAfterModelRefresh()
-    {
-        string root = FindRepositoryRoot();
-        string windowCode = File.ReadAllText(Path.Combine(
-            root,
-            "src/DeskBox/Views/QuickCaptureWidgetWindow.xaml.cs"));
-        string menuCode = File.ReadAllText(Path.Combine(
-            root,
-            "src/DeskBox/Views/QuickCaptureWidgetWindow.Menus.cs"));
-
-        Assert.Contains(
-            "DispatcherQueue.TryEnqueue(RefreshItemMaterialSurfaces)",
-            windowCode,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "await ViewModel.RefreshItemsAsync()",
-            menuCode,
-            StringComparison.Ordinal);
-    }
+    // DEF-027: the LegacyWindow material-refresh contract was removed with
+    // the dead host; the production surface contract above remains.
 
     private static string FindRepositoryRoot()
     {

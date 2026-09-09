@@ -21,7 +21,7 @@ Current widget kinds are represented by `WidgetKind`.
 Current production widget categories:
 
 - `File`: file organizer / mapped folder widgets.
-- `QuickCapture`: the note and clipboard widget, still using a dedicated window.
+- `QuickCapture`: the note and clipboard widget hosted by `ContentWidgetWindow`.
 - `Todo`: content-type feature widget using `ContentWidgetWindow`.
 - `Music`: content-type feature widget using `ContentWidgetWindow` and Windows media sessions.
 - `Weather`: content-type feature widget using `ContentWidgetWindow`, Open-Meteo API, and adaptive responsive layouts.
@@ -55,10 +55,9 @@ Use this path for future content-type widgets whenever possible.
 
 Core widget foundation:
 
-- `src/DeskBox/Models/WidgetKind.cs`
-- `src/DeskBox/Models/WidgetConfig.cs`
+- `src/DeskBox.Abstractions/Models/WidgetConfig.cs` (includes `WidgetKind`)
 - `src/DeskBox/Services/WidgetRegistry.cs`
-- `src/DeskBox/Services/WidgetContentDescriptor.cs`
+- `src/DeskBox.Abstractions/Services/WidgetContentDescriptor.cs`
 - `src/DeskBox/Services/WidgetContentFactory.cs`
 - `src/DeskBox/Services/IWidgetContentProvider.cs`
 - `src/DeskBox/Services/ContentWidgetWindowFactory.cs`
@@ -67,7 +66,7 @@ Core widget foundation:
 Window creation routing:
 
 - `WidgetWindowProvider` inside `WidgetManager`: maps a creatable `WidgetKind` to the correct host-window creation path.
-- Current providers: File/Todo/Music/Weather/Search -> `ContentWidgetWindow`, QuickCapture -> `QuickCaptureWidgetWindow`.
+- Current providers: File/Todo/Music/Weather/Search/QuickCapture -> `ContentWidgetWindow` (DEF-027: the dedicated `QuickCaptureWidgetWindow` host was removed; QuickCapture runs on the unified content path).
 - File widgets use `FileSurfaceContent` inside the unified content host. The legacy `WidgetWindow` host has been removed.
 
 Shared shell and window helpers:
@@ -81,8 +80,8 @@ Shared shell and window helpers:
 
 Current windows:
 
-- `src/DeskBox/Views/QuickCaptureWidgetWindow.xaml.cs`: QuickCapture / note widget.
-- `src/DeskBox/Views/ContentWidgetWindow.xaml.cs`: File, Todo, Music, Weather, Search, and future content widgets.
+- `src/DeskBox/Views/ContentWidgetWindow.xaml.cs`: File, Todo, Music, Weather, Search, QuickCapture, and future content widgets.
+- DEF-027: `QuickCaptureWidgetWindow` was removed (13 files / ~7,800 lines, zero instantiation since the B2 color migration).
 
 Current Todo implementation:
 
@@ -185,6 +184,11 @@ The shared file surface owns the high-risk behaviors:
 - mapped-folder behavior
 - right-click menus
 
+The detailed drag/stack protocol, operation semantics, regression matrix, and
+known failure modes are documented in
+[`file_drag_stack_contract.md`](file_drag_stack_contract.md). Treat its
+internal-arrangement versus filesystem-transfer boundary as a release contract.
+
 Current shared pieces used by file widgets:
 
 - `WidgetShell` hosts the outer shell.
@@ -196,15 +200,13 @@ Current shared pieces used by file widgets:
 
 ### QuickCapture
 
-QuickCapture still uses `QuickCaptureWidgetWindow`.
-
-This is intentional because it has special behavior:
-
-- clipboard monitoring
-- note input
-- tabs for records/pinned/recent
-- image/text/file capture
-- QuickCapture-specific menus and editing behavior
+QuickCapture runs on the unified `ContentWidgetWindow` path via
+`QuickCaptureSurfaceContent`. (DEF-027: the dedicated
+`QuickCaptureWidgetWindow` host was removed as dead code — zero
+instantiation since the shared surface absorbed its features. Clipboard
+monitoring, note input, records/pinned/recent tabs, image/text/file
+capture, and QuickCapture-specific menus and editing behavior all live in
+the shared surface.)
 
 Current shared pieces used by QuickCapture:
 
@@ -224,6 +226,7 @@ Current production users:
 - Music
 - Weather
 - Search
+- QuickCapture
 
 Future likely users:
 
@@ -271,7 +274,6 @@ It controls:
 
 Current users:
 
-- `QuickCaptureWidgetWindow`
 - `ContentWidgetWindow`
 
 File widgets intentionally use zero inner title padding to avoid double padding with `WidgetShell`. QuickCapture keeps inner padding because its current title layout uses it as part of the custom title content.
@@ -294,7 +296,6 @@ It controls:
 
 Current users:
 
-- `QuickCaptureWidgetWindow`
 - `ContentWidgetWindow`
 
 The controller only owns animation mechanics. Host windows still own:
@@ -339,7 +340,7 @@ Current feature widget dispatch:
 
 Current handlers:
 
-- QuickCapture: dedicated window path.
+- QuickCapture: content window path.
 - Todo: content window path.
 - Music: content window path.
 - Weather: content window path.

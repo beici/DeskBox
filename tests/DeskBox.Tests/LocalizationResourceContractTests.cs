@@ -62,6 +62,51 @@ public sealed partial class LocalizationResourceContractTests
     }
 
     [Fact]
+    public void JsonLocales_DateTimeFormatSpecifiers_OnlyUseValidNetFormatLetters()
+    {
+        // DEF-039 regression guard: es-ES/fr-FR/ru-RU shipped translated
+        // format letters ("aaaa", "гггг/М/д ЧЧ:мм") that .NET renders as
+        // literal text, so file timestamps showed placeholder garbage.
+        // The key-parity test above only compares placeholder indexes and
+        // cannot catch this; validate the format specifier letters instead.
+        string root = FindRepositoryRoot();
+        string stringsDirectory = Path.Combine(root, "src", "DeskBox", "Strings");
+        var violations = new List<string>();
+
+        foreach (string locale in SupportedLocales)
+        {
+            IReadOnlyDictionary<string, string> localized = ReadJsonLocale(
+                Path.Combine(stringsDirectory, locale + ".json"));
+
+            foreach ((string key, string value) in localized)
+            {
+                foreach (Match match in FormatSpecifierRegex().Matches(value))
+                {
+                    // Quoted sections ('...' / "...") are literal text by
+                    // definition (e.g. yyyy'年'M'月'd'日') and always valid.
+                    string spec = QuotedLiteralRegex()
+                        .Replace(match.Groups["spec"].Value, string.Empty);
+
+                    foreach (char character in spec.Where(char.IsLetter))
+                    {
+                        if (!ValidNetFormatLetters.Contains(character))
+                        {
+                            violations.Add(
+                                $"{locale}:{key} uses invalid .NET format letter " +
+                                $"'{character}' in \"{match.Value}\".");
+                        }
+                    }
+                }
+            }
+        }
+
+        Assert.True(
+            violations.Count == 0,
+            "Invalid date/time format letters found:\n" +
+            string.Join(Environment.NewLine, violations));
+    }
+
+    [Fact]
     public void PackagedResources_DeclareEverySupportedLocale()
     {
         string root = FindRepositoryRoot();
@@ -108,7 +153,6 @@ public sealed partial class LocalizationResourceContractTests
             "src/DeskBox/Controls/DesktopOrganizationTaskView.Actions.cs",
             "src/DeskBox/Controls/DesktopOrganizationTaskView.xaml.cs",
             "src/DeskBox/Controls/WidgetContents/QuickCaptureSurfaceContent.xaml.cs",
-            "src/DeskBox/Views/QuickCaptureWidgetWindow.Editing.cs",
             "src/DeskBox/Views/SettingsSections/DesktopOrganizationSettingsSection.xaml.cs",
             "src/DeskBox/Views/SettingsWindow.StorageAndUpdates.cs"
         ];
@@ -159,4 +203,19 @@ public sealed partial class LocalizationResourceContractTests
 
     [GeneratedRegex(@"\{(\d+)(?:[^{}]*)\}", RegexOptions.CultureInvariant)]
     private static partial Regex CompositePlaceholderRegex();
+
+    [GeneratedRegex(@"\{\d+:(?<spec>[^}]*)\}", RegexOptions.CultureInvariant)]
+    private static partial Regex FormatSpecifierRegex();
+
+    [GeneratedRegex(@"'[^']*'|""[^""]*""", RegexOptions.CultureInvariant)]
+    private static partial Regex QuotedLiteralRegex();
+
+    // Custom .NET date/time format letters that are valid when the argument
+    // is a DateTime. Deliberately excludes "z"/"Z" (DateTimeOffset-only, a
+    // DateTime throws FormatException) and everything outside the official
+    // custom-specifier alphabet, so translated letters like Cyrillic "гггг"
+    // or Spanish "aaaa" are rejected at test time instead of rendering as
+    // literal garbage in the UI.
+    private static readonly HashSet<char> ValidNetFormatLetters =
+        new("yYmMdDhHsStTfFgK");
 }

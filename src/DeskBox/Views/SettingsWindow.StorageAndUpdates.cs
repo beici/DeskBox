@@ -105,6 +105,11 @@ public sealed partial class SettingsWindow
 
     private void RefreshManagedStoragePathWarning()
     {
+        if (ManagedStoragePathWarningText is null)
+        {
+            return;
+        }
+
         ManagedStoragePathAssessment assessment =
             ManagedStoragePathService.AssessPath(ViewModel.ManagedStorageRootPath);
         var warnings = new List<string>();
@@ -131,6 +136,52 @@ public sealed partial class SettingsWindow
         ManagedStoragePathWarningBorder.Visibility = warnings.Count > 0
             ? Visibility.Visible
             : Visibility.Collapsed;
+    }
+
+    private void RefreshManagedStorageDesktopShortcutState()
+    {
+        if (ManagedStorageDesktopShortcutStatusText is null)
+        {
+            return;
+        }
+
+        bool hasShortcut =
+            App.Current.ManagedStorageDesktopShortcutService.HasShortcut();
+        ManagedStorageDesktopShortcutStatusText.Text = _localizationService.T(
+            hasShortcut
+                ? "Settings.ManagedPath.DesktopShortcut.StatusCreated"
+                : "Settings.ManagedPath.DesktopShortcut.StatusNotCreated");
+        ManagedStorageDesktopShortcutActionText.Text = _localizationService.T(
+            hasShortcut
+                ? "Settings.ManagedPath.DesktopShortcut.Remove"
+                : "Widget.CreateShortcut");
+    }
+
+    private async void ManagedStorageDesktopShortcutActionButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        ManagedStorageDesktopShortcutActionButton.IsEnabled = false;
+        try
+        {
+            ManagedStorageDesktopShortcutService shortcutService =
+                App.Current.ManagedStorageDesktopShortcutService;
+            bool succeeded = shortcutService.HasShortcut()
+                ? await shortcutService.RemoveAsync()
+                : await shortcutService.CreateAsync();
+            RefreshManagedStorageDesktopShortcutState();
+            if (!succeeded)
+            {
+                await ShowInfoDialogAsync(
+                    _localizationService.T(
+                        "Settings.ManagedPath.DesktopShortcut.Title"),
+                    _localizationService.T("Common.OperationFailedRetry"));
+            }
+        }
+        finally
+        {
+            ManagedStorageDesktopShortcutActionButton.IsEnabled = true;
+        }
     }
 
     private void OpenManagedStoragePathButton_Click(object sender, RoutedEventArgs e)

@@ -149,8 +149,14 @@ public sealed class WeatherService : IDisposable
             string.Equals(_cacheSourceKey, sourceKey, StringComparison.Ordinal) &&
             DateTimeOffset.UtcNow - _cacheTimestamp < effectiveCacheDuration)
         {
-            _cachedData.LocationName = locationName;
-            return _cachedData;
+            // DEF-025 (THR-05): the cached instance is the authoritative copy
+            // shared across concurrent refresh cycles. Never hand it out or
+            // mutate it for a caller: surface fields (display name and the
+            // stale flag) are stamped onto a shallow copy, and the nested
+            // forecast payload is treated as read-only from here on.
+            WeatherData cached = CloneWeatherData(_cachedData);
+            cached.LocationName = locationName;
+            return cached;
         }
 
         // Try preferred source first, then fallback. Requests stay asynchronous
@@ -202,6 +208,10 @@ public sealed class WeatherService : IDisposable
             App.Log(
                 $"[WeatherService] Fetch succeeded source={actualSource} " +
                 $"fallback={data.IsFallback} elapsedMs={stopwatch.ElapsedMilliseconds}");
+            // DEF-025: the freshly fetched instance becomes the authoritative
+            // cache entry — hand the caller its own copy so widget-side edits
+            // of the surface fields can never bleed back into the cache.
+            return CloneWeatherData(data);
         }
         else
         {
@@ -209,12 +219,40 @@ public sealed class WeatherService : IDisposable
             // Return stale cache if it's for the same location.
             if (string.Equals(_cacheLocationKey, cacheKey, StringComparison.Ordinal) && _cachedData is not null)
             {
-                _cachedData.IsStale = true;
-                return _cachedData;
+                // DEF-025: stale marker is caller-visible state — stamp it on
+                // a copy, never on the shared authoritative instance.
+                WeatherData stale = CloneWeatherData(_cachedData);
+                stale.LocationName = locationName;
+                stale.IsStale = true;
+                return stale;
             }
         }
 
         return data;
+    }
+
+    /// <summary>
+    /// DEF-025 (THR-05): shallow copy for handing the cached payload to a
+    /// caller. The top-level surface fields (LocationName/IsStale/IsFallback)
+    /// are per-request display state; the nested Current/Daily/Hourly
+    /// payloads are shared read-only — the service never mutates them after
+    /// caching, and widget refreshes replace whole instances instead of
+    /// editing nested objects.
+    /// </summary>
+    private static WeatherData CloneWeatherData(WeatherData source)
+    {
+        return new WeatherData
+        {
+            Latitude = source.Latitude,
+            Longitude = source.Longitude,
+            Timezone = source.Timezone,
+            Current = source.Current,
+            Daily = source.Daily,
+            Hourly = source.Hourly,
+            LocationName = source.LocationName,
+            IsStale = source.IsStale,
+            IsFallback = source.IsFallback
+        };
     }
 
     internal Task<WeatherCacheState> LoadCacheStateAsync()

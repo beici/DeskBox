@@ -30,8 +30,6 @@ public sealed class AotStage5B4B2B1ContractTests
             "src/DeskBox/ViewModels/QuickCaptureWidgetViewModel.cs");
         string itemSync = ReadRepositoryFile(
             "src/DeskBox/ViewModels/QuickCaptureWidgetViewModel.ItemSync.cs");
-        string window = ReadRepositoryFile(
-            "src/DeskBox/Views/QuickCaptureWidgetWindow.xaml");
         string surface = ReadRepositoryFile(
             "src/DeskBox/Controls/WidgetContents/QuickCaptureSurfaceContent.xaml");
 
@@ -60,17 +58,14 @@ public sealed class AotStage5B4B2B1ContractTests
             itemSync,
             StringComparison.Ordinal);
 
-        foreach (string xaml in new[] { window, surface })
-        {
-            Assert.Contains(
-                "ItemsSource=\"{Binding VisibleItemsSource}\"",
-                xaml,
-                StringComparison.Ordinal);
-            Assert.DoesNotContain(
-                "ItemsSource=\"{Binding Items}\"",
-                xaml,
-                StringComparison.Ordinal);
-        }
+        Assert.Contains(
+            "ItemsSource=\"{Binding VisibleItemsSource}\"",
+            surface,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "ItemsSource=\"{Binding Items}\"",
+            surface,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -249,9 +244,9 @@ public sealed class AotStage5B4B2B1ContractTests
         string baseline = ReadRepositoryFile(
             "tests/DeskBox.Tests/JsonSerializationBaselineContractTests.cs");
 
-        Assert.Contains("Assert.Equal(28, actual.Count);", baseline, StringComparison.Ordinal);
-        Assert.Contains("Assert.Equal(64, actual.Values.Sum());", baseline, StringComparison.Ordinal);
-        Assert.Contains("Assert.Equal(26, actualContextOwners.Length);", baseline, StringComparison.Ordinal);
+        Assert.Contains("Assert.Equal(29, actual.Count);", baseline, StringComparison.Ordinal);
+        Assert.Contains("Assert.Equal(67, actual.Values.Sum());", baseline, StringComparison.Ordinal);
+        Assert.Contains("Assert.Equal(27, actualContextOwners.Length);", baseline, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -261,10 +256,10 @@ public sealed class AotStage5B4B2B1ContractTests
         string launcher = ReadRepositoryFile("scripts/start-aot-preview.ps1");
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
 
-        Assert.Contains("$auditProfileVersion = 58", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 61", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B2B1", audit, StringComparison.Ordinal);
-        Assert.Contains("$RequiredAuditProfileVersion = 58", launcher, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 61", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("Quick Capture", project, StringComparison.Ordinal);
@@ -283,7 +278,7 @@ public sealed class AotStage5B4B2B1ContractTests
         Assert.Contains("stage5B4B2B1ForbiddenScopePatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B2B1JsonSerializeCallCount", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B2B1SourceWarningMessages", audit, StringComparison.Ordinal);
-        Assert.Contains("stage5B4B2B1ExpectedWmc1510Count = 1241", audit, StringComparison.Ordinal);
+        Assert.Contains("stage5B4B2B1ExpectedWmc1510Count = 867", audit, StringComparison.Ordinal);
     }
 
     private static int CountOccurrences(string value, string token)

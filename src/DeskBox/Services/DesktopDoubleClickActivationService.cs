@@ -114,6 +114,53 @@ public sealed class DesktopDoubleClickActivationService : IDisposable
         }
     }
 
+    public async Task<bool> RefreshRegistrationAsync()
+    {
+        Stop();
+        if (!_settingsService.Settings.DesktopDoubleClickEnabled)
+        {
+            return true;
+        }
+
+        if (!await TryStartAsync())
+        {
+            App.Log("[DesktopDoubleClick] Hook registration failed");
+            return false;
+        }
+
+        return true;
+    }
+
+    public async Task<bool> TrySetEnabledAsync(bool enabled)
+    {
+        bool previous = _settingsService.Settings.DesktopDoubleClickEnabled;
+        if (previous == enabled)
+        {
+            if (!enabled || IsActive)
+            {
+                return true;
+            }
+
+            return await TryStartAsync();
+        }
+
+        _settingsService.Settings.DesktopDoubleClickEnabled = enabled;
+        bool started = enabled && await TryStartAsync();
+        if (!started && enabled)
+        {
+            _settingsService.Settings.DesktopDoubleClickEnabled = previous;
+            return false;
+        }
+
+        if (!enabled)
+        {
+            Stop();
+        }
+
+        _settingsService.SaveDebounced();
+        return true;
+    }
+
     public void Dispose()
     {
         lock (_sync)
@@ -176,6 +223,55 @@ public sealed class DesktopDoubleClickActivationService : IDisposable
 
             errorCode = _startupError == 0 ? 1400 : _startupError;
             LastErrorCode = errorCode;
+        }
+
+        Stop();
+        return false;
+    }
+
+    private async Task<bool> TryStartAsync()
+    {
+        Stop();
+
+        var ready = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        Thread thread;
+        long generation;
+        lock (_sync)
+        {
+            if (_disposed)
+            {
+                return false;
+            }
+
+            _startupError = 0;
+            LastErrorCode = 0;
+            generation = ++_lifecycleGeneration;
+            thread = new Thread(() => HookThreadMain(ready, generation))
+            {
+                IsBackground = true,
+                Name = "DeskBox.DesktopDoubleClickHook"
+            };
+            _thread = thread;
+        }
+
+        thread.Start();
+        if (!await ready.Task.WaitAsync(TimeSpan.FromMilliseconds(StartupTimeoutMilliseconds)).ConfigureAwait(false))
+        {
+            LastErrorCode = 1460;
+            Stop();
+            return false;
+        }
+
+        lock (_sync)
+        {
+            if (_hookHandle != IntPtr.Zero && _thread?.IsAlive == true)
+            {
+                App.Log("[DesktopDoubleClick] Hook registered");
+                return true;
+            }
+
+            LastErrorCode = _startupError == 0 ? 1400 : _startupError;
         }
 
         Stop();

@@ -42,6 +42,7 @@ public sealed partial class OnboardingWindow : Window
     private Storyboard? _statusFeedbackStoryboard;
     private System.Threading.CancellationTokenSource? _hotkeyDemoCts;
     private int _introGeneration;
+    private int _startupToggleRefreshGeneration;
     private int _stepIndex;
     private bool _hasLoaded;
     private bool _isSubclassInstalled;
@@ -92,6 +93,7 @@ public sealed partial class OnboardingWindow : Window
         }
 
         SizeChanged += (_, _) => ApplyResponsiveLayout();
+        Activated += OnboardingWindow_Activated;
         RootGrid.KeyDown += (_, e) => OnHotkeyKeyDown(e.Key);
         RootGrid.Loaded += (_, _) =>
         {
@@ -128,6 +130,7 @@ public sealed partial class OnboardingWindow : Window
 
         Closed += (_, _) =>
         {
+            Activated -= OnboardingWindow_Activated;
             _introGeneration++;
             _introStoryboard?.Stop();
             _brandLogoShineStoryboard?.Stop();

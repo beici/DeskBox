@@ -266,6 +266,14 @@ public static class WidgetPositioningService
 
         if (isWildlyOffscreen)
         {
+            // Note: this fallback is only a fixed point for "capture anchor,
+            // then re-resolve" when the widget fits the work area minus the
+            // offset (Width <= workArea.Width - FallbackOffset). For wider
+            // widgets the anchor capture at (x+32, y+32) flips the anchor
+            // side, so a restart resolves to a slightly different spot. The
+            // margin entry cannot produce such widths (targets are clamped
+            // before this branch), so the constraint only matters if this
+            // helper is reused with larger inputs (N5).
             return new RectInt32(
                 workArea.X + FallbackOffset,
                 workArea.Y + FallbackOffset,

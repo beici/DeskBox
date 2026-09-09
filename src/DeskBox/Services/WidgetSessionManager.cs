@@ -73,6 +73,25 @@ public sealed class WidgetSessionManager
         SetState(_interactionDepth > 0 ? WidgetSessionState.InteractionActive : _stateBeforeInteraction, reason);
     }
 
+    /// <summary>
+    /// Safety net for interaction-depth leaks ([重要勿删] §4.1 / pitfall #4):
+    /// if a Begin was never paired with an End, the depth stays above zero and
+    /// permanently blocks the raised-state restore monitor. The watchdog calls
+    /// this to snap back to the state captured before the (leaked) interaction,
+    /// after which normal Begin/End pairing resumes cleanly.
+    /// </summary>
+    public void ForceResetInteractions(string reason)
+    {
+        if (_interactionDepth == 0 && State != WidgetSessionState.InteractionActive)
+        {
+            return;
+        }
+
+        _log?.Invoke($"[WidgetSession] force reset reason={reason} leakedDepth={_interactionDepth} state={State}");
+        _interactionDepth = 0;
+        SetState(_stateBeforeInteraction, reason);
+    }
+
     private void SetState(WidgetSessionState nextState, string reason)
     {
         if (State == nextState)

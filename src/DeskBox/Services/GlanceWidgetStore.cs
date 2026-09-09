@@ -27,6 +27,8 @@ public sealed class GlanceWidgetStore
     private static readonly ConcurrentDictionary<string, GlanceWidgetStore> WidgetStores =
         new(StringComparer.Ordinal);
 
+    internal static int CachedWidgetStoreCount => WidgetStores.Count;
+
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly string _storePath;
     private readonly string? _legacyStorePath;
@@ -254,6 +256,9 @@ public sealed class GlanceWidgetStore
         data.TimeFontFamily = string.IsNullOrWhiteSpace(data.TimeFontFamily)
             ? null
             : data.TimeFontFamily.Trim();
+        data.TimeFormat = Enum.IsDefined(data.TimeFormat)
+            ? data.TimeFormat
+            : GlanceTimeFormatMode.FollowSystem;
         data.Layout = Enum.IsDefined(data.Layout) ? data.Layout : GlanceLayoutMode.Centered;
         data.BackgroundSource = Enum.IsDefined(data.BackgroundSource)
             ? data.BackgroundSource

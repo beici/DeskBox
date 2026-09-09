@@ -48,8 +48,22 @@ public class AppSettings
     /// <summary>Finite delay before releasing idle caches after every widget is fully hidden.</summary>
     public int HiddenCacheCleanupDelaySeconds { get; set; } = 30;
 
+    /// <summary>Hidden cleanup scope. Valid values: <c>Warm</c>, <c>AllRecreatable</c>.</summary>
+    public string HiddenCacheCleanupScope { get; set; } = "AllRecreatable";
+
     /// <summary>Finite delay before shrinking recreatable caches while visible widgets are inactive.</summary>
     public int VisibleIdleCacheCleanupDelaySeconds { get; set; } = 10 * 60;
+
+    /// <summary>
+    /// Trim the process working set after the fully-hidden idle deep cleanup
+    /// completes. Mirrors the pre-1.4.5 behaviour users remember as low idle
+    /// memory: pages are paged out and fault back in on demand, so it never
+    /// runs while widgets are visible or the user is interacting.
+    /// </summary>
+    public bool IdleWorkingSetTrimEnabled { get; set; } = true;
+
+    /// <summary>Experimental working-set trim once all widget hide animations have completed.</summary>
+    public bool ImmediateHiddenWorkingSetTrimEnabled { get; set; }
 
     /// <summary>Finite delay before closing a hidden transient window such as Search.</summary>
     public int TransientWindowReleaseDelaySeconds { get; set; } = 10 * 60;
@@ -102,6 +116,12 @@ public class AppSettings
 
     /// <summary>Maximum number of text lines shown for each Quick Capture item in the list.</summary>
     public int QuickCaptureItemPreviewLineCount { get; set; } = 3;
+
+    /// <summary>Text size for Quick Capture list cards. Zero keeps the global appearance size for legacy settings.</summary>
+    public double QuickCaptureListTextSize { get; set; }
+
+    /// <summary>Text size for Quick Capture detail content. Zero keeps the global appearance size for legacy settings.</summary>
+    public double QuickCaptureContentTextSize { get; set; }
 
     /// <summary>Enter-key behavior used by Quick Capture multiline editors.</summary>
     public string QuickCaptureEditorEnterBehavior { get; set; } = "CtrlEnterSaves";
@@ -158,6 +178,12 @@ public class AppSettings
 
     /// <summary>Maximum number of text lines shown for each Todo item in the list.</summary>
     public int TodoItemPreviewLineCount { get; set; } = 2;
+
+    /// <summary>Text size for Todo list cards. Zero keeps the global appearance size for legacy settings.</summary>
+    public double TodoListTextSize { get; set; }
+
+    /// <summary>Text size for Todo detail content. Zero keeps the global appearance size for legacy settings.</summary>
+    public double TodoContentTextSize { get; set; }
 
     /// <summary>Enter-key behavior used by Todo multiline editors.</summary>
     public string TodoEditorEnterBehavior { get; set; } = "CtrlEnterSaves";
@@ -260,6 +286,21 @@ public class AppSettings
 
     /// <summary>Custom widget foreground color in <c>#RRGGBB</c> form.</summary>
     public string WidgetForegroundColor { get; set; } = "#F5F5F5";
+
+    /// <summary>
+    /// Default widget title bar alignment for the icon + caption block:
+    /// <c>"Left"</c>, <c>"Center"</c>, or <c>"Right"</c>. Per-widget
+    /// overrides live in widget metadata.
+    /// </summary>
+    public string WidgetTitleAlignment { get; set; } = "Left";
+
+    /// <summary>
+    /// Capsule transition frame-rate cap in fps. Supported values are
+    /// <c>30</c>, <c>60</c>, <c>90</c>, <c>120</c> (anything else falls back
+    /// to <c>60</c>); the delivered cadence is refresh/cap rounded, always at
+    /// or under the target.
+    /// </summary>
+    public int WidgetAnimationFrameRate { get; set; } = 60;
 
     /// <summary>
     /// Widget text edge mode: <c>"Off"</c>, <c>"Soft"</c>, <c>"Strong"</c>.
@@ -441,6 +482,12 @@ public class AppSettings
     public string FileWidgetFolderOpenBehavior { get; set; } = "Explorer";
 
     /// <summary>
+    /// Whether right-clicking a single file item in a file widget shows the
+    /// native Windows context menu instead of the built-in DeskBox menu.
+    /// </summary>
+    public bool FileItemSystemContextMenuEnabled { get; set; }
+
+    /// <summary>
     /// Whether shortcut icons should hide the arrow overlay inside DeskBox.
     /// </summary>
     public bool HideShortcutArrowOverlay { get; set; } = true;
@@ -544,13 +591,36 @@ public class AppSettings
     /// managed storage root. The shortcut is intentionally independent of the
     /// application executable so it remains useful after uninstalling.
     /// </summary>
-    public bool ManagedStorageDesktopShortcutEnabled { get; set; } = true;
+    public bool ManagedStorageDesktopShortcutEnabled { get; set; }
 
     /// <summary>
     /// Absolute path of the desktop shortcut created by DeskBox. Tracking the
     /// exact path lets DeskBox avoid overwriting or deleting unrelated links.
     /// </summary>
     public string ManagedStorageDesktopShortcutPath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Whether DeskBox creates automatic data snapshots on a schedule.
+    /// </summary>
+    public bool AutomaticBackupEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Minutes between automatic snapshots; always one of the preset values in
+    /// <see cref="Services.DataBackupSettingsPolicy.SupportedIntervalMinutes"/>.
+    /// </summary>
+    public int AutomaticBackupIntervalMinutes { get; set; } = 24 * 60;
+
+    /// <summary>
+    /// How many automatic snapshots to keep; always one of the preset values in
+    /// <see cref="Services.DataBackupSettingsPolicy.SupportedRetentionCounts"/>.
+    /// </summary>
+    public int AutomaticBackupRetentionCount { get; set; } = 7;
+
+    /// <summary>
+    /// Custom directory for automatic snapshots. Empty means the default
+    /// recovery directory outside the app-data root.
+    /// </summary>
+    public string AutomaticBackupDirectory { get; set; } = string.Empty;
 
     /// <summary>
     /// Recent organization history used for undo and quick review.
