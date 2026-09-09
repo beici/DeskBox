@@ -115,6 +115,12 @@ public sealed partial class SettingsWindow
         (global::Microsoft.UI.Xaml.Controls.StackPanel)FindCreatedSectionElement("QuickCaptureSettings", "QuickCaptureSettingsSection")!;
     private global::Microsoft.UI.Xaml.Controls.ToggleSwitch QuickCaptureClipboardToggle =>
         (global::Microsoft.UI.Xaml.Controls.ToggleSwitch)FindCreatedSectionElement("QuickCaptureSettings", "QuickCaptureClipboardToggle")!;
+    private global::Microsoft.UI.Xaml.Controls.Button QuickCaptureRecordTextColorButton =>
+        (global::Microsoft.UI.Xaml.Controls.Button)FindCreatedSectionElement("QuickCaptureSettings", "QuickCaptureRecordTextColorButton")!;
+    private global::Microsoft.UI.Xaml.Controls.Button QuickCaptureRecordBackgroundColorButton =>
+        (global::Microsoft.UI.Xaml.Controls.Button)FindCreatedSectionElement("QuickCaptureSettings", "QuickCaptureRecordBackgroundColorButton")!;
+    private global::Microsoft.UI.Xaml.Controls.Button QuickCaptureRecordHoverTextButton =>
+        (global::Microsoft.UI.Xaml.Controls.Button)FindCreatedSectionElement("QuickCaptureSettings", "QuickCaptureRecordHoverTextButton")!;
     private global::Microsoft.UI.Xaml.Controls.StackPanel TodoSettingsSection =>
         (global::Microsoft.UI.Xaml.Controls.StackPanel)FindCreatedSectionElement("TodoSettings", "TodoSettingsSection")!;
     private global::Microsoft.UI.Xaml.Controls.StackPanel MusicSettingsSection =>

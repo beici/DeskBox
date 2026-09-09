@@ -154,6 +154,10 @@ public abstract partial class WidgetWindowBase
     private double _collapseAnimationMaximumStallMs;
     private bool _hasCommittedCollapseAnimationFrame;
     private RectInt32 _pendingBoundsMoveFallbackBounds;
+    private Action? _beginApplyingBoundsCallback;
+    private Action<bool>? _endApplyingBoundsCallback;
+    private Action? _pendingBoundsMoveFallbackCallback;
+    private (Action? Committed, Action? CommitFailed) _pendingBoundsCommitCallbacks;
 
     // Transition-start cost, sampled only while performance logging is on. The
     // setup runs before the animation clock starts, so its cost is invisible to
@@ -167,6 +171,7 @@ public abstract partial class WidgetWindowBase
     private bool _restoreDesktopLayerAfterExpandedState;
     private int _compactLayerRestoreCommittedFrames;
     private bool _isSmartPinnedOpen;
+    private bool _isTitleBarClickCollapseCandidate;
     private bool _isCompactExpansionWarmupRunning;
     private bool _isCompactExpansionWarmupUrgent;
     private bool _isCompactExpansionWarmed;
@@ -466,6 +471,58 @@ public abstract partial class WidgetWindowBase
             persistManualState: EffectiveCollapseBehavior == WidgetCollapseBehavior.Click,
             animate: true,
             allowDuringInteraction: true);
+    }
+
+    /// <summary>
+    /// Arms a plain title-bar click as a collapse candidate for Click behavior.
+    /// The collapse itself is deferred to the release so a drag (or a click that
+    /// opens the flyout) cannot be mistaken for a collapse request (DEF-059).
+    /// </summary>
+    protected void BeginTitleBarClickCollapse(PointerRoutedEventArgs e, bool isTitleArea)
+    {
+        CancelPendingTitleBarClickCollapse();
+        if (!isTitleArea ||
+            EffectiveCollapseBehavior != WidgetCollapseBehavior.Click ||
+            _targetCollapsed ||
+            !e.GetCurrentPoint(WidgetShellControl.TitleBar).Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        _isTitleBarClickCollapseCandidate = true;
+    }
+
+    protected void CompleteTitleBarClickCollapse(PointerRoutedEventArgs e, bool hasMoved)
+    {
+        bool isCandidate = _isTitleBarClickCollapseCandidate;
+        _isTitleBarClickCollapseCandidate = false;
+        if (!isCandidate ||
+            hasMoved ||
+            e.GetCurrentPoint(WidgetShellControl.TitleBar).Properties.PointerUpdateKind !=
+                Microsoft.UI.Input.PointerUpdateKind.LeftButtonReleased ||
+            EffectiveCollapseBehavior != WidgetCollapseBehavior.Click ||
+            _targetCollapsed)
+        {
+            return;
+        }
+
+        // Let the current pointer-release handler finish its drag cleanup first,
+        // then collapse on the next UI turn without a fixed click delay.
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!IsClosing &&
+                EffectiveCollapseBehavior == WidgetCollapseBehavior.Click &&
+                !_targetCollapsed &&
+                !HasBlockingFlyoutOpen())
+            {
+                CollapseWidgetFromHost();
+            }
+        });
+    }
+
+    protected void CancelPendingTitleBarClickCollapse()
+    {
+        _isTitleBarClickCollapseCandidate = false;
     }
 
     protected void SetCollapseBehaviorOverride(WidgetCollapseBehavior behavior)
@@ -4287,15 +4344,20 @@ public abstract partial class WidgetWindowBase
 
         // Cached callbacks: this runs on every animation frame, and fresh
         // closures here allocated four objects per frame per animating widget.
+        // The per-call committed/commitFailed pair rides in a field the same
+        // way the fallback bounds do, so the cached end-commit callback can
+        // dispatch it without a per-frame allocation.
         _pendingBoundsMoveFallbackBounds = bounds;
+        _pendingBoundsCommitCallbacks = (committed, commitFailed);
         if (WidgetCompactAnimationCoordinator.TryQueueBoundsMove(
             HWnd,
             bounds,
             flags,
-            beforeCommit: () => IsApplyingBounds = true,
-            afterCommit: success =>
+            beforeCommit: _beginApplyingBoundsCallback ??= () => IsApplyingBounds = true,
+            afterCommit: _endApplyingBoundsCallback ??= success =>
             {
                 IsApplyingBounds = false;
+                (Action? committed, Action? commitFailed) = _pendingBoundsCommitCallbacks;
                 if (success)
                 {
                     committed?.Invoke();
@@ -4305,7 +4367,8 @@ public abstract partial class WidgetWindowBase
                     commitFailed?.Invoke();
                 }
             },
-            fallback: () => AppWindow.MoveAndResize(_pendingBoundsMoveFallbackBounds)))
+            fallback: _pendingBoundsMoveFallbackCallback ??=
+                () => AppWindow.MoveAndResize(_pendingBoundsMoveFallbackBounds)))
         {
             return;
         }

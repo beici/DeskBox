@@ -1404,6 +1404,7 @@ public sealed class FileServiceTests : IDisposable
         Assert.True(item.IsShortcut);
         Assert.Equal("Example", item.Name);
         Assert.Equal("https://example.invalid/game", item.TargetPath);
+    }
 
     [Fact]
     public void SteamInstallState_OnlyReportsNotInstalledFromCompleteEvidence()

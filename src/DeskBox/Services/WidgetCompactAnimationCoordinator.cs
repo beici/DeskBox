@@ -448,7 +448,7 @@ internal static class WidgetCompactAnimationCoordinator
         List<PendingBoundsMove> moves = PendingBoundsMovesBuffer;
         PendingBoundsMoves.Clear();
         long started = Stopwatch.GetTimestamp();
-        var succeeded = new bool[moves.Length];
+        var succeeded = new bool[moves.Count];
 
         try
         {
@@ -460,7 +460,7 @@ internal static class WidgetCompactAnimationCoordinator
             }
             else
             {
-                for (int i = 0; i < moves.Length; i++)
+                for (int i = 0; i < moves.Count; i++)
                 {
                     PendingBoundsMove move = moves[i];
                     try
@@ -477,7 +477,7 @@ internal static class WidgetCompactAnimationCoordinator
         }
         finally
         {
-            for (int i = 0; i < moves.Length; i++)
+            for (int i = 0; i < moves.Count; i++)
             {
                 try { moves[i].AfterCommit(succeeded[i]); }
                 catch (Exception ex) { App.Log($"[CompactBoundsBatch] Completion failed: {ex.Message}"); }
