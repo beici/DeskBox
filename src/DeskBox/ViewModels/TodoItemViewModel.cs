@@ -3,7 +3,6 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using DeskBox.Helpers;
 using DeskBox.Models;
 using DeskBox.Services;
-using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
 
@@ -704,16 +703,19 @@ public sealed partial class TodoItemViewModel : ObservableObject
 
     private static Windows.UI.Color ParseColor(string hex)
     {
+        // Pure struct construction only: ColorHelper/Colors are WinRT
+        // activation factories that throw REGDB_E_CLASSNOTREG in a headless
+        // test host (and CI runners) even though the struct math is safe.
         string value = hex.TrimStart('#');
         if (value.Length != 6 ||
             !byte.TryParse(value[..2], System.Globalization.NumberStyles.HexNumber, null, out byte red) ||
             !byte.TryParse(value.Substring(2, 2), System.Globalization.NumberStyles.HexNumber, null, out byte green) ||
             !byte.TryParse(value.Substring(4, 2), System.Globalization.NumberStyles.HexNumber, null, out byte blue))
         {
-            return Colors.Gray;
+            return Windows.UI.Color.FromArgb(0xFF, 0x80, 0x80, 0x80);
         }
 
-        return ColorHelper.FromArgb(0xFF, red, green, blue);
+        return Windows.UI.Color.FromArgb(0xFF, red, green, blue);
     }
 
     private static bool AreRecurrenceEqual(TodoRecurrence? left, TodoRecurrence? right)
