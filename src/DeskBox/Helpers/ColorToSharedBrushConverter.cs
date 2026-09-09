@@ -13,7 +13,13 @@ namespace DeskBox.Helpers;
 /// <see cref="SharedBrushCache"/> so list virtualization reuses brushes.
 /// </para>
 /// </summary>
-public sealed class ColorToSharedBrushConverter : IValueConverter
+/// <remarks>
+/// IValueConverter is projected, so the analyzer wants authoring metadata
+/// (partial). The converter never crosses the ABI — XAML only calls it in
+/// process — which is why this projection is marked deliberately partial
+/// instead of hand-writing the interface.
+/// </remarks>
+public sealed partial class ColorToSharedBrushConverter : IValueConverter
 {
     public object Convert(object value, Type targetType, object parameter, string language)
     {
