@@ -1,11 +1,10 @@
 namespace DeskBox.Tests;
 
 /// <summary>
-/// Source-scan contract for the todo orphan-data cleanup wiring (pluginization
-/// roadmap section 7, stage 2 data hygiene). The deletion logic itself is
-/// covered by TodoWidgetStoreTests against an isolated root; these assertions
-/// pin the two WidgetManager call sites so the hooks cannot be removed
-/// silently. House precedent: IdleRuntimeLifecycleContractTests-style
+/// Source-scan contract for the todo orphan-data cleanup wiring. The deletion
+/// logic itself is covered by TodoWidgetStoreTests against an isolated root;
+/// these assertions pin the two WidgetManager call sites so the hooks cannot be
+/// removed silently. House precedent: IdleRuntimeLifecycleContractTests-style
 /// Contains checks over production sources.
 /// </summary>
 public sealed class TodoOrphanCleanupContractTests
@@ -13,7 +12,7 @@ public sealed class TodoOrphanCleanupContractTests
     [Fact]
     public void RemoveWidgetAsync_DeletesTodoStoreBeforeFeatureDisableCheck()
     {
-        string manager = File.ReadAllText(TestPaths.SourceFile(
+        string manager = File.ReadAllText(TestPaths.FromRepository(
             "src/DeskBox/Services/WidgetManager.cs"));
 
         int todoBranch = manager.IndexOf(
@@ -43,7 +42,7 @@ public sealed class TodoOrphanCleanupContractTests
     [Fact]
     public void ResetFeatureWidgetAsync_DeletesDataForDuplicateTodoWidgets()
     {
-        string features = File.ReadAllText(TestPaths.SourceFile(
+        string features = File.ReadAllText(TestPaths.FromRepository(
             "src/DeskBox/Services/WidgetManager.FeatureWidgets.cs"));
 
         int duplicateLoop = features.IndexOf(
