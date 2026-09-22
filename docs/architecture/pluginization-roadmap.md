@@ -422,7 +422,7 @@ P0：§6 重写为 Runtime 矩阵（删除 A→B→C 旧结论，与 §14 唯一
 - **脚本硬编码路径扫描**：218 条去重路径全部有效——217 条存在 + 1 条**有意缺席**（`$stage4D2RemovedSourceFiles` 的反向断言，消费者 `:9272`，语义是「必须不存在」）；源码计数钉版 `$stage5B4B1ExpectedBindableViewModelPropertyCount = 351` 复算一致。
 - **文件集对账**（对两个父提交各做一次路径集差）：fork 侧 8 处缺失 = 7 处 `Helpers/`→`Platform/` 重定位 + 1 处上游 1.5.1 删除（`Views/WidgetTextShadowManager.cs` 并入 presentation/runtime 策略，合并取上游，符合「上游架构照收」）；上游侧 25 处缺失全部来自 fork `ad8febe`（DEF-027/016「remove dead QuickCapture host」，13 文件 7796 行）的有意删除 → 合并正确保留 fork 意图，**无静默丢失**。
 - **审计脚本传的 `-p:Platform=x64` / `-p:DeskBoxDistribution=Direct` 与本次实测等价**：`DeskBox.csproj` 中的 `'$(Platform)'` 条件只作用于 Rust 原生层、缩略图代理与错误分支，不参与任何 XAML 包含或编译常量；`DeskBoxDistribution` 默认值即 `Direct`（`:24`）。
-- 全量套件的 10 项失败为环境性，且已证明与合并无关：`git log <merge>^1..HEAD -- <失败测试文件> <被测生产文件>` 输出为空，禁用沙箱复跑同样失败（改文件属性 / 删独占句柄文件被拒）。
+- **全量套件两次干净复跑均为 4226/4226 全绿**（0 失败，各约 2 分 30 秒）。合并过程中观察到的 10 项 `FileServiceTests` / `ManagedStorageMigrationSafetyTests` 失败，是**并发或中断运行残留的文件锁污染**所致——同一构建配置（`bin\x64\Debug\...`）、同一筛选集，污染态单次耗时 17 分钟、干净态 2 分 30 秒，且失败断言两侧的文件在 `git log <merge>^1..HEAD` 中从未被合并触碰。故既非环境限制，亦非合并缺陷。
 - 唯一真实遗留已修（提交 `c131ccc`）：上游 v1.5.5 新增的 `SettingsSliceOwnershipContractTests.FacadeAccessManifest` 携带 6 条指向 fork 已删的 `QuickCaptureWidgetWindow` partial 的孤儿条目；孤儿条目对「只减不增」门禁是惰性的，但会为不存在的文件预留预算，削弱护栏，故删除（149→143 条）。
 
 ## 附录 A：关键证据文件索引
