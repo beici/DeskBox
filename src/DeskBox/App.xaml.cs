@@ -1623,25 +1623,16 @@ public partial class App : Application
             reason.Contains("display-power-on", StringComparison.OrdinalIgnoreCase);
         if (requiresExternalRecovery)
         {
-            SafeFireAndForget(async () =>
+            try
             {
-                try
-                {
-                    if (GlobalHotkeyService is not null)
-                    {
-                        await GlobalHotkeyService.RefreshRegistrationAsync();
-                    }
-
-                    if (DesktopDoubleClickActivationService is not null)
-                    {
-                        await DesktopDoubleClickActivationService.RefreshRegistrationAsync();
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Log($"[Lifecycle] Global hotkey recovery failed for {reason}: {ex.Message}");
-                }
-            }, "OnLifecycleRecoveryRequested");
+                GlobalHotkeyService?.RefreshRegistration();
+                DesktopDoubleClickActivationService?.RefreshRegistration();
+                _searchHotkeyService?.RefreshRegistration();
+            }
+            catch (Exception ex)
+            {
+                Log($"[Lifecycle] Global hotkey recovery failed for {reason}: {ex.Message}");
+            }
 
             ScheduleExternalStateRecovery();
             if (_everythingSearchService is not null &&

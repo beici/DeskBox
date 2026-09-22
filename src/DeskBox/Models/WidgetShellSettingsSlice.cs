@@ -37,6 +37,21 @@ public sealed class WidgetShellSettingsSlice
     public string WidgetForegroundColor { get; set; } = "#F5F5F5";
 
     /// <summary>
+    /// Default widget title bar alignment for the icon + caption block:
+    /// <c>"Left"</c>, <c>"Center"</c>, or <c>"Right"</c>. Per-widget
+    /// overrides live in widget metadata.
+    /// </summary>
+    public string WidgetTitleAlignment { get; set; } = "Left";
+
+    /// <summary>
+    /// Capsule transition frame-rate cap in fps. Supported values are
+    /// <c>30</c>, <c>60</c>, <c>90</c>, <c>120</c> (anything else falls back
+    /// to <c>60</c>); the delivered cadence is refresh/cap rounded, always at
+    /// or under the target.
+    /// </summary>
+    public int WidgetAnimationFrameRate { get; set; } = 60;
+
+    /// <summary>
     /// Border color mode for widget windows.
     /// Valid values: <c>"Neutral"</c>, <c>"Accent"</c>, <c>"None"</c>.
     /// </summary>

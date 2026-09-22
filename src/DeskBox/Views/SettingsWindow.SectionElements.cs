@@ -130,17 +130,13 @@ public sealed partial class SettingsWindow
     private global::Microsoft.UI.Xaml.Controls.StackPanel QuickCaptureSettingsSection =>
         FindCreatedSectionElement<global::Microsoft.UI.Xaml.Controls.StackPanel>("QuickCaptureSettings", "QuickCaptureSettingsSection")!;
     private global::Microsoft.UI.Xaml.Controls.ToggleSwitch QuickCaptureClipboardToggle =>
-<<<<<<< HEAD
-        (global::Microsoft.UI.Xaml.Controls.ToggleSwitch)FindCreatedSectionElement("QuickCaptureSettings", "QuickCaptureClipboardToggle")!;
-    private global::Microsoft.UI.Xaml.Controls.Button QuickCaptureRecordTextColorButton =>
-        (global::Microsoft.UI.Xaml.Controls.Button)FindCreatedSectionElement("QuickCaptureSettings", "QuickCaptureRecordTextColorButton")!;
-    private global::Microsoft.UI.Xaml.Controls.Button QuickCaptureRecordBackgroundColorButton =>
-        (global::Microsoft.UI.Xaml.Controls.Button)FindCreatedSectionElement("QuickCaptureSettings", "QuickCaptureRecordBackgroundColorButton")!;
-    private global::Microsoft.UI.Xaml.Controls.Button QuickCaptureRecordHoverTextButton =>
-        (global::Microsoft.UI.Xaml.Controls.Button)FindCreatedSectionElement("QuickCaptureSettings", "QuickCaptureRecordHoverTextButton")!;
-=======
         FindCreatedSectionElement<global::Microsoft.UI.Xaml.Controls.ToggleSwitch>("QuickCaptureSettings", "QuickCaptureClipboardToggle")!;
->>>>>>> upstream/main
+    private global::Microsoft.UI.Xaml.Controls.Button QuickCaptureRecordTextColorButton =>
+        FindCreatedSectionElement<global::Microsoft.UI.Xaml.Controls.Button>("QuickCaptureSettings", "QuickCaptureRecordTextColorButton")!;
+    private global::Microsoft.UI.Xaml.Controls.Button QuickCaptureRecordBackgroundColorButton =>
+        FindCreatedSectionElement<global::Microsoft.UI.Xaml.Controls.Button>("QuickCaptureSettings", "QuickCaptureRecordBackgroundColorButton")!;
+    private global::Microsoft.UI.Xaml.Controls.Button QuickCaptureRecordHoverTextButton =>
+        FindCreatedSectionElement<global::Microsoft.UI.Xaml.Controls.Button>("QuickCaptureSettings", "QuickCaptureRecordHoverTextButton")!;
     private global::Microsoft.UI.Xaml.Controls.StackPanel TodoSettingsSection =>
         FindCreatedSectionElement<global::Microsoft.UI.Xaml.Controls.StackPanel>("TodoSettings", "TodoSettingsSection")!;
     private global::Microsoft.UI.Xaml.Controls.StackPanel MusicSettingsSection =>

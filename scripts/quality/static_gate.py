@@ -23,12 +23,9 @@ BASELINE_FILE = os.path.join(ROOT, "scripts", "quality", "static-baseline.json")
 LANGS = ["ar-SA", "bn-BD", "de-DE", "en-US", "es-ES", "fr-FR",
          "hi-IN", "ja-JP", "pt-BR", "ru-RU", "zh-CN", "zh-TW"]
 
-# 已知豁免：死宿主 3 处剪贴板写（随 DEF-027 处置），批次 D 删除后自动清零
-CLIPBOARD_EXEMPT_FILES = [
-    "src/DeskBox/Views/QuickCaptureWidgetWindow.SelectionAndDrop.cs",
-    "src/DeskBox/Views/QuickCaptureWidgetWindow.Items.cs",
-    "src/DeskBox/Views/QuickCaptureWidgetWindow.Attachments.cs",
-]
+# DEF-027: 死宿主 QuickCaptureWidgetWindow 已随统一内容窗口路径删除，其 3 处
+# 剪贴板写随之消失，豁免清单清空（后续如需豁免，在此重新登记）。
+CLIPBOARD_EXEMPT_FILES = []
 
 PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
 

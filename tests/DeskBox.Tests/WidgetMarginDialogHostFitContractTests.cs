@@ -142,17 +142,24 @@ public sealed class WidgetMarginDialogHostFitContractTests
     }
 
     [Fact]
-    public void WidgetColorPicker_UsesTheSameToolWindowHost()
+    public void WidgetColorPicker_EscapesTheWidgetWindowInsteadOfBeingClipped()
     {
         string source = ReadRepositoryFile("src/DeskBox/Views/WidgetWindowBase.Foreground.cs");
+        string commands = ReadRepositoryFile("src/DeskBox/Views/ContentWidgetWindow.Commands.cs");
 
-        // Same defect class: a colour picker is taller than most widgets, so a
-        // widget-hosted ContentDialog clipped it.
+        // Same defect class as the margin editor: a colour picker is taller than
+        // most widgets, so a widget-hosted ContentDialog clipped it. The picker is
+        // built as an anchored flyout allowed to leave the widget's root bounds
+        // (the same escape-the-window placement the widget context menus use).
         Assert.Contains(
-            "WidgetDialogViewport viewport = ResolveToolDialogViewport(",
+            "protected Flyout BuildWidgetForegroundColorPickerFlyout()",
             source,
             StringComparison.Ordinal);
-        Assert.Contains("bool saved = await ShowToolDialogAsync(", source, StringComparison.Ordinal);
+        Assert.Contains("ShouldConstrainToRootBounds = false", source, StringComparison.Ordinal);
+        Assert.Contains(
+            "BuildWidgetForegroundColorPickerFlyout(),",
+            commands,
+            StringComparison.Ordinal);
         Assert.DoesNotContain("new ContentDialog", source, StringComparison.Ordinal);
         Assert.DoesNotContain("MinWidth = 340", source, StringComparison.Ordinal);
     }

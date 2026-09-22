@@ -41,13 +41,10 @@
     "Settings.Performance.CacheBudget.Description": "Ограничивает восстанавливаемый кэш значков, эскизов и декодированных изображений",
     "Settings.Performance.IdleWorkingSetTrim.Title": "Compress memory when idle",
     "Settings.Performance.IdleWorkingSetTrim.Description": "While widgets are hidden or you are away, page unused memory out to the system; it is read back on demand when you return",
-<<<<<<< HEAD
-=======
     "Settings.Performance.ImmediateHiddenWorkingSetTrim.Title": "Сокращать память сразу после скрытия (экспериментально)",
     "Settings.Performance.ImmediateHiddenWorkingSetTrim.Description": "Уменьшает резидентную память через 3 секунды после скрытия всех виджетов; быстрое чередование скрытия и показа не запускает повторную очистку. При повторном показе возможна небольшая задержка.",
     "Settings.Performance.QuiescenceWorkingSetTrim.Title": "Сжимать память после действий",
     "Settings.Performance.QuiescenceWorkingSetTrim.Description": "Через несколько секунд после закрытия настроек, сворачивания капсулы или завершения перетаскивания неиспользуемая память выгружается, даже если виджеты остаются видимыми. Выполняется только при заметном росте памяти и отсутствии анимации, поэтому никогда не повторяется.",
->>>>>>> upstream/main
     "Settings.Performance.CacheBudget.Small": "Малая",
     "Settings.Performance.CacheBudget.Balanced": "Сбалансированная",
     "Settings.Performance.CacheBudget.Large": "Большая",
@@ -142,7 +139,6 @@
     "Common.Ok": "ОК",
     "Common.Cancel": "Отмена",
     "Common.Save": "Сохранить",
-<<<<<<< HEAD
     "QuickCapture.ClipboardColor.Menu": "Цвета записей",
     "QuickCapture.ClipboardColor.FollowTheme": "Как в теме",
     "QuickCapture.ClipboardColor.Text": "Цвет текста записей…",
@@ -177,8 +173,6 @@
     "Widget.Margin.Reference.Screen": "край экрана",
     "Widget.Margin.ReferenceFormat": "{0} - от {1}",
     "Widget.Margin.ReferenceHint": "Каждая сторона отсчитывается от ближайшего виджета или значка рабочего стола. Край экрана используется только тогда, когда рядом ничего нет.",
-=======
->>>>>>> upstream/main
     "Todo.Status.Saved": "Задача сохранена",
     "Todo.Status.MarkedCompleted": "Отмечено как завершённое",
     "Todo.Status.MarkedActive": "Отмечено как активное",
@@ -455,15 +449,12 @@
     "Settings.TrayIcon.Colorful": "Красочный",
     "Settings.TrayIcon.Black": "Белый",
     "Settings.TrayIcon.White": "Черный",
-<<<<<<< HEAD
-=======
     "Settings.WindowShadow.Title": "Тени окон (система)",
     "Settings.WindowShadow.Description": "Общесистемный параметр Windows — включает или отключает тени для окон всех приложений, а не только DeskBox",
     "Settings.WindowShadow.Confirm.Title": "Изменить визуальный эффект Windows",
     "Settings.WindowShadow.Confirm.Body": "Это изменит общесистемный параметр теней окон Windows. Он повлияет на окна всех приложений на этом устройстве, а не только DeskBox. Продолжить?",
     "Settings.WindowShadow.ApplyFailed": "Не удалось изменить системный параметр теней окон (ошибка {0}).",
     "Settings.WindowShadow.ApplyFailedNoEffect": "Windows приняла изменение, но параметр не применился в этом сеансе. Возможно, он заблокирован политикой или сеансом удалённого рабочего стола.",
->>>>>>> upstream/main
     "Settings.WidgetLayerMode.Title": "Слой виджетов",
     "Settings.WidgetLayerMode.Description": "Выберите динамический, закреплённый на рабочем столе или быстрый режим вызова.",
     "Settings.WidgetLayerMode.Dynamic": "Динамический слой",
@@ -697,13 +688,10 @@
     "Settings.Opacity.Title": "Прозрачность фона",
     "Settings.Opacity.Description": "Настройте прозрачность акрилового и сплошного фона; сплошной фон можно сделать полностью прозрачным.",
     "Settings.IconSize.Title": "Размер значка",
-<<<<<<< HEAD
-=======
     "Settings.Feature.ListTextSize.Title": "List text size",
     "Settings.Feature.ListTextSize.Description": "Controls text size for feature tile lists",
     "Settings.Feature.ContentTextSize.Title": "Content text size",
     "Settings.Feature.ContentTextSize.Description": "Controls text size for feature tile content",
->>>>>>> upstream/main
     "Settings.TextSize.Title": "Размер текста",
     "Settings.HorizontalSpacing.Title": "Горизонтальный интервал",
     "Settings.VerticalSpacing.Title": "Вертикальный интервал",
@@ -826,20 +814,13 @@
     "Settings.Section.Interaction": "Взаимодействие",
     "Settings.WidgetLayerMode.QuickReveal": "Быстрый вызов",
     "Settings.GlobalHotkey.PresetsTitle": "Сочетание клавиш",
-<<<<<<< HEAD
     "Settings.GlobalHotkey.PresetsDescription": "Выберите сочетание клавиш для отображения или скрытия DeskBox",
-    "Settings.GlobalHotkey.Preset.F7": "F7 (по умолчанию)",
-=======
     "Settings.GlobalHotkey.Preset.F7": "F7",
->>>>>>> upstream/main
     "Settings.GlobalHotkey.Preset.DoubleControl": "Двойное нажатие Ctrl",
     "Settings.GlobalHotkey.Preset.AltSpace": "Alt + Пробел",
     "Settings.GlobalHotkey.Preset.WinSpace": "Win + Пробел",
     "Settings.GlobalHotkey.Preset.WindowsTap": "Win",
-<<<<<<< HEAD
-=======
     "Settings.GlobalHotkey.Preset.CopilotKey": "Copilot",
->>>>>>> upstream/main
     "Settings.GlobalHotkey.WindowsTapWarning": "Пока работает DeskBox, одиночное нажатие Win открывает DeskBox вместо меню «Пуск». Ctrl + Esc по-прежнему открывает меню «Пуск». DeskBox продолжает работать без прав администратора.",
     "Settings.GlobalHotkey.AltSpaceWarning": "Пока работает DeskBox, этот вариант заменяет системное меню Alt + Пробел активного окна.",
     "Settings.DesktopDoubleClick.Title": "Двойной щелчок по пустому месту рабочего стола",
@@ -1041,8 +1022,6 @@
     "Settings.Onboarding.Tooltip": "Открыть руководство по началу работы с DeskBox",
     "Settings.DataBackup.Title": "Резервная копия настроек и содержимого",
     "Settings.DataBackup.Description": "Сохраняет настройки, виджеты, заметки, задачи и копии вложений; файлы из файловых виджетов не включаются",
-<<<<<<< HEAD
-=======
     "Settings.DataBackup.AutomaticBackup.Title": "Автоматическое резервное копирование",
     "Settings.DataBackup.AutomaticBackup.Description": "Создаёт локальные снимки настроек и данных приложения по расписанию",
     "Settings.DataBackup.AutomaticBackupInterval.Title": "Интервал резервного копирования",
@@ -1065,7 +1044,6 @@
     "Settings.DataBackup.Interval.Day": "1 день",
     "Settings.DataBackup.Interval.Days": "{0} дней",
     "Settings.DataBackup.Retention.Count": "Хранить {0}",
->>>>>>> upstream/main
     "Settings.DataBackup.Export": "Экспортировать резервную копию",
     "Settings.DataBackup.Tooltip": "Экспортируйте настройки DeskBox, задачи и быстрый захват в виде резервной копии ZIP с проверенной целостностью.",
     "Settings.DataBackup.Restore": "Восстановить резервную копию",
@@ -1093,18 +1071,12 @@
     "Settings.DataBackup.RestoreConfirmTitle": "Восстановить данные этого приложения?",
     "Settings.DataBackup.RestoreConfirmBody": "Время резервного копирования: {0}\nВерсия DeskBox: {1}\nФайлы: {2} ({3})\n\nВключает в себя: настройки, конфигурацию виджета, задачи, быстрый захват и вложения, сохраненные DeskBox.\nНе включены: реальные файлы в виджетах файлов и папках хранения, файлы с внешними ссылками, регистрация при запуске или состояние быстрого доступа.\n\nDeskBox сохранит текущие данные, перезапустится и заменит текущие данные приложения этой резервной копией.{4}",
     "Settings.DataBackup.LegacyIntegrityWarning": "Это устаревшая резервная копия без манифеста целостности SHA-256 для каждого файла. DeskBox по-прежнему будет проверять свою структуру и основные данные.",
-<<<<<<< HEAD
     "Settings.DataBackup.RestoreConfirmButton": "Восстановить и перезапустить",
     "Settings.DataBackup.RestoreFailedTitle": "Эту резервную копию невозможно восстановить.",
     "Settings.DataBackup.RestoreFailedBody": "Резервная копия не прошла проверку или не может быть подготовлена. Текущие данные не были изменены.\n\n{0}",
-=======
     "Settings.DataBackup.RestoreNewerVersionWarning": "⚠ Эта резервная копия создана в более новой версии DeskBox ({0}). Восстановление здесь может потерять данные, которые понимает только новая версия.",
-    "Settings.DataBackup.RestoreConfirmButton": "Восстановить и перезапустить",
-    "Settings.DataBackup.RestoreFailedTitle": "Эту резервную копию невозможно восстановить.",
-    "Settings.DataBackup.RestoreFailedBody": "Резервная копия не прошла проверку или не может быть подготовлена. Текущие данные не были изменены.\n\n{0}",
     "Settings.DataBackup.RestoreFailedSchemaVersion": "Эта резервная копия использует версию формата ({0}), не поддерживаемую текущей версией DeskBox.",
     "Settings.DataBackup.RestoreFailedInvalidManifest": "Выбранный файл не является допустимой резервной копией DeskBox (манифест отсутствует или повреждён).",
->>>>>>> upstream/main
     "Settings.DataBackup.RestartFailedTitle": "DeskBox не удалось перезапустить",
     "Settings.DataBackup.RestartFailedBody": "Восстановление было отменено, текущие данные не были изменены.\n\n{0}",
     "Settings.DataBackup.RestoreAppliedTitle": "Данные DeskBox восстановлены",
@@ -1266,9 +1238,6 @@
     "Settings.About.Website": "Официальный сайт",
     "Settings.About.WebsiteDescription": "Просмотр загрузок, журналов изменений и примечаний к продукту",
     "Settings.About.FeedbackTitle": "Обратная связь",
-<<<<<<< HEAD
-    "Settings.About.FeedbackDescription": "Если у вас возникнут проблемы, свяжитесь со мной по электронной почте.",
-=======
     "Settings.About.FeedbackDescription": "Анонимный отзыв — без входа и без почты. Публичная стена отзывов доступна на deskbox.fun.",
     "Common.Close": "Закрыть",
     "Settings.About.FeedbackSendButton": "Отправить отзыв",
@@ -1301,7 +1270,6 @@
     "Feedback.Status.InProgress": "В работе",
     "Feedback.Status.Done": "Выполнен",
     "Feedback.Status.Wontfix": "Не будет исправлено",
->>>>>>> upstream/main
     "Settings.About.Repository": "Репозиторий с открытым исходным кодом",
     "Settings.About.RepositoryDescription": "Просматривайте код, сообщайте о проблемах или вносите улучшения.",
     "Settings.About.StoreSupportTitle": "Поддержать DeskBox",
@@ -1334,8 +1302,6 @@
     "Settings.Dialog.MigrateFailedBody": "Путь к хранилищу по умолчанию не был обновлен.\n\n{0}",
     "Settings.Dialog.MigrateCompleteTitle": "Перемещение завершено",
     "Settings.Dialog.MigrateCompleteBody": "Путь к хранилищу по умолчанию обновлен. Перемещены управляемые виджеты {0}, которые следовали пути по умолчанию и синхронизированным ярлыкам сопоставления папок.\n\nСтарый путь:\n{1}\n\nНовый путь:\n{2}",
-<<<<<<< HEAD
-=======
     "Settings.Dialog.MigrateResidueTitle": "Перенос завершён, остались старые папки",
     "Settings.Dialog.MigrateResidueBody": "Файлы полностью сохранены в новом месте, но {0} старых папок не удалось удалить автоматически (файл был занят или только для чтения).\n\nСтарый путь:\n{1}\n\nПереместить оставшиеся папки в корзину?",
     "Settings.Dialog.MigrateResidueCleanButton": "Переместить в корзину",
@@ -1351,7 +1317,6 @@
     "Settings.Dialog.MigrateRollbackRetryButton": "Повторить возврат",
     "Settings.Dialog.MigrateRollbackRetryComplete": "Все оставшиеся папки возвращены на исходное место.",
     "Settings.Dialog.MigrateRollbackRetryPartial": "Ещё не удалось вернуть папки ({0} шт.) — возможно, они заняты или уже перемещены:",
->>>>>>> upstream/main
     "Settings.Dialog.PinQuickAccessTitle": "Закреплено в быстром доступе",
     "Settings.Dialog.PinQuickAccessBody": "DeskBox запросил закрепить папку в панели быстрого доступа Проводника. Вы можете ввести его с левой стороны средств выбора файлов при загрузке файлов.",
     "Settings.Dialog.PinQuickAccessFailedTitle": "Не удалось закрепить в быстром доступе",
@@ -1554,11 +1519,8 @@
     "Widget.Tooltip.Add": "Новый",
     "Widget.Compact.Collapse": "Свернуть виджет",
     "Widget.Compact.Expand": "Развернуть виджет",
-<<<<<<< HEAD
     "Widget.Compact.ExpansionSpaceInsufficient": "Недостаточно места для раскрытия в выбранном направлении. Переместите капсулу и попробуйте снова.",
-=======
     "Widget.Compact.ExpansionDirection.FollowGlobal": "Как в общих настройках ({0})",
->>>>>>> upstream/main
     "Widget.Compact.Move": "Перетащите виджет",
     "Widget.Compact.MoveOrCollapse": "Перетащите виджет; нажмите, чтобы свернуть",
     "Widget.Compact.MoveBar": "Перетащите панель компонента",
@@ -1641,15 +1603,11 @@
     "Widget.Stack.Category.PreviousThirtyDays": "Предыдущие 30 дней",
     "Widget.Stack.Category.Earlier": "Ранее",
     "Widget.Open": "Открыть",
-<<<<<<< HEAD
     "Widget.OpenItemDispatched": "Windows приняла запрос на открытие.",
-    "Widget.OpenItemBusy": "Другой запрос на открытие ещё обрабатывается. Повторите попытку позже.",
-=======
+    "Widget.OpenItemBusy": "Другой запрос на открытие ещё обрабатывается. Повторите попытку позже. Если это повторяется, возможно, оболочка Windows не отвечает — перезапуск Проводника восстановит работу.",
     "Widget.DropOnShortcutCannotOpen": "«{0}» не может открыть этот файл",
     "Widget.DropOnShortcutOpenWith": "Открыть с помощью «{0}»",
     "Widget.OpenItemShortcutTargetMissing": "Цель этого ярлыка больше не существует. Обработка передана Windows.",
-    "Widget.OpenItemBusy": "Другой запрос на открытие ещё обрабатывается. Повторите попытку позже. Если это повторяется, возможно, оболочка Windows не отвечает — перезапуск Проводника восстановит работу.",
->>>>>>> upstream/main
     "Widget.OpenItemFailed": "Не удалось открыть этот файл. Приложение по умолчанию не может быть установлено.",
     "Widget.ShowInExplorer": "Открыть местоположение файла",
     "Widget.CopyPath": "Копировать путь",
@@ -1665,14 +1623,11 @@
     "Widget.MoveBackToDesktopFailed": "Не удалось вернуться на рабочий стол",
     "Widget.MoveToDesktopFailed": "Переместиться на рабочий стол не удалось",
     "Widget.NoItemsMoved": "Ни один объект не был перемещен",
-<<<<<<< HEAD
-=======
     "Widget.ImportFailed": "Не удалось импортировать перетащенные элементы.",
     "Widget.ImportPartialFailure": "Импортировано {0} из {1}; остальные импортировать не удалось.",
     "Widget.FileActionFailed": "Не удалось завершить операцию с файлами.",
     "Widget.ImportSkippedUndisplayable": "Пропущены элементы, которые поле не может отобразить: {0} (скрытые файлы, например, остаются на месте).",
     "Widget.ImportBlockedUndisplayable": "Перетаскивание отменено: {0} элемент(ов) невозможно отобразить в поле (скрытые файлы, например, остаются на месте).",
->>>>>>> upstream/main
     "Widget.CannotMoveToFolder": "Невозможно перейти в эту папку",
     "Widget.CopyToFolder": "Скопировать в «{0}»",
     "Widget.MoveToFolder": "Перейти к «{0}»",
@@ -1687,15 +1642,10 @@
     "Widget.CreateFolderFailed": "Создать папку не удалось",
     "Widget.DeleteFailed": "Удаление не удалось",
     "Widget.RenameFailed": "Переименование не удалось",
-<<<<<<< HEAD
     "Widget.Rename.ExtensionChangeWarning": "Если изменить расширение имени файла, файл может оказаться недоступным. Изменить расширение?",
     "Widget.DeleteWidgetFailed": "Удалить виджет не удалось",
-=======
     "Widget.RenameFailedWithReason": "Переименование не удалось: {0}",
-    "Widget.Rename.ExtensionChangeWarning": "Если изменить расширение имени файла, файл может оказаться недоступным. Изменить расширение?",
-    "Widget.DeleteWidgetFailed": "Удалить виджет не удалось",
     "Widget.DeleteWidgetFailedWithReason": "Удалить виджет не удалось: {0}",
->>>>>>> upstream/main
     "Widget.PasteFailed": "Вставить не удалось",
     "Widget.RefreshFailed": "Обновить не удалось",
     "Widget.NoCopyableItems": "Нет копируемых элементов",
@@ -1723,11 +1673,7 @@
     "Widget.DeleteWidgetNote": "Только закройте этот виджет. Папка и ее файлы не изменятся.",
     "Widget.DeleteWidgetConfirm": "Закрыть виджет",
     "Widget.DeleteManagedInfo": "Что должно произойти с файлами в этом виджете?",
-<<<<<<< HEAD
-    "Widget.KeepManagedFolder": "Хранить файлы",
-=======
     "Widget.KeepManagedFolder": "Хранить файлы (папка остаётся на месте)",
->>>>>>> upstream/main
     "Widget.MoveBackThenDeleteFolder": "Переместить файлы на рабочий стол",
     "Widget.DeleteFolderToRecycleBin": "Также удалите все файлы",
     "Widget.DeleteManagedFolderConfirmTitle": "Переместить «{0}» в корзину?",
@@ -1735,15 +1681,12 @@
     "Widget.DeleteManagedFolderConfirmMessageUnknownCount": "Виджет закроется, а вся папка и ее содержимое будут перемещены в корзину.\n\n{0}\n\nВы можете восстановить его оттуда.",
     "Widget.Error.OperationIncomplete": "Операция не завершилась.",
     "Widget.Error.FileWidgetPathConflict": "Эту папку нельзя использовать, поскольку ее путь совпадает с путем хранения файлового виджета «{0}», содержит его или содержится в нем. Выберите непересекающуюся папку.",
-<<<<<<< HEAD
-=======
     "Widget.Error.FileWidgetPathConflictSameFolder": "Нельзя использовать эту папку: это та же папка, что и путь хранения {0} («{1}»). Управляемому хранилищу нужен отдельный каталог; выберите другую папку.",
     "Widget.Error.FileWidgetPathConflictInsideOther": "Нельзя использовать эту папку: она находится внутри пути хранения «{1}» {0}. Управляемому хранилищу нужно отдельное дерево каталогов, чтобы миграция и очистка никогда не пересекались. Обычные папки-виджеты могут отображаться друг на друга как родитель/потомок.",
     "Widget.Error.FileWidgetPathConflictContainsOther": "Нельзя использовать эту папку: она содержит путь хранения «{1}» {0}. Управляемому хранилищу нужно отдельное дерево каталогов, чтобы миграция и очистка никогда не пересекались. Обычные папки-виджеты могут отображаться друг на друга как родитель/потомок.",
     "Widget.Error.FileWidgetPathConflictUnresolvable": "Нельзя использовать эту папку: она пересекается с путём хранения «{1}» {0}, или пересечение нельзя безопасно проверить. Выберите непересекающуюся папку.",
     "Widget.MapFolder.ConflictWidgetHint": "Эта папка уже используется виджетом «{0}»; виджет открыт.",
     "Widget.MapFolder.ConflictRootHint": "Эта папка пересекается с папкой хранения. Открыты настройки хранения, чтобы сменить расположение или выбрать другую папку.",
->>>>>>> upstream/main
     "Widget.Error.UnsafeFolderTransfer": "Папку нельзя скопировать или переместить в нее или в одну из ее подпапок.",
     "Widget.Error.OperationCanceled": "Операция была отменена.",
     "Widget.Error.AccessDenied": "У DeskBox нет разрешения на завершение этой операции.\n\n{0}",
@@ -1759,10 +1702,7 @@
     "Widget.Error.ManagedFolderStillActive": "Эта папка по-прежнему принадлежит существующему управляемому виджету и не может быть очищена как потерянная.",
     "Widget.Error.ManagedFolderActionOnlyDefault": "Только управляемые виджеты, расположенные по пути хранения по умолчанию, могут синхронизировать обработку папок.",
     "Widget.Error.ManagedFolderNameExists": "Управляемый виджет с таким именем уже существует. Выберите другое имя.",
-<<<<<<< HEAD
-=======
     "Widget.Error.ManagedFolderNameUnavailable": "Нельзя использовать это имя: в папке хранения уже есть элемент с таким именем, и его нельзя автоматически объединить. Выберите другое имя.",
->>>>>>> upstream/main
     "QuickCapture.Name": "Быстрый захват",
     "QuickCapture.InputPlaceholder": "Сфотографируйте что-нибудь...",
     "QuickCapture.AddInput": "Добавить запись",
@@ -1879,11 +1819,7 @@
     "FileInfo.File": "Файл",
     "FileInfo.Folder": "Папка",
     "FileInfo.FolderItems": "{0} элементов",
-<<<<<<< HEAD
     "FileInfo.FileModified": "{0} · {1:dd.MM.yyyy HH:mm}",
-=======
-    "FileInfo.FileModified": "{0} · {1:гггг/М/д ЧЧ:мм}",
->>>>>>> upstream/main
     "Weather.Loading": "Загрузка погоды…",
     "Weather.RefreshSuccess": "Погода обновлена",
     "Weather.RefreshFailed": "Обновить не удалось",
@@ -2089,12 +2025,9 @@
     "Settings.Search.MaxResults.Title": "Максимальное количество результатов поиска",
     "Settings.Search.MaxResults.Description": "Максимальное количество результатов, отображаемых за один поиск",
     "Settings.Search.Hotkey.CustomTitle": "Горячая клавиша пользовательского поиска",
-<<<<<<< HEAD
-=======
     "Settings.Search.Hotkey.PresetsTitle": "Сочетание клавиш",
     "Settings.Search.Hotkey.Status.GlobalHotkeyConflict": "Это сочетание клавиш уже используется основным сочетанием клавиш DeskBox.",
     "Settings.GlobalHotkey.Status.SearchHotkeyConflict": "Это сочетание клавиш уже используется сочетанием клавиш поиска.",
->>>>>>> upstream/main
     "Settings.Search.Hotkey.ChangeTooltip": "Нажмите, затем нажмите новую комбинацию клавиш",
     "Settings.Search.Hotkey.ResetTooltip": "Восстановить горячую клавишу по умолчанию",
     "Settings.Search.Hotkey.Recording": "Нажмите комбинацию клавиш...",
@@ -2704,13 +2637,10 @@
     "Glance.Speed.Standard": "Стандартно",
     "Glance.Speed.Relaxed": "Плавно",
     "Glance.Typography.Title": "Размер шрифта",
-<<<<<<< HEAD
-=======
     "Glance.Typography.TimeFormat": "Формат времени",
     "Glance.Typography.FollowSystem": "Следовать системе",
     "Glance.Typography.Hour24": "24-часовой формат",
     "Glance.Typography.Hour12": "12-часовой формат",
->>>>>>> upstream/main
     "Glance.Typography.Font": "Шрифт",
     "Glance.Speed.Title": "Скорость перехода",
     "Glance.Typography.SystemDefault": "Системный",
@@ -2757,7 +2687,6 @@
     "Widget.MoreSystemOperations": "Дополнительные системные операции",
     "Settings.ManagedPath.DesktopShortcut.Title": "Ярлык папки хранилища на рабочем столе",
     "Settings.ManagedPath.DesktopShortcut.Description": "Создаёт ярлык текущей папки хранилища. Если удалить его, DeskBox не будет создавать его заново.",
-<<<<<<< HEAD
     "Settings.Animation.FrameRate.Title": "Частота кадров анимации",
     "Settings.Animation.FrameRate.Description": "Ритм разворачивания/сворачивания капсул; фактическая частота равна частоте обновления, делённой на уровень, и не превышает выбранную",
     "Settings.QuickCapture.RecordColors.Title": "Цвета записей",
@@ -2774,47 +2703,12 @@
     "Startup.Failure.Body": "Сбой запуска на этапе «{0}». Уже применённые виджеты и настройки сохранены. Ошибка записана в журнал.",
     "Startup.Failure.Phase.Core": "настройки и службы",
     "Startup.Failure.Phase.Widgets": "восстановление виджетов",
-    "Common.Close": "Закрыть",
     "Common.More": "Ещё",
     "Settings.ManagedPath.DesktopShortcut.StatusCreated": "Ярлык на рабочем столе создан",
     "Settings.ManagedPath.DesktopShortcut.StatusNotCreated": "Ярлыка на рабочем столе нет",
     "Settings.ManagedPath.DesktopShortcut.Remove": "Удалить",
-    "Settings.Performance.ImmediateHiddenWorkingSetTrim.Title": "Сокращать память сразу после скрытия (экспериментально)",
-    "Settings.Performance.ImmediateHiddenWorkingSetTrim.Description": "Уменьшает резидентную память после завершения скрытия всех виджетов. При повторном показе возможна небольшая задержка.",
     "Settings.FileWidget.SystemContextMenu.Title": "Системное контекстное меню",
     "Settings.FileWidget.SystemContextMenu.Description": "Щелчок правой кнопкой мыши по одному файлу показывает штатное меню Windows вместо встроенного меню DeskBox; для стопок и множественного выбора остается встроенное меню",
-    "Settings.Feature.ListTextSize.Title": "List text size",
-    "Settings.Feature.ListTextSize.Description": "Controls text size for feature tile lists",
-    "Settings.Feature.ContentTextSize.Title": "Content text size",
-    "Settings.Feature.ContentTextSize.Description": "Controls text size for feature tile content",
-    "Settings.DataBackup.AutomaticBackup.Title": "Автоматическое резервное копирование",
-    "Settings.DataBackup.AutomaticBackup.Description": "Создаёт локальные снимки настроек и данных приложения по расписанию",
-    "Settings.DataBackup.AutomaticBackupInterval.Title": "Интервал резервного копирования",
-    "Settings.DataBackup.AutomaticBackupInterval.Description": "Как часто создаётся новый автоматический снимок",
-    "Settings.DataBackup.AutomaticBackupRetention.Title": "Сколько снимков хранить",
-    "Settings.DataBackup.AutomaticBackupRetention.Description": "При достижении лимита старые снимки удаляются",
-    "Settings.DataBackup.AutomaticBackupDirectory.Title": "Папка резервных копий",
-    "Settings.DataBackup.AutomaticBackupDirectory.Description": "Автоматические снимки сохраняются здесь; пустое значение — папка восстановления по умолчанию",
-    "Settings.DataBackup.AutomaticBackupDirectory.Change": "Изменить папку",
-    "Settings.DataBackup.AutomaticBackupDirectory.Reset": "Использовать папку по умолчанию",
-    "Settings.DataBackup.AutomaticBackupDirectory.FallbackTitle": "Папка резервных копий недоступна",
-    "Settings.DataBackup.AutomaticBackupDirectory.FallbackBody": "DeskBox не смог записать в настроенную папку и сохранил снимок в папку восстановления по умолчанию.",
-    "Settings.DataBackup.AutomaticBackupDirectory.FallbackWarning": "Настроенная папка сейчас недоступна. Снимки сохраняются в папку по умолчанию:\n{0}",
-    "Settings.DataBackup.AutomaticBackupDirectory.InvalidTitle": "Папку нельзя использовать",
-    "Settings.DataBackup.AutomaticBackupDirectory.InvalidInsideDataRoot": "Папка резервных копий не может находиться внутри папки данных самого DeskBox.",
-    "Settings.DataBackup.AutomaticBackupDirectory.InvalidPath": "Выбранный путь к папке недействителен.",
-    "Settings.DataBackup.Interval.Minutes": "{0} минут",
-    "Settings.DataBackup.Interval.Hour": "1 час",
-    "Settings.DataBackup.Interval.Hours": "{0} часов",
-    "Settings.DataBackup.Interval.Day": "1 день",
-    "Settings.DataBackup.Interval.Days": "{0} дней",
-    "Settings.DataBackup.Retention.Count": "Хранить {0}",
-    "Glance.Typography.TimeFormat": "Формат времени",
-    "Glance.Typography.FollowSystem": "Следовать системе",
-    "Glance.Typography.Hour24": "24-часовой формат",
-    "Glance.Typography.Hour12": "12-часовой формат",
-=======
->>>>>>> upstream/main
     "DesktopOrganization.Public.PersonalCount": "Личный рабочий стол ({0} элементов)",
     "DesktopOrganization.Public.SharedCount": "Общий рабочий стол ({0} элементов, все учётные записи)",
     "DesktopOrganization.Public.Unavailable": "Общий рабочий стол (сейчас недоступен)",

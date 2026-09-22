@@ -2045,44 +2045,6 @@ public sealed partial class WidgetShell : UserControl
         {
             // Real HWND resizing remains on the UI thread. These independent
             // visual properties run on Composition on both Windows 10 and 11.
-<<<<<<< HEAD
-            StartCompactOpacityAnimation(
-                CollapsedChromeLayer,
-                progress => _compactTransitionProfile.GetCompactSurfaceOpacity(collapsed, progress),
-                fromProgress);
-            StartCompactOpacityAnimation(
-                TitleBarGrid,
-                progress => _compactTransitionProfile.GetLiveContentOpacity(collapsed, progress),
-                fromProgress);
-            StartCompactOpacityAnimation(
-                ShellContentPresenter,
-                progress => _compactTransitionProfile.GetLiveContentOpacity(collapsed, progress),
-                fromProgress);
-            StartCompactTranslationAnimation(
-                TitleBarGrid,
-                progress => _compactTransitionProfile.GetLiveContentTranslationY(collapsed, progress),
-                fromProgress);
-            StartCompactTranslationAnimation(
-                ShellContentPresenter,
-                progress => _compactTransitionProfile.GetLiveContentTranslationY(collapsed, progress),
-                fromProgress);
-            StartCompactOpacityAnimation(
-                CompactIdentityHost,
-                progress => _compactTransitionProfile.GetCompactIdentityOpacity(collapsed, progress),
-                fromProgress);
-            StartCompactOpacityAnimation(
-                CompactTextContainer,
-                progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress),
-                fromProgress);
-            StartCompactOpacityAnimation(
-                CompactBadge,
-                progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress),
-                fromProgress);
-            StartCompactOpacityAnimation(
-                CompactLiveIndicatorHost,
-                progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress),
-                fromProgress);
-=======
             // Each direction only animates the properties the visual profile
             // actually changes: expanding holds the live tree and compact
             // identity at their final values (opacity 1, no offset) while the
@@ -2090,41 +2052,51 @@ public sealed partial class WidgetShell : UserControl
             // opaque while the live tree fades and rises. Constant key-frame
             // animations only added start/stop cost to the opening frames;
             // the skipped elements already sit at their base values.
+            // fromProgress is threaded through so the fork's stall resync
+            // (ResyncCompactTransitionFades) restarts each fade over the span
+            // that is still ahead of the geometry.
             if (collapsed)
             {
                 StartCompactOpacityAnimation(
                     TitleBarGrid,
-                    progress => _compactTransitionProfile.GetLiveContentOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetLiveContentOpacity(collapsed, progress),
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     ShellContentPresenter,
-                    progress => _compactTransitionProfile.GetLiveContentOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetLiveContentOpacity(collapsed, progress),
+                    fromProgress);
                 StartCompactTranslationAnimation(
                     TitleBarGrid,
-                    progress => _compactTransitionProfile.GetLiveContentTranslationY(collapsed, progress));
+                    progress => _compactTransitionProfile.GetLiveContentTranslationY(collapsed, progress),
+                    fromProgress);
                 StartCompactTranslationAnimation(
                     ShellContentPresenter,
-                    progress => _compactTransitionProfile.GetLiveContentTranslationY(collapsed, progress));
+                    progress => _compactTransitionProfile.GetLiveContentTranslationY(collapsed, progress),
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     CompactIdentityHost,
-                    progress => _compactTransitionProfile.GetCompactIdentityOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetCompactIdentityOpacity(collapsed, progress),
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     CompactTextContainer,
-                    progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress),
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     CompactBadge,
-                    progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress),
+                    fromProgress);
                 StartCompactOpacityAnimation(
                     CompactLiveIndicatorHost,
-                    progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetCompactTextOpacity(collapsed, progress),
+                    fromProgress);
             }
             else
             {
                 StartCompactOpacityAnimation(
                     CollapsedChromeLayer,
-                    progress => _compactTransitionProfile.GetCompactSurfaceOpacity(collapsed, progress));
+                    progress => _compactTransitionProfile.GetCompactSurfaceOpacity(collapsed, progress),
+                    fromProgress);
             }
-
->>>>>>> upstream/main
             bool hasFullBleed = _compactPresentation?.UseFullBleedBackground == true &&
                 _compactPresentation.Thumbnail is not null;
             if (hasFullBleed)

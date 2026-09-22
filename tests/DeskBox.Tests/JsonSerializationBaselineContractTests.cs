@@ -72,13 +72,8 @@ public sealed class JsonSerializationBaselineContractTests : IDisposable
             Assert.Equal(expectedCount, actual[path]);
         }
 
-<<<<<<< HEAD
-        Assert.Equal(29, actual.Count);
-        Assert.Equal(67, actual.Values.Sum());
-=======
         Assert.Equal(35, actual.Count);
         Assert.Equal(83, actual.Values.Sum());
->>>>>>> upstream/main
 
         string[] expectedContextOwners =
         [
@@ -124,11 +119,7 @@ public sealed class JsonSerializationBaselineContractTests : IDisposable
             .Order()
             .ToArray();
 
-<<<<<<< HEAD
-        Assert.Equal(27, actualContextOwners.Length);
-=======
         Assert.Equal(32, actualContextOwners.Length);
->>>>>>> upstream/main
         Assert.Equal(expectedContextOwners, actualContextOwners);
     }
 

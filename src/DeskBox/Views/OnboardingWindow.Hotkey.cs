@@ -128,7 +128,7 @@ public sealed partial class OnboardingWindow
             return;
         }
 
-        if (!(await hotkeyService.TryApplyGestureAsync(gesture)).Succeeded)
+        if (!hotkeyService.TryApplyGesture(gesture, out string? error))
         {
             if (RootGrid.XamlRoot is not null)
             {
@@ -140,7 +140,7 @@ public sealed partial class OnboardingWindow
                     DefaultButton = ContentDialogButton.Close,
                     Content = new TextBlock
                     {
-                        Text = hotkeyService.LastError ?? _localizationService.T("Settings.GlobalHotkey.Status.Unregistered"),
+                        Text = error ?? _localizationService.T("Settings.GlobalHotkey.Status.Unregistered"),
                         TextWrapping = TextWrapping.Wrap
                     }
                 };

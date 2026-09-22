@@ -138,7 +138,7 @@ public sealed class GlobalHotkeySafetyContractTests
         string apply = Slice(
             source,
             "public bool TryApplyActivation",
-            "public Task<HotkeyApplyResult> TryApplyGestureAsync");
+            "public void SetEnabled");
 
         Assert.DoesNotContain("CanRegister", source, StringComparison.Ordinal);
         Assert.DoesNotContain("ProbeHotkeyId", source, StringComparison.Ordinal);
@@ -218,22 +218,9 @@ public sealed class GlobalHotkeySafetyContractTests
             "private void OnLifecycleRecoveryRequested",
             "private void FlushSettingsForEndSession");
 
-        // DEF-022: recovery re-registers via the async path inside
-        // SafeFireAndForget; the old synchronous calls are gone.
-        Assert.Contains(
-            "GlobalHotkeyService.RefreshRegistrationAsync();",
-            recovery,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "DesktopDoubleClickActivationService.RefreshRegistrationAsync();",
-            recovery,
-            StringComparison.Ordinal);
+        Assert.Contains("GlobalHotkeyService?.RefreshRegistration();", recovery, StringComparison.Ordinal);
+        Assert.Contains("DesktopDoubleClickActivationService?.RefreshRegistration();", recovery, StringComparison.Ordinal);
         Assert.Contains("requiresExternalRecovery", recovery, StringComparison.Ordinal);
-        Assert.Contains("SafeFireAndForget", recovery, StringComparison.Ordinal);
-        Assert.DoesNotContain(
-            "GlobalHotkeyService?.RefreshRegistration();",
-            recovery,
-            StringComparison.Ordinal);
     }
 
     private static string Read(string path)

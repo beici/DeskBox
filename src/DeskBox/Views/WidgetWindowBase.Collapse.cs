@@ -537,7 +537,6 @@ public abstract partial class WidgetWindowBase
     }
 
     /// <summary>
-<<<<<<< HEAD
     /// Refreshes the persisted capsule placement after an expanded host was
     /// moved by a non-interactive path (margin entry — single widget, batch,
     /// and dialog-cancel restore all route here). Interactive drag/resize
@@ -619,7 +618,9 @@ public abstract partial class WidgetWindowBase
             anchor);
         _compactExpansionAnchor = anchor;
         CaptureCompactPlacement(fresh, persist);
-=======
+    }
+
+    /// <summary>
     /// Per-widget expansion direction override. Null restores "follow global".
     /// Direction is a transient expansion constraint: it takes effect on the
     /// next expansion and never moves the capsule or an already open panel.
@@ -643,7 +644,6 @@ public abstract partial class WidgetWindowBase
         {
             QueueCompactExpansionWarmup();
         }
->>>>>>> upstream/main
     }
 
     /// <summary>
@@ -664,14 +664,15 @@ public abstract partial class WidgetWindowBase
             return;
         }
 
-<<<<<<< HEAD
         // Same peek guard as RefreshCompactPlacementFromExpandedBounds: a hover
         // peek must not seed the one-time placement from its temporary panel.
         if (RestsCollapsed && CurrentCompactViewState == WidgetCompactViewState.Peek)
         {
             App.LogVerbose(
                 $"[Compact] Peek expansion does not seed a placement id={Config.Id} hwnd=0x{HWnd.ToInt64():X}");
-=======
+            return;
+        }
+
         DeriveCompactPlacementFromExpandedBounds(persist);
     }
 
@@ -681,7 +682,6 @@ public abstract partial class WidgetWindowBase
             !UsesCompactExpansionGeometry() ||
             IsClosing)
         {
->>>>>>> upstream/main
             return;
         }
 
@@ -3200,49 +3200,10 @@ public abstract partial class WidgetWindowBase
                 RectInt32 compactBounds = GetStableCompactBounds(from);
                 long expandLayoutStarted = Stopwatch.GetTimestamp();
                 WidgetCompactExpansionLayout layout = preparedExpansionLayout ??
-<<<<<<< HEAD
-                    ResolveCompactExpansionLayout(
-                        compactBounds,
-                        requireFullSize: true);
                 _compactTransitionLayoutResolveMs = Stopwatch
                     .GetElapsedTime(expandLayoutStarted)
                     .TotalMilliseconds;
-                if (!layout.CanExpand)
-                {
-                    // An interrupted transition can reach this branch without
-                    // the normal prepared eligibility result. Restore the
-                    // complete capsule state and never continue from a partial
-                    // or constrained window rectangle.
-                    StopCollapseAnimation();
-                    WidgetShellControl.CancelResponsiveLayoutTransition();
-                    _targetCollapsed = true;
-                    _compactState = WidgetCompactState.Collapsed;
-                    _isSmartPinnedOpen = false;
-                    _dragExpandedFromCollapsed = false;
-                    if (UsesSmartCollapseBehavior())
-                    {
-                        _suppressSmartExpansionUntilPointerExit = true;
-                    }
-                    IsWidgetCollapsedBoundsActive = true;
-                    OnCompactVisualStateChanged(true);
-                    UpdateCompactViewState();
-                    WidgetShellControl.SetCollapsed(
-                        true,
-                        SettingsService.Settings.WidgetCompactContentMode);
-                    if (!BoundsEqual(GetCurrentWindowBounds(), compactBounds))
-                    {
-                        MoveWindowWithoutPersisting(compactBounds);
-                    }
-                    ApplyCompactSurfaceState();
-                    CancelDeferredExpandedLayerRestore();
-                    RestoreLayerAfterExpandedState();
-                    StartCompactHoverRecoveryProbe();
-                    LogCompactExpansionBlocked(compactBounds, layout, showFeedback: true);
-                    return;
-                }
-=======
                     ResolveRequestedCompactExpansion(compactBounds);
->>>>>>> upstream/main
                 _compactExpansionAnchor = layout.Anchor;
                 transitionAnchor = layout.Anchor;
                 transitionPivot = layout.Pivot;
@@ -3437,11 +3398,7 @@ public abstract partial class WidgetWindowBase
         _collapseAnimationFrom = from;
         _collapseAnimationTo = to;
         _collapseAnimationDurationMs = durationMs;
-<<<<<<< HEAD
         long responsiveLayoutDone = Stopwatch.GetTimestamp();
-=======
-        long transitionPrepStarted = Stopwatch.GetTimestamp();
->>>>>>> upstream/main
         int refreshRateHz = Win32Helper.GetDisplayRefreshRateForWindow(HWnd);
         int frameRateCap = WidgetCompactFrameSkipPolicy.NormalizeFrameRate(
             SettingsService.Settings.WidgetAnimationFrameRate);
@@ -3497,7 +3454,6 @@ public abstract partial class WidgetWindowBase
                 mediaCornerMode,
                 cornerPreference),
             _collapseAnimationVisualProfile);
-<<<<<<< HEAD
 
         // The clock starts here, not before the setup above. PrepareCompactTransition
         // is what starts the Composition opacity/scale animations, and those run on
@@ -3532,16 +3488,6 @@ public abstract partial class WidgetWindowBase
                 $"prepareMs={Stopwatch.GetElapsedTime(borderVisualsDone, _collapseAnimationStarted).TotalMilliseconds:F1}");
         }
 
-=======
-        // Anchor the animation clock after preparation: the refresh-rate
-        // query, border visuals, and composition animation starts above used
-        // to consume the opening progress, skipping the first eased frames.
-        _collapseAnimationStarted = Stopwatch.GetTimestamp();
-        PerformanceLogger.Mark(
-            "CompactBoundsTransitionPrep",
-            $"prepMs={Stopwatch.GetElapsedTime(transitionPrepStarted, _collapseAnimationStarted).TotalMilliseconds:F1} " +
-            $"durationMs={durationMs} kind={Config.WidgetKind} id={Config.Id}");
->>>>>>> upstream/main
         _compactAnimationFrameTracker = new WidgetCompactAnimationFrameTracker(
             _collapseAnimationStarted,
             refreshRateHz);

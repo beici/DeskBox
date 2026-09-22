@@ -41,13 +41,10 @@
     "Settings.Performance.CacheBudget.Description": "Controla el límite de las cachés recreables de iconos, miniaturas e imágenes decodificadas",
     "Settings.Performance.IdleWorkingSetTrim.Title": "Compress memory when idle",
     "Settings.Performance.IdleWorkingSetTrim.Description": "While widgets are hidden or you are away, page unused memory out to the system; it is read back on demand when you return",
-<<<<<<< HEAD
-=======
     "Settings.Performance.ImmediateHiddenWorkingSetTrim.Title": "Reducir memoria inmediatamente al ocultar (experimental)",
     "Settings.Performance.ImmediateHiddenWorkingSetTrim.Description": "Reduce la memoria residente 3 segundos después de que todos los widgets se oculten; alternar ocultar/mostrar rápidamente no repite la limpieza. Mostrarlos de nuevo puede tardar un poco más.",
     "Settings.Performance.QuiescenceWorkingSetTrim.Title": "Comprimir memoria tras las interacciones",
     "Settings.Performance.QuiescenceWorkingSetTrim.Description": "Unos segundos después de cerrar los ajustes, plegar una cápsula o terminar un arrastre, la memoria sin usar se pagina aunque los widgets sigan visibles. Solo se ejecuta cuando la memoria ha crecido de forma apreciable y no hay animaciones en curso, así que nunca se repite.",
->>>>>>> upstream/main
     "Settings.Performance.CacheBudget.Small": "Pequeña",
     "Settings.Performance.CacheBudget.Balanced": "Equilibrada",
     "Settings.Performance.CacheBudget.Large": "Grande",
@@ -142,7 +139,6 @@
     "Common.Ok": "Aceptar",
     "Common.Cancel": "Cancelar",
     "Common.Save": "Guardar",
-<<<<<<< HEAD
     "QuickCapture.ClipboardColor.Menu": "Colores de registros",
     "QuickCapture.ClipboardColor.FollowTheme": "Seguir el tema",
     "QuickCapture.ClipboardColor.Text": "Color del texto de los registros…",
@@ -177,8 +173,6 @@
     "Widget.Margin.Reference.Screen": "borde de la pantalla",
     "Widget.Margin.ReferenceFormat": "{0} - desde {1}",
     "Widget.Margin.ReferenceHint": "Cada lado se mide hasta el widget o icono del escritorio más cercano. El borde de la pantalla solo se usa cuando ese lado no tiene nada al lado.",
-=======
->>>>>>> upstream/main
     "Todo.Status.Saved": "Tarea guardada",
     "Todo.Status.MarkedCompleted": "Marcada como completada",
     "Todo.Status.MarkedActive": "Marcada como activa",
@@ -455,15 +449,12 @@
     "Settings.TrayIcon.Colorful": "colorido",
     "Settings.TrayIcon.Black": "blanco",
     "Settings.TrayIcon.White": "negro",
-<<<<<<< HEAD
-=======
     "Settings.WindowShadow.Title": "Sombras de ventana (sistema)",
     "Settings.WindowShadow.Description": "Configuración de todo Windows: activa o desactiva las sombras de las ventanas de todas las apps, no solo de DeskBox",
     "Settings.WindowShadow.Confirm.Title": "Cambiar efecto visual de Windows",
     "Settings.WindowShadow.Confirm.Body": "Esto cambia la configuración de sombras de ventana de todo Windows. Afecta a las ventanas de todas las apps de este dispositivo, no solo a DeskBox. ¿Continuar?",
     "Settings.WindowShadow.ApplyFailed": "No se pudo cambiar la configuración de sombras de ventana del sistema (error {0}).",
     "Settings.WindowShadow.ApplyFailedNoEffect": "Windows aceptó el cambio, pero la configuración no se aplicó en esta sesión. Puede estar bloqueada por una directiva o por una sesión de escritorio remoto.",
->>>>>>> upstream/main
     "Settings.WidgetLayerMode.Title": "Capa de widgets",
     "Settings.WidgetLayerMode.Description": "Elige el comportamiento dinámico, fijo en el escritorio o de invocación rápida",
     "Settings.WidgetLayerMode.Dynamic": "capa dinámica",
@@ -697,13 +688,10 @@
     "Settings.Opacity.Title": "Transparencia del fondo",
     "Settings.Opacity.Description": "Ajusta la transparencia de los fondos acrílico y sólido; el sólido puede ser totalmente transparente.",
     "Settings.IconSize.Title": "Tamaño del icono",
-<<<<<<< HEAD
-=======
     "Settings.Feature.ListTextSize.Title": "List text size",
     "Settings.Feature.ListTextSize.Description": "Controls text size for feature tile lists",
     "Settings.Feature.ContentTextSize.Title": "Content text size",
     "Settings.Feature.ContentTextSize.Description": "Controls text size for feature tile content",
->>>>>>> upstream/main
     "Settings.TextSize.Title": "Tamaño del texto",
     "Settings.HorizontalSpacing.Title": "Espaciado horizontal",
     "Settings.VerticalSpacing.Title": "Espaciado vertical",
@@ -826,20 +814,13 @@
     "Settings.Section.Interaction": "Interacción",
     "Settings.WidgetLayerMode.QuickReveal": "Invocación rápida",
     "Settings.GlobalHotkey.PresetsTitle": "Atajo",
-<<<<<<< HEAD
     "Settings.GlobalHotkey.PresetsDescription": "Elige el atajo para mostrar u ocultar DeskBox",
-    "Settings.GlobalHotkey.Preset.F7": "F7 (predeterminado)",
-=======
     "Settings.GlobalHotkey.Preset.F7": "F7",
->>>>>>> upstream/main
     "Settings.GlobalHotkey.Preset.DoubleControl": "Doble Ctrl",
     "Settings.GlobalHotkey.Preset.AltSpace": "Alt + Espacio",
     "Settings.GlobalHotkey.Preset.WinSpace": "Win + Espacio",
     "Settings.GlobalHotkey.Preset.WindowsTap": "Win",
-<<<<<<< HEAD
-=======
     "Settings.GlobalHotkey.Preset.CopilotKey": "Copilot",
->>>>>>> upstream/main
     "Settings.GlobalHotkey.WindowsTapWarning": "Mientras DeskBox esté en ejecución, pulsar solo Win abrirá DeskBox en lugar de Inicio. Ctrl + Esc seguirá abriendo Inicio. DeskBox continuará sin privilegios de administrador.",
     "Settings.GlobalHotkey.AltSpaceWarning": "Mientras DeskBox esté en ejecución, esta opción sustituirá el menú del sistema Alt + Espacio de la ventana activa.",
     "Settings.DesktopDoubleClick.Title": "Doble clic en un área vacía del escritorio",
@@ -1041,8 +1022,6 @@
     "Settings.Onboarding.Tooltip": "Abrir la guía de primeros pasos de DeskBox",
     "Settings.DataBackup.Title": "Copia de seguridad de ajustes y contenido",
     "Settings.DataBackup.Description": "Copia ajustes, widgets, notas, tareas y adjuntos copiados; no incluye los archivos de los widgets",
-<<<<<<< HEAD
-=======
     "Settings.DataBackup.AutomaticBackup.Title": "Copia de seguridad automática",
     "Settings.DataBackup.AutomaticBackup.Description": "Crea instantáneas locales de la configuración y los datos de la aplicación según una programación",
     "Settings.DataBackup.AutomaticBackupInterval.Title": "Intervalo de copia de seguridad",
@@ -1065,7 +1044,6 @@
     "Settings.DataBackup.Interval.Day": "1 día",
     "Settings.DataBackup.Interval.Days": "{0} días",
     "Settings.DataBackup.Retention.Count": "Conservar {0}",
->>>>>>> upstream/main
     "Settings.DataBackup.Export": "Exportar copia de seguridad",
     "Settings.DataBackup.Tooltip": "Exporte la configuración de DeskBox, Todo y Quick Capture como una copia de seguridad ZIP con integridad comprobada",
     "Settings.DataBackup.Restore": "Restaurar copia de seguridad",
@@ -1093,18 +1071,12 @@
     "Settings.DataBackup.RestoreConfirmTitle": "¿Restaurar los datos de esta aplicación?",
     "Settings.DataBackup.RestoreConfirmBody": "Tiempo de respaldo: {0}\nVersión de DeskBox: {1}\nArchivos: {2} ({3})\n\nIncluye: ajustes, configuración de widgets, Todo, Quick Capture y archivos adjuntos almacenados por DeskBox.\nNo incluye: archivos reales en widgets de archivos y carpetas de almacenamiento, archivos vinculados externamente, registro de inicio o estado de acceso rápido.\n\nDeskBox guardará los datos actuales, reiniciará y reemplazará los datos de su aplicación actual con esta copia de seguridad.{4}",
     "Settings.DataBackup.LegacyIntegrityWarning": "Esta es una copia de seguridad heredada sin un manifiesto de integridad SHA-256 por archivo. DeskBox seguirá validando su estructura y datos centrales.",
-<<<<<<< HEAD
     "Settings.DataBackup.RestoreConfirmButton": "Restaurar y reiniciar",
     "Settings.DataBackup.RestoreFailedTitle": "Esta copia de seguridad no se pudo restaurar",
     "Settings.DataBackup.RestoreFailedBody": "La copia de seguridad no pasó la validación o no se pudo realizar. Los datos actuales no fueron cambiados.\n\n{0}",
-=======
     "Settings.DataBackup.RestoreNewerVersionWarning": "⚠ Esta copia se creó con una versión más reciente de DeskBox ({0}). Restaurarla aquí puede perder datos que solo la versión nueva entiende.",
-    "Settings.DataBackup.RestoreConfirmButton": "Restaurar y reiniciar",
-    "Settings.DataBackup.RestoreFailedTitle": "Esta copia de seguridad no se pudo restaurar",
-    "Settings.DataBackup.RestoreFailedBody": "La copia de seguridad no pasó la validación o no se pudo realizar. Los datos actuales no fueron cambiados.\n\n{0}",
     "Settings.DataBackup.RestoreFailedSchemaVersion": "Esta copia de seguridad usa una versión de formato ({0}) que esta versión de DeskBox no admite.",
     "Settings.DataBackup.RestoreFailedInvalidManifest": "El archivo seleccionado no es una copia de seguridad válida de DeskBox (manifiesto ausente o dañado).",
->>>>>>> upstream/main
     "Settings.DataBackup.RestartFailedTitle": "DeskBox no pudo reiniciarse",
     "Settings.DataBackup.RestartFailedBody": "La restauración se canceló y los datos actuales no se cambiaron.\n\n{0}",
     "Settings.DataBackup.RestoreAppliedTitle": "Datos de DeskBox restaurados",
@@ -1266,9 +1238,6 @@
     "Settings.About.Website": "Sitio web oficial",
     "Settings.About.WebsiteDescription": "Ver descargas, registros de cambios y notas de productos",
     "Settings.About.FeedbackTitle": "Comentarios",
-<<<<<<< HEAD
-    "Settings.About.FeedbackDescription": "Si encuentra algún problema, no dude en ponerse en contacto conmigo por correo electrónico.",
-=======
     "Settings.About.FeedbackDescription": "Comentarios anónimos: sin iniciar sesión y sin correo. Consulta el muro público de comentarios en deskbox.fun.",
     "Common.Close": "Cerrar",
     "Settings.About.FeedbackSendButton": "Enviar comentarios",
@@ -1301,7 +1270,6 @@
     "Feedback.Status.InProgress": "En curso",
     "Feedback.Status.Done": "Completado",
     "Feedback.Status.Wontfix": "No se corregirá",
->>>>>>> upstream/main
     "Settings.About.Repository": "Repositorio de código abierto",
     "Settings.About.RepositoryDescription": "Ver código, informar problemas o contribuir con mejoras",
     "Settings.About.StoreSupportTitle": "Apoya DeskBox",
@@ -1334,8 +1302,6 @@
     "Settings.Dialog.MigrateFailedBody": "La ruta de almacenamiento predeterminada no se actualizó.\n\n{0}",
     "Settings.Dialog.MigrateCompleteTitle": "Mover completo",
     "Settings.Dialog.MigrateCompleteBody": "La ruta de almacenamiento predeterminada se ha actualizado. Se movieron los widgets administrados {0} que siguen la ruta predeterminada y los accesos directos de asignación de carpetas sincronizados.\n\nRuta anterior:\n{1}\n\nNueva ruta:\n{2}",
-<<<<<<< HEAD
-=======
     "Settings.Dialog.MigrateResidueTitle": "Migración completada con carpetas antiguas",
     "Settings.Dialog.MigrateResidueBody": "Los archivos están completos en la nueva ubicación, pero {0} carpeta(s) antigua(s) no se pudieron quitar automáticamente (archivo en uso o de solo lectura).\n\nRuta antigua:\n{1}\n\n¿Mover estas carpetas restantes a la papelera de reciclaje?",
     "Settings.Dialog.MigrateResidueCleanButton": "Mover a la papelera",
@@ -1351,7 +1317,6 @@
     "Settings.Dialog.MigrateRollbackRetryButton": "Reintentar devolución",
     "Settings.Dialog.MigrateRollbackRetryComplete": "Todas las carpetas pendientes se devolvieron a su ubicación original.",
     "Settings.Dialog.MigrateRollbackRetryPartial": "Aún no se pudieron devolver {0} carpeta(s) (posiblemente en uso o ya movidas):",
->>>>>>> upstream/main
     "Settings.Dialog.PinQuickAccessTitle": "Fijado en acceso rápido",
     "Settings.Dialog.PinQuickAccessBody": "DeskBox solicitó que la carpeta se fijara en el acceso rápido del Explorador de archivos. Puede ingresarlo desde el lado izquierdo de los selectores de archivos al cargar archivos.",
     "Settings.Dialog.PinQuickAccessFailedTitle": "Error al anclar al acceso rápido",
@@ -1554,11 +1519,8 @@
     "Widget.Tooltip.Add": "Nuevo",
     "Widget.Compact.Collapse": "Contraer widget",
     "Widget.Compact.Expand": "Expandir widget",
-<<<<<<< HEAD
     "Widget.Compact.ExpansionSpaceInsufficient": "No hay espacio suficiente para expandir en la dirección elegida. Mueve la cápsula e inténtalo de nuevo.",
-=======
     "Widget.Compact.ExpansionDirection.FollowGlobal": "Seguir el ajuste global ({0})",
->>>>>>> upstream/main
     "Widget.Compact.Move": "Arrastrar widget",
     "Widget.Compact.MoveOrCollapse": "Arrastre el widget; haga clic para colapsar",
     "Widget.Compact.MoveBar": "Arrastrar barra de componentes",
@@ -1641,15 +1603,11 @@
     "Widget.Stack.Category.PreviousThirtyDays": "30 días anteriores",
     "Widget.Stack.Category.Earlier": "Antes",
     "Widget.Open": "Abierto",
-<<<<<<< HEAD
     "Widget.OpenItemDispatched": "Windows ha aceptado la solicitud de apertura.",
-    "Widget.OpenItemBusy": "Se está procesando otra solicitud de apertura. Inténtalo de nuevo en breve.",
-=======
+    "Widget.OpenItemBusy": "Se está procesando otra solicitud de apertura. Inténtalo de nuevo en breve. Si sigue ocurriendo, el Shell de Windows puede no responder; reiniciar el Explorador lo soluciona.",
     "Widget.DropOnShortcutCannotOpen": "«{0}» no puede abrir este archivo",
     "Widget.DropOnShortcutOpenWith": "Abrir con «{0}»",
     "Widget.OpenItemShortcutTargetMissing": "El destino de este acceso directo ya no existe. Se pidió a Windows que lo gestionara.",
-    "Widget.OpenItemBusy": "Se está procesando otra solicitud de apertura. Inténtalo de nuevo en breve. Si sigue ocurriendo, el Shell de Windows puede no responder; reiniciar el Explorador lo soluciona.",
->>>>>>> upstream/main
     "Widget.OpenItemFailed": "No se pudo abrir este archivo. No se puede configurar ninguna aplicación predeterminada.",
     "Widget.ShowInExplorer": "Abrir ubicación del archivo",
     "Widget.CopyPath": "Copiar ruta",
@@ -1665,14 +1623,11 @@
     "Widget.MoveBackToDesktopFailed": "Error al volver al escritorio",
     "Widget.MoveToDesktopFailed": "Error al mover al escritorio",
     "Widget.NoItemsMoved": "No se movieron artículos",
-<<<<<<< HEAD
-=======
     "Widget.ImportFailed": "No se pudieron importar los elementos arrastrados.",
     "Widget.ImportPartialFailure": "Se importaron {0} de {1} elemento(s); el resto no se pudo importar.",
     "Widget.FileActionFailed": "No se pudo completar la acción de archivos.",
     "Widget.ImportSkippedUndisplayable": "Se omitieron {0} elemento(s) que el cuadro no puede mostrar (los archivos ocultos, por ejemplo, se mantienen en su lugar).",
     "Widget.ImportBlockedUndisplayable": "Colocación cancelada: {0} elemento(s) no se pueden mostrar en el cuadro (los archivos ocultos, por ejemplo, se mantienen en su lugar).",
->>>>>>> upstream/main
     "Widget.CannotMoveToFolder": "No se puede mover a esta carpeta",
     "Widget.CopyToFolder": "Copiar a \"{0}\"",
     "Widget.MoveToFolder": "Mover a \"{0}\"",
@@ -1687,15 +1642,10 @@
     "Widget.CreateFolderFailed": "Error al crear carpeta",
     "Widget.DeleteFailed": "Eliminación fallida",
     "Widget.RenameFailed": "Error al cambiar el nombre",
-<<<<<<< HEAD
     "Widget.Rename.ExtensionChangeWarning": "Si cambia una extensión de nombre de archivo, es posible que el archivo deje de ser utilizable. ¿Está seguro de que desea cambiarla?",
     "Widget.DeleteWidgetFailed": "Error al eliminar el widget",
-=======
     "Widget.RenameFailedWithReason": "Error al cambiar el nombre: {0}",
-    "Widget.Rename.ExtensionChangeWarning": "Si cambia una extensión de nombre de archivo, es posible que el archivo deje de ser utilizable. ¿Está seguro de que desea cambiarla?",
-    "Widget.DeleteWidgetFailed": "Error al eliminar el widget",
     "Widget.DeleteWidgetFailedWithReason": "Error al eliminar el widget: {0}",
->>>>>>> upstream/main
     "Widget.PasteFailed": "Error al pegar",
     "Widget.RefreshFailed": "Error al actualizar",
     "Widget.NoCopyableItems": "No hay elementos copiables",
@@ -1723,11 +1673,7 @@
     "Widget.DeleteWidgetNote": "Cierra solo este widget. La carpeta y sus archivos no cambiarán.",
     "Widget.DeleteWidgetConfirm": "Cerrar widget",
     "Widget.DeleteManagedInfo": "¿Qué debería pasar con los archivos de este widget?",
-<<<<<<< HEAD
-    "Widget.KeepManagedFolder": "guardar archivos",
-=======
     "Widget.KeepManagedFolder": "Guardar archivos (la carpeta queda en su sitio)",
->>>>>>> upstream/main
     "Widget.MoveBackThenDeleteFolder": "Mover archivos al escritorio",
     "Widget.DeleteFolderToRecycleBin": "Eliminar también todos los archivos.",
     "Widget.DeleteManagedFolderConfirmTitle": "¿Mover \"{0}\" a la Papelera de reciclaje?",
@@ -1735,15 +1681,12 @@
     "Widget.DeleteManagedFolderConfirmMessageUnknownCount": "El widget se cerrará y toda la carpeta y su contenido se moverán a la Papelera de reciclaje.\n\n{0}\n\nPuedes restaurarlo desde allí.",
     "Widget.Error.OperationIncomplete": "La operación no se completó.",
     "Widget.Error.FileWidgetPathConflict": "Esta carpeta no se puede utilizar porque su ruta es la misma, contiene o está contenida en la ruta de almacenamiento del widget de archivo \"{0}\". Elija una carpeta que no se superponga.",
-<<<<<<< HEAD
-=======
     "Widget.Error.FileWidgetPathConflictSameFolder": "No se puede usar esta carpeta: es la misma carpeta que la ruta de almacenamiento de {0} («{1}»). El almacenamiento gestionado necesita un directorio exclusivo; elige otra carpeta.",
     "Widget.Error.FileWidgetPathConflictInsideOther": "No se puede usar esta carpeta: está dentro de la ruta de almacenamiento «{1}» de {0}. El almacenamiento gestionado necesita un árbol de directorios exclusivo para que la migración y la limpieza nunca se crucen. Los widgets de carpeta normales pueden mapearse entre sí como padre/hijo.",
     "Widget.Error.FileWidgetPathConflictContainsOther": "No se puede usar esta carpeta: contiene la ruta de almacenamiento «{1}» de {0}. El almacenamiento gestionado necesita un árbol de directorios exclusivo para que la migración y la limpieza nunca se crucen. Los widgets de carpeta normales pueden mapearse entre sí como padre/hijo.",
     "Widget.Error.FileWidgetPathConflictUnresolvable": "No se puede usar esta carpeta: se solapa con la ruta de almacenamiento «{1}» de {0}, o el solape no puede verificarse de forma segura. Elige una carpeta sin solapes.",
     "Widget.MapFolder.ConflictWidgetHint": "Esta carpeta ya la usa el widget \"{0}\"; se ha abierto ese widget.",
     "Widget.MapFolder.ConflictRootHint": "Esta carpeta se superpone con la carpeta de almacenamiento. Se han abierto los ajustes de almacenamiento para cambiar la ubicación de almacenamiento o elegir otra carpeta.",
->>>>>>> upstream/main
     "Widget.Error.UnsafeFolderTransfer": "Una carpeta no se puede copiar ni mover dentro de sí misma ni en una de sus subcarpetas.",
     "Widget.Error.OperationCanceled": "La operación fue cancelada.",
     "Widget.Error.AccessDenied": "DeskBox no tiene permiso para finalizar esta operación.\n\n{0}",
@@ -1759,10 +1702,7 @@
     "Widget.Error.ManagedFolderStillActive": "Esta carpeta todavía pertenece a un widget administrado existente y no se puede limpiar como huérfana.",
     "Widget.Error.ManagedFolderActionOnlyDefault": "Solo los widgets administrados en la ruta de almacenamiento predeterminada pueden sincronizar el manejo de carpetas.",
     "Widget.Error.ManagedFolderNameExists": "Ya existe un widget administrado con ese nombre. Elija un nombre diferente.",
-<<<<<<< HEAD
-=======
     "Widget.Error.ManagedFolderNameUnavailable": "No se puede usar este nombre: ya existe un elemento con el mismo nombre en la carpeta de almacenamiento y no se puede combinar automáticamente. Elige otro nombre.",
->>>>>>> upstream/main
     "QuickCapture.Name": "Captura rápida",
     "QuickCapture.InputPlaceholder": "Capturar algo...",
     "QuickCapture.AddInput": "Agregar registro",
@@ -1879,11 +1819,7 @@
     "FileInfo.File": "Archivo",
     "FileInfo.Folder": "Carpeta",
     "FileInfo.FolderItems": "{0} elementos",
-<<<<<<< HEAD
     "FileInfo.FileModified": "{0} · {1:yyyy/M/d HH:mm}",
-=======
-    "FileInfo.FileModified": "{0} · {1:aaaa/M/d HH:mm}",
->>>>>>> upstream/main
     "Weather.Loading": "Cargando clima…",
     "Weather.RefreshSuccess": "Tiempo actualizado",
     "Weather.RefreshFailed": "Error al actualizar",
@@ -2089,12 +2025,9 @@
     "Settings.Search.MaxResults.Title": "Resultados máximos de búsqueda",
     "Settings.Search.MaxResults.Description": "Número máximo de resultados mostrados por búsqueda",
     "Settings.Search.Hotkey.CustomTitle": "Tecla de acceso rápido de búsqueda personalizada",
-<<<<<<< HEAD
-=======
     "Settings.Search.Hotkey.PresetsTitle": "Atajo",
     "Settings.Search.Hotkey.Status.GlobalHotkeyConflict": "Este atajo ya lo usa el atajo principal de DeskBox.",
     "Settings.GlobalHotkey.Status.SearchHotkeyConflict": "Este atajo ya lo usa el atajo de búsqueda.",
->>>>>>> upstream/main
     "Settings.Search.Hotkey.ChangeTooltip": "Haga clic y luego presione la nueva combinación de teclas",
     "Settings.Search.Hotkey.ResetTooltip": "Restaurar tecla de acceso rápido predeterminada",
     "Settings.Search.Hotkey.Recording": "Presione una combinación de teclas...",
@@ -2704,13 +2637,10 @@
     "Glance.Speed.Standard": "Estándar",
     "Glance.Speed.Relaxed": "Suave",
     "Glance.Typography.Title": "Tamaño de fuente",
-<<<<<<< HEAD
-=======
     "Glance.Typography.TimeFormat": "Formato de hora",
     "Glance.Typography.FollowSystem": "Seguir el sistema",
     "Glance.Typography.Hour24": "Formato de 24 horas",
     "Glance.Typography.Hour12": "Formato de 12 horas",
->>>>>>> upstream/main
     "Glance.Typography.Font": "Fuente",
     "Glance.Speed.Title": "Velocidad de transición",
     "Glance.Typography.SystemDefault": "Predeterminada del sistema",
@@ -2757,7 +2687,6 @@
     "Widget.MoreSystemOperations": "Más operaciones del sistema",
     "Settings.ManagedPath.DesktopShortcut.Title": "Acceso directo del almacenamiento en el escritorio",
     "Settings.ManagedPath.DesktopShortcut.Description": "Crea un acceso directo a la carpeta de almacenamiento actual. Si lo eliminas, DeskBox no volverá a crearlo.",
-<<<<<<< HEAD
     "Settings.Animation.FrameRate.Title": "Velocidad de fotogramas de la animación",
     "Settings.Animation.FrameRate.Description": "Cadencia de expansión/contracción de cápsulas; la velocidad efectiva es la de refresco dividida por el nivel y nunca la supera",
     "Settings.QuickCapture.RecordColors.Title": "Colores de registros",
@@ -2774,47 +2703,12 @@
     "Startup.Failure.Body": "El inicio falló en la fase \"{0}\". Los widgets y ajustes ya aplicados se conservan. El error se registró en el registro.",
     "Startup.Failure.Phase.Core": "configuración y servicios",
     "Startup.Failure.Phase.Widgets": "restauración de widgets",
-    "Common.Close": "Cerrar",
     "Common.More": "Más",
     "Settings.ManagedPath.DesktopShortcut.StatusCreated": "Acceso directo del escritorio creado",
     "Settings.ManagedPath.DesktopShortcut.StatusNotCreated": "No hay acceso directo en el escritorio",
     "Settings.ManagedPath.DesktopShortcut.Remove": "Quitar",
-    "Settings.Performance.ImmediateHiddenWorkingSetTrim.Title": "Reducir memoria inmediatamente al ocultar (experimental)",
-    "Settings.Performance.ImmediateHiddenWorkingSetTrim.Description": "Reduce la memoria residente cuando todos los widgets terminan de ocultarse. Mostrarlos de nuevo puede tardar un poco más.",
     "Settings.FileWidget.SystemContextMenu.Title": "Menú contextual nativo",
     "Settings.FileWidget.SystemContextMenu.Description": "Al hacer clic derecho en un solo archivo se muestra el menú nativo de Windows en lugar del menú integrado de DeskBox; las pilas y la selección múltiple conservan el menú integrado",
-    "Settings.Feature.ListTextSize.Title": "List text size",
-    "Settings.Feature.ListTextSize.Description": "Controls text size for feature tile lists",
-    "Settings.Feature.ContentTextSize.Title": "Content text size",
-    "Settings.Feature.ContentTextSize.Description": "Controls text size for feature tile content",
-    "Settings.DataBackup.AutomaticBackup.Title": "Copia de seguridad automática",
-    "Settings.DataBackup.AutomaticBackup.Description": "Crea instantáneas locales de la configuración y los datos de la aplicación según una programación",
-    "Settings.DataBackup.AutomaticBackupInterval.Title": "Intervalo de copia de seguridad",
-    "Settings.DataBackup.AutomaticBackupInterval.Description": "Con qué frecuencia se crea una nueva instantánea automática",
-    "Settings.DataBackup.AutomaticBackupRetention.Title": "Instantáneas a conservar",
-    "Settings.DataBackup.AutomaticBackupRetention.Description": "Al alcanzar el límite, se eliminan las instantáneas más antiguas",
-    "Settings.DataBackup.AutomaticBackupDirectory.Title": "Carpeta de copia de seguridad",
-    "Settings.DataBackup.AutomaticBackupDirectory.Description": "Las instantáneas automáticas se guardan aquí; vacío usa la carpeta de recuperación predeterminada",
-    "Settings.DataBackup.AutomaticBackupDirectory.Change": "Cambiar carpeta",
-    "Settings.DataBackup.AutomaticBackupDirectory.Reset": "Usar carpeta predeterminada",
-    "Settings.DataBackup.AutomaticBackupDirectory.FallbackTitle": "Carpeta de copia de seguridad no disponible",
-    "Settings.DataBackup.AutomaticBackupDirectory.FallbackBody": "DeskBox no pudo escribir en la carpeta configurada y guardó la instantánea en la carpeta de recuperación predeterminada.",
-    "Settings.DataBackup.AutomaticBackupDirectory.FallbackWarning": "La carpeta configurada no está disponible ahora mismo. Las instantáneas se guardan en la carpeta predeterminada:\n{0}",
-    "Settings.DataBackup.AutomaticBackupDirectory.InvalidTitle": "No se puede usar la carpeta",
-    "Settings.DataBackup.AutomaticBackupDirectory.InvalidInsideDataRoot": "La carpeta de copia de seguridad no puede estar dentro de la carpeta de datos del propio DeskBox.",
-    "Settings.DataBackup.AutomaticBackupDirectory.InvalidPath": "La ruta de la carpeta seleccionada no es válida.",
-    "Settings.DataBackup.Interval.Minutes": "{0} minutos",
-    "Settings.DataBackup.Interval.Hour": "1 hora",
-    "Settings.DataBackup.Interval.Hours": "{0} horas",
-    "Settings.DataBackup.Interval.Day": "1 día",
-    "Settings.DataBackup.Interval.Days": "{0} días",
-    "Settings.DataBackup.Retention.Count": "Conservar {0}",
-    "Glance.Typography.TimeFormat": "Formato de hora",
-    "Glance.Typography.FollowSystem": "Seguir el sistema",
-    "Glance.Typography.Hour24": "Formato de 24 horas",
-    "Glance.Typography.Hour12": "Formato de 12 horas",
-=======
->>>>>>> upstream/main
     "DesktopOrganization.Public.PersonalCount": "Escritorio personal ({0} elementos)",
     "DesktopOrganization.Public.SharedCount": "Escritorio público ({0} elementos, todas las cuentas)",
     "DesktopOrganization.Public.Unavailable": "Escritorio público (no disponible ahora)",

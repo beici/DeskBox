@@ -59,31 +59,17 @@ public sealed class AotStage4D1BContractTests
         // containers have no Header/Description property.
         IReadOnlyDictionary<string, int> usages = ReadLocalizedXamlUsages();
         Assert.Equal(10, usages.Count);
-<<<<<<< HEAD
-        // 1.5.0 merge: +4 SettingsCard headers/descriptions (frame-rate combo
-        // and the three QuickCapture record-color cards) and +1 SettingsExpander
-        // (the record-colors group) over the frozen 1.4.x numbers.
-        Assert.Equal(174, usages["toolkit:SettingsCard|HeaderKey"]);
-        Assert.Equal(145, usages["toolkit:SettingsCard|DescriptionKey"]);
-        Assert.Equal(21, usages["toolkit:SettingsExpander|HeaderKey"]);
-        Assert.Equal(8, usages["toolkit:SettingsExpander|DescriptionKey"]);
-=======
         Assert.Equal(182, usages["toolkit:SettingsCard|HeaderKey"]);
         Assert.Equal(153, usages["toolkit:SettingsCard|DescriptionKey"]);
         Assert.Equal(20, usages["toolkit:SettingsExpander|HeaderKey"]);
         Assert.Equal(7, usages["toolkit:SettingsExpander|DescriptionKey"]);
->>>>>>> upstream/main
         Assert.Equal(2, usages["TextBox|HeaderKey"]);
         Assert.Equal(2, usages["Grid|HeaderKey"]);
         Assert.Equal(1, usages["Grid|DescriptionKey"]);
         Assert.Equal(1, usages["StackPanel|HeaderKey"]);
         Assert.Equal(1, usages["Expander|HeaderKey"]);
         Assert.Equal(1, usages["Expander|DescriptionKey"]);
-<<<<<<< HEAD
-        Assert.Equal(356, usages.Values.Sum());
-=======
         Assert.Equal(370, usages.Values.Sum());
->>>>>>> upstream/main
     }
 
     [Fact]
@@ -91,11 +77,7 @@ public sealed class AotStage4D1BContractTests
     {
         string script = ReadRepositoryFile("scripts/publish-aot-audit.ps1");
 
-<<<<<<< HEAD
-        Assert.Contains("$auditProfileVersion = 61", script, StringComparison.Ordinal);
-=======
         Assert.Contains("$auditProfileVersion = 59", script, StringComparison.Ordinal);
->>>>>>> upstream/main
         Assert.Contains("schemaVersion = 55", script, StringComparison.Ordinal);
         Assert.Contains("stage4D1BWarningMessages", script, StringComparison.Ordinal);
         Assert.Contains("QuickCaptureSurfaceContent.xaml.cs", script, StringComparison.Ordinal);

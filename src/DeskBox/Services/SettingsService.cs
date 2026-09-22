@@ -489,6 +489,8 @@ public const int DefaultSearchMaxResults = 100;
         settings.WidgetMaterialIntensity = DefaultWidgetMaterialIntensity;
         settings.WidgetForegroundMode = WidgetForegroundSettings.ModeFollowTheme;
         settings.WidgetForegroundColor = WidgetForegroundSettings.DefaultCustomColorHex;
+        settings.WidgetTitleAlignment = WidgetTitleAppearanceSettings.AlignLeft;
+        settings.WidgetAnimationFrameRate = WidgetCompactFrameSkipPolicy.DefaultFrameRate;
         settings.WidgetBorderColorMode = WidgetBorderColorModeNeutral;
         settings.WidgetBorderStyle = WidgetBorderStyleThin;
         settings.WidgetAnimationEffect = WidgetAnimationEffectSlideFade;
@@ -726,19 +728,15 @@ settings.FocusClickedWidgetOnRaise = false;
                 _ => SettingsLoadRecoveryState.DefaultsForMissingFile
             };
 
-            AppSettings loadedSettings = loadResult.Value;
-            bool migrationsChanged = loadedFromDisk &&
-                await new SettingsMigrationPipeline(
-                    Path.GetDirectoryName(_settingsPath)!).RunMigrationsAsync(loadedSettings);
             lock (_lock)
             {
-                _settings = loadedSettings;
+                _settings = loadResult.Value;
             }
 
             bool changed;
             lock (_lock)
             {
-                changed = migrationsChanged;
+                changed = false;
                 if (!loadedFromDisk)
                 {
                     ApplyDefaultPreferences(_settings);

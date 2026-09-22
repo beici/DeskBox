@@ -41,13 +41,10 @@
     "Settings.Performance.CacheBudget.Description": "Controla o limite dos caches recriáveis de ícones, miniaturas e imagens decodificadas",
     "Settings.Performance.IdleWorkingSetTrim.Title": "Compress memory when idle",
     "Settings.Performance.IdleWorkingSetTrim.Description": "While widgets are hidden or you are away, page unused memory out to the system; it is read back on demand when you return",
-<<<<<<< HEAD
-=======
     "Settings.Performance.ImmediateHiddenWorkingSetTrim.Title": "Reduzir memória imediatamente ao ocultar (experimental)",
     "Settings.Performance.ImmediateHiddenWorkingSetTrim.Description": "Reduz a memória residente 3 segundos após todos os widgets serem ocultados; alternar ocultar/exibir rapidamente não repete a limpeza. Exibi-los novamente pode levar um pouco mais de tempo.",
     "Settings.Performance.QuiescenceWorkingSetTrim.Title": "Comprimir memória após interações",
     "Settings.Performance.QuiescenceWorkingSetTrim.Description": "Alguns segundos após fechar as configurações, recolher uma cápsula ou concluir um arrasto, a memória não utilizada é paginada mesmo com os widgets visíveis. Só é executado quando a memória cresceu de forma perceptível e nenhuma animação está em andamento, para nunca repetir a limpeza.",
->>>>>>> upstream/main
     "Settings.Performance.CacheBudget.Small": "Pequena",
     "Settings.Performance.CacheBudget.Balanced": "Equilibrada",
     "Settings.Performance.CacheBudget.Large": "Grande",
@@ -1507,6 +1504,7 @@
     "Widget.Compact.FileCount": "{0} itens",
     "Widget.Compact.QuickCaptureCount": "{0} notas",
     "Widget.Compact.TodoSummary": "{0} hoje · {1} atrasado",
+    "Widget.Compact.ExpansionSpaceInsufficient": "Não há espaço suficiente para expandir na direção escolhida. Mova a cápsula e tente novamente.",
     "Widget.CollapseBehavior.Title": "Modo de exibição",
     "Widget.CollapseBehavior.System": "Seguir padrão",
     "Widget.CollapseBehavior.SystemWithDefault": "Seguir padrão ({0})",
@@ -1990,6 +1988,7 @@
     "Settings.Search.Hotkey.PresetsTitle": "Atalho",
     "Settings.Search.Hotkey.Status.GlobalHotkeyConflict": "Este atalho já é usado pelo atalho principal do DeskBox.",
     "Settings.GlobalHotkey.Status.SearchHotkeyConflict": "Este atalho já é usado pelo atalho de pesquisa.",
+    "Settings.GlobalHotkey.PresetsDescription": "Escolha o atalho usado para mostrar ou ocultar o DeskBox",
     "Settings.Search.Hotkey.ChangeTooltip": "Clique e pressione a nova combinação de teclas",
     "Settings.Search.Hotkey.ResetTooltip": "Restaurar atalho padrão",
     "Settings.Search.Hotkey.Recording": "Pressione uma combinação de teclas...",
@@ -2611,13 +2610,10 @@
     "Glance.Speed.Standard": "Padrão",
     "Glance.Speed.Relaxed": "Suave",
     "Glance.Typography.Title": "Tamanho da fonte",
-<<<<<<< HEAD
-=======
     "Glance.Typography.TimeFormat": "Formato de hora",
     "Glance.Typography.FollowSystem": "Seguir o sistema",
     "Glance.Typography.Hour24": "Formato de 24 horas",
     "Glance.Typography.Hour12": "Formato de 12 horas",
->>>>>>> upstream/main
     "Glance.Typography.Font": "Fonte",
     "Glance.Speed.Title": "Velocidade da transição",
     "Glance.Typography.SystemDefault": "Padrão do sistema",
@@ -2662,9 +2658,9 @@
     "Widget.RunAsAdministrator.NotElevated": "O Windows não conseguiu criar um processo de administrador. Verifique as configurações do UAC e tente novamente.",
     "Widget.CreateShortcut": "Criar atalho",
     "Widget.MoreSystemOperations": "Mais operações do sistema",
+    "Widget.OpenItemDispatched": "O Windows aceitou a solicitação de abertura.",
     "Settings.ManagedPath.DesktopShortcut.Title": "Atalho do armazenamento na área de trabalho",
     "Settings.ManagedPath.DesktopShortcut.Description": "Cria um atalho para a pasta de armazenamento atual. Se você o excluir, o DeskBox não o criará novamente.",
-<<<<<<< HEAD
     "Settings.Animation.FrameRate.Title": "Taxa de quadros da animação",
     "Settings.Animation.FrameRate.Description": "Cadência de expansão/recolhimento das cápsulas; a taxa efetiva é a de atualização dividida pelo nível e nunca a excede",
     "Settings.QuickCapture.RecordColors.Title": "Cores dos registros",
@@ -2681,13 +2677,10 @@
     "Startup.Failure.Body": "A inicialização falhou na etapa \"{0}\". Os widgets e as configurações já aplicados são mantidos. O erro foi registrado no log.",
     "Startup.Failure.Phase.Core": "configurações e serviços",
     "Startup.Failure.Phase.Widgets": "restauração de widgets",
-    "Common.Close": "Fechar",
     "Common.More": "Mais",
     "Settings.ManagedPath.DesktopShortcut.StatusCreated": "Atalho da área de trabalho criado",
     "Settings.ManagedPath.DesktopShortcut.StatusNotCreated": "Nenhum atalho na área de trabalho",
     "Settings.ManagedPath.DesktopShortcut.Remove": "Remover",
-    "Settings.Performance.ImmediateHiddenWorkingSetTrim.Title": "Reduzir memória imediatamente ao ocultar (experimental)",
-    "Settings.Performance.ImmediateHiddenWorkingSetTrim.Description": "Reduz a memória residente assim que todos os widgets terminam de ser ocultados. Exibi-los novamente pode levar um pouco mais de tempo.",
     "Settings.FileWidget.SystemContextMenu.Title": "Menu de contexto nativo",
     "Settings.FileWidget.SystemContextMenu.Description": "Clicar com o botão direito em um único arquivo mostra o menu nativo do Windows em vez do menu interno do DeskBox; pilhas e seleção múltipla mantêm o menu interno",
     "Settings.Feature.ListTextSize.Title": "List text size",
@@ -2716,12 +2709,6 @@
     "Settings.DataBackup.Interval.Day": "1 dia",
     "Settings.DataBackup.Interval.Days": "{0} dias",
     "Settings.DataBackup.Retention.Count": "Manter {0}",
-    "Glance.Typography.TimeFormat": "Formato de hora",
-    "Glance.Typography.FollowSystem": "Seguir o sistema",
-    "Glance.Typography.Hour24": "Formato de 24 horas",
-    "Glance.Typography.Hour12": "Formato de 12 horas",
-=======
->>>>>>> upstream/main
     "DesktopOrganization.Public.PersonalCount": "Área de trabalho pessoal ({0} itens)",
     "DesktopOrganization.Public.SharedCount": "Área de trabalho pública ({0} itens, todas as contas)",
     "DesktopOrganization.Public.Unavailable": "Área de trabalho pública (indisponível no momento)",

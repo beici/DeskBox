@@ -41,13 +41,10 @@
     "Settings.Performance.CacheBudget.Description": "Begrenzt wiederherstellbare Symbol-, Miniaturansicht- und dekodierte Bild-Caches",
     "Settings.Performance.IdleWorkingSetTrim.Title": "Compress memory when idle",
     "Settings.Performance.IdleWorkingSetTrim.Description": "While widgets are hidden or you are away, page unused memory out to the system; it is read back on demand when you return",
-<<<<<<< HEAD
-=======
     "Settings.Performance.ImmediateHiddenWorkingSetTrim.Title": "Speicher sofort nach dem Ausblenden reduzieren (experimentell)",
     "Settings.Performance.ImmediateHiddenWorkingSetTrim.Description": "Reduziert den residenten Speicher 3 Sekunden, nachdem alle Widgets ausgeblendet sind; schnelles Aus- und Einblenden löst keine wiederholte Bereinigung aus. Beim erneuten Anzeigen kann es kurz zu Verzögerungen kommen.",
     "Settings.Performance.QuiescenceWorkingSetTrim.Title": "Speicher nach Interaktionen komprimieren",
     "Settings.Performance.QuiescenceWorkingSetTrim.Description": "Einige Sekunden nach dem Schließen der Einstellungen, dem Einklappen einer Kapsel oder dem Ende eines Ziehvorgangs wird ungenutzter Speicher auch bei sichtbaren Widgets ausgelagert. Läuft nur, wenn der Speicher deutlich gewachsen ist und keine Animation läuft, also nie wiederholt.",
->>>>>>> upstream/main
     "Settings.Performance.CacheBudget.Small": "Klein",
     "Settings.Performance.CacheBudget.Balanced": "Ausgeglichen",
     "Settings.Performance.CacheBudget.Large": "Groß",
@@ -1507,6 +1504,7 @@
     "Widget.Compact.FileCount": "{0} Items",
     "Widget.Compact.QuickCaptureCount": "{0} Notizen",
     "Widget.Compact.TodoSummary": "{0} heute · {1} überfällig",
+    "Widget.Compact.ExpansionSpaceInsufficient": "In der gewählten Richtung ist nicht genügend Platz zum Aufklappen. Verschiebe die Kapsel und versuche es erneut.",
     "Widget.CollapseBehavior.Title": "Anzeigemodus",
     "Widget.CollapseBehavior.System": "Standard verwenden",
     "Widget.CollapseBehavior.SystemWithDefault": "Standard verwenden ({0})",
@@ -1990,6 +1988,7 @@
     "Settings.Search.Hotkey.PresetsTitle": "Tastenkürzel",
     "Settings.Search.Hotkey.Status.GlobalHotkeyConflict": "Diese Tastenkombination wird bereits von der Haupt-Tastenkombination von DeskBox verwendet.",
     "Settings.GlobalHotkey.Status.SearchHotkeyConflict": "Diese Tastenkombination wird bereits von der Such-Tastenkombination verwendet.",
+    "Settings.GlobalHotkey.PresetsDescription": "Wählen Sie das Tastenkürzel zum Ein- oder Ausblenden von DeskBox",
     "Settings.Search.Hotkey.ChangeTooltip": "Zum Festlegen eine neue Tastenkombination drücken",
     "Settings.Search.Hotkey.ResetTooltip": "Standard-Tastenkürzel wiederherstellen",
     "Settings.Search.Hotkey.Recording": "Tastenkombination drücken...",
@@ -2611,13 +2610,10 @@
     "Glance.Speed.Standard": "Standard",
     "Glance.Speed.Relaxed": "Ruhig",
     "Glance.Typography.Title": "Schriftgröße",
-<<<<<<< HEAD
-=======
     "Glance.Typography.TimeFormat": "Zeitformat",
     "Glance.Typography.FollowSystem": "System folgen",
     "Glance.Typography.Hour24": "24-Stunden-Format",
     "Glance.Typography.Hour12": "12-Stunden-Format",
->>>>>>> upstream/main
     "Glance.Typography.Font": "Schriftart",
     "Glance.Speed.Title": "Übergangsgeschwindigkeit",
     "Glance.Typography.SystemDefault": "Systemstandard",
@@ -2662,9 +2658,9 @@
     "Widget.RunAsAdministrator.NotElevated": "Windows konnte keinen Administratorprozess erstellen. Prüfen Sie die UAC-Einstellungen und versuchen Sie es erneut.",
     "Widget.CreateShortcut": "Verknüpfung erstellen",
     "Widget.MoreSystemOperations": "Weitere Systemaktionen",
+    "Widget.OpenItemDispatched": "Windows hat den Öffnungsauftrag angenommen.",
     "Settings.ManagedPath.DesktopShortcut.Title": "Desktop-Verknüpfung zum Speicher",
     "Settings.ManagedPath.DesktopShortcut.Description": "Erstellt eine Verknüpfung zum aktuellen Speicherordner. Wenn Sie sie löschen, erstellt DeskBox sie nicht erneut.",
-<<<<<<< HEAD
     "Settings.Animation.FrameRate.Title": "Animationsbildrate",
     "Settings.Animation.FrameRate.Description": "Kadenz für Ein-/Ausklappen; die gelieferte Rate ist Bildwiederholrate geteilt durch die Stufe und überschreitet sie nie",
     "Settings.QuickCapture.RecordColors.Title": "Eintragsfarben",
@@ -2681,13 +2677,10 @@
     "Startup.Failure.Body": "Start fehlgeschlagen in der Phase \"{0}\". Bereits angewendete Widgets und Einstellungen bleiben erhalten. Der Fehler wurde im Protokoll vermerkt.",
     "Startup.Failure.Phase.Core": "Einstellungen und Dienste",
     "Startup.Failure.Phase.Widgets": "Wiederherstellung der Widgets",
-    "Common.Close": "Schließen",
     "Common.More": "Mehr",
     "Settings.ManagedPath.DesktopShortcut.StatusCreated": "Desktop-Verknüpfung erstellt",
     "Settings.ManagedPath.DesktopShortcut.StatusNotCreated": "Keine Desktop-Verknüpfung",
     "Settings.ManagedPath.DesktopShortcut.Remove": "Entfernen",
-    "Settings.Performance.ImmediateHiddenWorkingSetTrim.Title": "Speicher sofort nach dem Ausblenden reduzieren (experimentell)",
-    "Settings.Performance.ImmediateHiddenWorkingSetTrim.Description": "Reduziert den residenten Speicher, sobald alle Widgets vollständig ausgeblendet sind. Beim erneuten Anzeigen kann es kurz zu Verzögerungen kommen.",
     "Settings.FileWidget.SystemContextMenu.Title": "Natives Kontextmenü",
     "Settings.FileWidget.SystemContextMenu.Description": "Rechtsklick auf eine einzelne Datei zeigt das native Windows-Menü statt des integrierten DeskBox-Menüs; Stapel und Mehrfachauswahl behalten das integrierte Menü",
     "Settings.Feature.ListTextSize.Title": "List text size",
@@ -2716,12 +2709,6 @@
     "Settings.DataBackup.Interval.Day": "1 Tag",
     "Settings.DataBackup.Interval.Days": "{0} Tage",
     "Settings.DataBackup.Retention.Count": "{0} behalten",
-    "Glance.Typography.TimeFormat": "Zeitformat",
-    "Glance.Typography.FollowSystem": "System folgen",
-    "Glance.Typography.Hour24": "24-Stunden-Format",
-    "Glance.Typography.Hour12": "12-Stunden-Format",
-=======
->>>>>>> upstream/main
     "DesktopOrganization.Public.PersonalCount": "Persönlicher Desktop ({0} Elemente)",
     "DesktopOrganization.Public.SharedCount": "Öffentlicher Desktop ({0} Elemente, für alle Konten)",
     "DesktopOrganization.Public.Unavailable": "Öffentlicher Desktop (derzeit nicht verfügbar)",

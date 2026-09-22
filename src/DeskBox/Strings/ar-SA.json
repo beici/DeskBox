@@ -41,13 +41,10 @@
     "Settings.Performance.CacheBudget.Description": "يتحكم في حد ذاكرة الأيقونات والصور المصغرة والصور المفكوكة القابلة لإعادة الإنشاء",
     "Settings.Performance.IdleWorkingSetTrim.Title": "Compress memory when idle",
     "Settings.Performance.IdleWorkingSetTrim.Description": "While widgets are hidden or you are away, page unused memory out to the system; it is read back on demand when you return",
-<<<<<<< HEAD
-=======
     "Settings.Performance.ImmediateHiddenWorkingSetTrim.Title": "تقليل الذاكرة فور الإخفاء (تجريبي)",
     "Settings.Performance.ImmediateHiddenWorkingSetTrim.Description": "يقلل الذاكرة المقيمة بعد 3 ثوانٍ من إخفاء جميع عناصر الواجهة؛ لن يتكرر التنظيف مع التبديل السريع بين الإخفاء والإظهار. قد يستغرق إظهارها مجددًا وقتًا أطول قليلًا.",
     "Settings.Performance.QuiescenceWorkingSetTrim.Title": "ضغط الذاكرة بعد التفاعل",
     "Settings.Performance.QuiescenceWorkingSetTrim.Description": "بعد بضع ثوانٍ من إغلاق الإعدادات أو طيّ كبسولة أو انتهاء السحب، تُعاد الذاكرة غير المستخدمة إلى النظام حتى مع بقاء الأدوات ظاهرة. يعمل فقط عندما تنمو الذاكرة بشكل ملحوظ ولا يوجد تحريك جارٍ، لذا لا يتكرر.",
->>>>>>> upstream/main
     "Settings.Performance.CacheBudget.Small": "صغيرة",
     "Settings.Performance.CacheBudget.Balanced": "متوازنة",
     "Settings.Performance.CacheBudget.Large": "كبيرة",
@@ -142,7 +139,6 @@
     "Common.Ok": "موافق",
     "Common.Cancel": "إلغاء",
     "Common.Save": "حفظ",
-<<<<<<< HEAD
     "QuickCapture.ClipboardColor.Menu": "ألوان السجلات",
     "QuickCapture.ClipboardColor.FollowTheme": "اتباع السمة",
     "QuickCapture.ClipboardColor.Text": "لون نص السجلات…",
@@ -177,8 +173,6 @@
     "Widget.Margin.Reference.Screen": "حافة الشاشة",
     "Widget.Margin.ReferenceFormat": "{0} - من {1}",
     "Widget.Margin.ReferenceHint": "يُقاس كل جانب إلى أقرب عنصر واجهة أو رمز على سطح المكتب. ولا تُستخدم حافة الشاشة إلا عندما لا يوجد شيء في هذا الجانب.",
-=======
->>>>>>> upstream/main
     "Todo.Status.Saved": "تم حفظ المهمة",
     "Todo.Status.MarkedCompleted": "تم وضع علامة مكتملة",
     "Todo.Status.MarkedActive": "تم وضع علامة نشطة",
@@ -455,15 +449,12 @@
     "Settings.TrayIcon.Colorful": "ملون",
     "Settings.TrayIcon.Black": "أبيض",
     "Settings.TrayIcon.White": "أسود",
-<<<<<<< HEAD
-=======
     "Settings.WindowShadow.Title": "ظلال النوافذ (النظام)",
     "Settings.WindowShadow.Description": "إعداد على مستوى Windows — يفعّل أو يعطّل الظلال لنوافذ جميع التطبيقات، وليس DeskBox فقط",
     "Settings.WindowShadow.Confirm.Title": "تغيير تأثير Windows المرئي",
     "Settings.WindowShadow.Confirm.Body": "يؤدي هذا إلى تغيير إعداد ظلال النوافذ على مستوى Windows. ويؤثر في نوافذ جميع التطبيقات على هذا الجهاز، وليس DeskBox فقط. هل تريد المتابعة؟",
     "Settings.WindowShadow.ApplyFailed": "تعذر تغيير إعداد ظلال النوافذ للنظام (الخطأ {0}).",
     "Settings.WindowShadow.ApplyFailedNoEffect": "قبل Windows التغيير، لكن الإعداد لم يسرِ في هذه الجلسة. قد يكون محظورًا بموجب نهج أو جلسة سطح مكتب بعيد.",
->>>>>>> upstream/main
     "Settings.WidgetLayerMode.Title": "طبقة القطعة",
     "Settings.WidgetLayerMode.Description": "اختر السلوك الديناميكي أو الثابت على سطح المكتب أو الإظهار السريع",
     "Settings.WidgetLayerMode.Dynamic": "طبقة ديناميكية",
@@ -697,13 +688,10 @@
     "Settings.Opacity.Title": "شفافية الخلفية",
     "Settings.Opacity.Description": "اضبط شفافية خلفيات الأكريليك واللون الخالص؛ ويمكن جعل اللون الخالص شفافًا بالكامل",
     "Settings.IconSize.Title": "حجم الأيقونة",
-<<<<<<< HEAD
-=======
     "Settings.Feature.ListTextSize.Title": "List text size",
     "Settings.Feature.ListTextSize.Description": "Controls text size for feature tile lists",
     "Settings.Feature.ContentTextSize.Title": "Content text size",
     "Settings.Feature.ContentTextSize.Description": "Controls text size for feature tile content",
->>>>>>> upstream/main
     "Settings.TextSize.Title": "حجم النص",
     "Settings.HorizontalSpacing.Title": "التباعد الأفقي",
     "Settings.VerticalSpacing.Title": "تباعد عمودي",
@@ -826,20 +814,13 @@
     "Settings.Section.Interaction": "التفاعل",
     "Settings.WidgetLayerMode.QuickReveal": "إظهار سريع",
     "Settings.GlobalHotkey.PresetsTitle": "الاختصار",
-<<<<<<< HEAD
     "Settings.GlobalHotkey.PresetsDescription": "اختر الاختصار المستخدم لإظهار DeskBox أو إخفائه",
-    "Settings.GlobalHotkey.Preset.F7": "F7 (افتراضي)",
-=======
     "Settings.GlobalHotkey.Preset.F7": "F7",
->>>>>>> upstream/main
     "Settings.GlobalHotkey.Preset.DoubleControl": "ضغط مزدوج على Ctrl",
     "Settings.GlobalHotkey.Preset.AltSpace": "Alt + Space",
     "Settings.GlobalHotkey.Preset.WinSpace": "Win + Space",
     "Settings.GlobalHotkey.Preset.WindowsTap": "Win",
-<<<<<<< HEAD
-=======
     "Settings.GlobalHotkey.Preset.CopilotKey": "Copilot",
->>>>>>> upstream/main
     "Settings.GlobalHotkey.WindowsTapWarning": "أثناء تشغيل DeskBox، يؤدي الضغط على Win وحده إلى فتح DeskBox بدلًا من قائمة ابدأ. يظل Ctrl + Esc قادرًا على فتح قائمة ابدأ. يستمر DeskBox في العمل دون صلاحيات مسؤول.",
     "Settings.GlobalHotkey.AltSpaceWarning": "أثناء تشغيل DeskBox، يحل هذا الخيار محل قائمة النظام Alt + Space للنافذة النشطة.",
     "Settings.DesktopDoubleClick.Title": "النقر المزدوج فوق مساحة فارغة على سطح المكتب",
@@ -1041,8 +1022,6 @@
     "Settings.Onboarding.Tooltip": "فتح دليل البدء في DeskBox",
     "Settings.DataBackup.Title": "نسخ الإعدادات والمحتوى احتياطيًا",
     "Settings.DataBackup.Description": "ينسخ الإعدادات والأدوات والملاحظات والمهام ونسخ المرفقات احتياطيًا؛ لا يشمل ملفات أدوات الملفات",
-<<<<<<< HEAD
-=======
     "Settings.DataBackup.AutomaticBackup.Title": "نسخ احتياطي تلقائي",
     "Settings.DataBackup.AutomaticBackup.Description": "ينشئ لقطات محلية للإعدادات وبيانات التطبيق وفق جدول زمني",
     "Settings.DataBackup.AutomaticBackupInterval.Title": "الفاصل الزمني للنسخ الاحتياطي",
@@ -1065,7 +1044,6 @@
     "Settings.DataBackup.Interval.Day": "يوم واحد",
     "Settings.DataBackup.Interval.Days": "{0} يوم",
     "Settings.DataBackup.Retention.Count": "الاحتفاظ بـ {0}",
->>>>>>> upstream/main
     "Settings.DataBackup.Export": "تصدير النسخة الاحتياطية",
     "Settings.DataBackup.Tooltip": "قم بتصدير إعدادات DeskBox وTodo وQuick Capture كنسخة احتياطية بتنسيق ZIP تم التحقق من سلامتها",
     "Settings.DataBackup.Restore": "استعادة النسخة الاحتياطية",
@@ -1093,18 +1071,12 @@
     "Settings.DataBackup.RestoreConfirmTitle": "هل تريد استعادة بيانات هذا التطبيق؟",
     "Settings.DataBackup.RestoreConfirmBody": "وقت النسخ الاحتياطي: {0} \n إصدار DeskBox: {1} \n الملفات: {2} ({3}) \n \n يتضمن: الإعدادات، وتكوين عنصر واجهة المستخدم، وTodo، والالتقاط السريع، والمرفقات المخزنة بواسطة DeskBox.\nغير متضمن: الملفات الفعلية في أدوات الملفات ومجلدات التخزين، أو الملفات المرتبطة خارجيًا، أو تسجيل بدء التشغيل، أو حالة الوصول السريع.\n\nسيقوم DeskBox بحفظ البيانات الحالية، وإعادة التشغيل، واستبدال بيانات التطبيق الحالية بهذه النسخة الاحتياطية.{4}",
     "Settings.DataBackup.LegacyIntegrityWarning": "هذه نسخة احتياطية قديمة بدون بيان تكامل SHA-256 لكل ملف. سيستمر DeskBox في التحقق من صحة بنيته وبياناته الأساسية.",
-<<<<<<< HEAD
     "Settings.DataBackup.RestoreConfirmButton": "استعادة وإعادة التشغيل",
     "Settings.DataBackup.RestoreFailedTitle": "لا يمكن استعادة هذه النسخة الاحتياطية",
     "Settings.DataBackup.RestoreFailedBody": "لم تنجح النسخة الاحتياطية في التحقق من الصحة أو تعذر تنظيمها. لم يتم تغيير البيانات الحالية.\n\n{0}",
-=======
     "Settings.DataBackup.RestoreNewerVersionWarning": "⚠ أُنشئت هذه النسخة الاحتياطية بإصدار أحدث من DeskBox ({0}). قد يؤدي الاستعادة هنا إلى فقدان بيانات لا يفهمها إلا الإصدار الأحدث.",
-    "Settings.DataBackup.RestoreConfirmButton": "استعادة وإعادة التشغيل",
-    "Settings.DataBackup.RestoreFailedTitle": "لا يمكن استعادة هذه النسخة الاحتياطية",
-    "Settings.DataBackup.RestoreFailedBody": "لم تنجح النسخة الاحتياطية في التحقق من الصحة أو تعذر تنظيمها. لم يتم تغيير البيانات الحالية.\n\n{0}",
     "Settings.DataBackup.RestoreFailedSchemaVersion": "تستخدم هذه النسخة الاحتياطية إصدار تنسيق ({0}) لا يدعمه إصدار DeskBox الحالي.",
     "Settings.DataBackup.RestoreFailedInvalidManifest": "الملف المحدد ليس نسخة احتياطية صالحة لـ DeskBox (المانيفست مفقود أو تالف).",
->>>>>>> upstream/main
     "Settings.DataBackup.RestartFailedTitle": "تعذر إعادة تشغيل DeskBox",
     "Settings.DataBackup.RestartFailedBody": "تم إلغاء عملية الاستعادة ولم يتم تغيير البيانات الحالية.\n\n{0}",
     "Settings.DataBackup.RestoreAppliedTitle": "تمت استعادة بيانات DeskBox",
@@ -1266,9 +1238,6 @@
     "Settings.About.Website": "الموقع الرسمي",
     "Settings.About.WebsiteDescription": "عرض التنزيلات وسجلات التغيير وملاحظات المنتج",
     "Settings.About.FeedbackTitle": "ردود الفعل",
-<<<<<<< HEAD
-    "Settings.About.FeedbackDescription": "إذا واجهت مشكلة، فلا تتردد في الاتصال بي عن طريق البريد الإلكتروني",
-=======
     "Settings.About.FeedbackDescription": "ملاحظات مجهولة — دون تسجيل دخول أو بريد إلكتروني. تصفّح جدار الملاحظات العام على deskbox.fun.",
     "Common.Close": "إغلاق",
     "Settings.About.FeedbackSendButton": "إرسال ملاحظات",
@@ -1301,7 +1270,6 @@
     "Feedback.Status.InProgress": "قيد المعالجة",
     "Feedback.Status.Done": "مكتمل",
     "Feedback.Status.Wontfix": "لن تتم معالجته",
->>>>>>> upstream/main
     "Settings.About.Repository": "مستودع مفتوح المصدر",
     "Settings.About.RepositoryDescription": "عرض التعليمات البرمجية أو الإبلاغ عن المشكلات أو المساهمة في التحسينات",
     "Settings.About.StoreSupportTitle": "دعم DeskBox",
@@ -1334,8 +1302,6 @@
     "Settings.Dialog.MigrateFailedBody": "لم يتم تحديث مسار التخزين الافتراضي.\n\n{0}",
     "Settings.Dialog.MigrateCompleteTitle": "اكتمل النقل",
     "Settings.Dialog.MigrateCompleteBody": "تم تحديث مسار التخزين الافتراضي. تم نقل عناصر واجهة المستخدم المُدارة {0} التي تتبع المسار الافتراضي واختصارات تعيين المجلدات المتزامنة.\n\nالمسار القديم:\n{1}\n\nالمسار الجديد:\n{2}",
-<<<<<<< HEAD
-=======
     "Settings.Dialog.MigrateResidueTitle": "اكتمل الترحيل مع بقاء مجلدات قديمة",
     "Settings.Dialog.MigrateResidueBody": "الملفات كاملة في الموقع الجديد، لكن تعذر إزالة {0} من المجلدات القديمة تلقائيًا (الملف قيد الاستخدام أو للقراءة فقط).\n\nالمسار القديم:\n{1}\n\nهل تريد نقل هذه المجلدات المتبقية إلى سلة المحذوفات؟",
     "Settings.Dialog.MigrateResidueCleanButton": "نقل إلى سلة المحذوفات",
@@ -1351,7 +1317,6 @@
     "Settings.Dialog.MigrateRollbackRetryButton": "إعادة محاولة الإرجاع",
     "Settings.Dialog.MigrateRollbackRetryComplete": "تمت إعادة جميع المجلدات المتبقية إلى موقعها الأصلي.",
     "Settings.Dialog.MigrateRollbackRetryPartial": "تعذّرت إعادة {0} مجلد(ات) بعد (قيد الاستخدام أو نُقلت مسبقًا):",
->>>>>>> upstream/main
     "Settings.Dialog.PinQuickAccessTitle": "مثبت للوصول السريع",
     "Settings.Dialog.PinQuickAccessBody": "طلب DeskBox تثبيت المجلد على File Explorer Quick Access. يمكنك إدخاله من الجانب الأيسر لمنتقي الملفات عند تحميل الملفات.",
     "Settings.Dialog.PinQuickAccessFailedTitle": "فشل تثبيت الوصول السريع",
@@ -1554,11 +1519,8 @@
     "Widget.Tooltip.Add": "جديد",
     "Widget.Compact.Collapse": "طي القطعة",
     "Widget.Compact.Expand": "قم بتوسيع القطعة",
-<<<<<<< HEAD
     "Widget.Compact.ExpansionSpaceInsufficient": "لا توجد مساحة كافية للتوسّع في الاتجاه المحدد. انقل الكبسولة وحاول مرة أخرى.",
-=======
     "Widget.Compact.ExpansionDirection.FollowGlobal": "اتباع الإعداد العام ({0})",
->>>>>>> upstream/main
     "Widget.Compact.Move": "اسحب القطعة",
     "Widget.Compact.MoveOrCollapse": "اسحب القطعة؛ انقر لطي",
     "Widget.Compact.MoveBar": "اسحب شريط المكونات",
@@ -1641,15 +1603,11 @@
     "Widget.Stack.Category.PreviousThirtyDays": "30 يومًا السابقة",
     "Widget.Stack.Category.Earlier": "في وقت سابق",
     "Widget.Open": "مفتوح",
-<<<<<<< HEAD
     "Widget.OpenItemDispatched": "قبل Windows طلب فتح الملف.",
-    "Widget.OpenItemBusy": "لا يزال طلب فتح آخر قيد المعالجة. حاول مرة أخرى بعد قليل.",
-=======
+    "Widget.OpenItemBusy": "لا يزال طلب فتح آخر قيد المعالجة. حاول مرة أخرى بعد قليل. إذا تكرر ذلك، فقد تكون خدمة Shell في Windows غير مستجيبة — إعادة تشغيل مستكشف Windows تحل المشكلة.",
     "Widget.DropOnShortcutCannotOpen": "لا يمكن لـ “{0}” فتح هذا الملف",
     "Widget.DropOnShortcutOpenWith": "فتح باستخدام “{0}”",
     "Widget.OpenItemShortcutTargetMissing": "لم يعد هدف هذا الاختصار موجودًا. تم تكليف Windows بمعالجته.",
-    "Widget.OpenItemBusy": "لا يزال طلب فتح آخر قيد المعالجة. حاول مرة أخرى بعد قليل. إذا تكرر ذلك، فقد تكون خدمة Shell في Windows غير مستجيبة — إعادة تشغيل مستكشف Windows تحل المشكلة.",
->>>>>>> upstream/main
     "Widget.OpenItemFailed": "لا يمكن فتح هذا الملف. لا يجوز تعيين أي تطبيق افتراضي.",
     "Widget.ShowInExplorer": "فتح موقع الملف",
     "Widget.CopyPath": "نسخ المسار",
@@ -1665,14 +1623,11 @@
     "Widget.MoveBackToDesktopFailed": "فشل الرجوع إلى سطح المكتب",
     "Widget.MoveToDesktopFailed": "فشل النقل إلى سطح المكتب",
     "Widget.NoItemsMoved": "لم يتم نقل أي عناصر",
-<<<<<<< HEAD
-=======
     "Widget.ImportFailed": "تعذّر استيراد العناصر المسحوبة.",
     "Widget.ImportPartialFailure": "تم استيراد {0} من {1} عنصرًا؛ وتعذّر استيراد الباقي.",
     "Widget.FileActionFailed": "تعذّر إكمال إجراء الملف.",
     "Widget.ImportSkippedUndisplayable": "تم تخطي {0} من العناصر التي لا يمكن للصندوق عرضها (تبقى الملفات المخفية، مثلاً، في مكانها).",
     "Widget.ImportBlockedUndisplayable": "تم إلغاء الإفلات: {0} من العناصر لا يمكن عرضها في الصندوق (تبقى الملفات المخفية، مثلاً، في مكانها).",
->>>>>>> upstream/main
     "Widget.CannotMoveToFolder": "لا يمكن النقل إلى هذا المجلد",
     "Widget.CopyToFolder": "نسخ إلى \"{0}\"",
     "Widget.MoveToFolder": "الانتقال إلى \"{0}\"",
@@ -1687,15 +1642,10 @@
     "Widget.CreateFolderFailed": "فشل إنشاء المجلد",
     "Widget.DeleteFailed": "فشل الحذف",
     "Widget.RenameFailed": "فشلت إعادة التسمية",
-<<<<<<< HEAD
     "Widget.Rename.ExtensionChangeWarning": "في حالة تغيير امتداد اسم الملف، قد يصبح الملف غير قابل للاستخدام. هل تريد بالتأكيد تغييره؟",
     "Widget.DeleteWidgetFailed": "فشل حذف القطعة",
-=======
     "Widget.RenameFailedWithReason": "فشلت إعادة التسمية: {0}",
-    "Widget.Rename.ExtensionChangeWarning": "في حالة تغيير امتداد اسم الملف، قد يصبح الملف غير قابل للاستخدام. هل تريد بالتأكيد تغييره؟",
-    "Widget.DeleteWidgetFailed": "فشل حذف القطعة",
     "Widget.DeleteWidgetFailedWithReason": "فشل حذف القطعة: {0}",
->>>>>>> upstream/main
     "Widget.PasteFailed": "فشل اللصق",
     "Widget.RefreshFailed": "فشل التحديث",
     "Widget.NoCopyableItems": "لا توجد عناصر قابلة للنسخ",
@@ -1723,11 +1673,7 @@
     "Widget.DeleteWidgetNote": "إغلاق هذه القطعة فقط. لن يتغير المجلد وملفاته.",
     "Widget.DeleteWidgetConfirm": "إغلاق القطعة",
     "Widget.DeleteManagedInfo": "ماذا يجب أن يحدث للملفات الموجودة في هذه القطعة؟",
-<<<<<<< HEAD
-    "Widget.KeepManagedFolder": "احتفظ بالملفات",
-=======
     "Widget.KeepManagedFolder": "احتفظ بالملفات (يبقى المجلد في مكانه)",
->>>>>>> upstream/main
     "Widget.MoveBackThenDeleteFolder": "نقل الملفات إلى سطح المكتب",
     "Widget.DeleteFolderToRecycleBin": "احذف جميع الملفات أيضًا",
     "Widget.DeleteManagedFolderConfirmTitle": "هل تريد نقل \"{0}\" إلى سلة المحذوفات؟",
@@ -1735,15 +1681,12 @@
     "Widget.DeleteManagedFolderConfirmMessageUnknownCount": "سيتم إغلاق الأداة وسينتقل المجلد بأكمله ومحتوياته إلى سلة المحذوفات.\n\n{0}\n\nيمكنك استعادته من هناك.",
     "Widget.Error.OperationIncomplete": "لم تكتمل العملية.",
     "Widget.Error.FileWidgetPathConflict": "لا يمكن استخدام هذا المجلد لأن مساره هو نفس مسار تخزين عنصر واجهة المستخدم \"{0}\" أو يحتوي عليه أو يحتوي عليه. اختر مجلدًا غير متداخل.",
-<<<<<<< HEAD
-=======
     "Widget.Error.FileWidgetPathConflictSameFolder": "لا يمكن استخدام هذا المجلد: إنه نفس مجلد مسار التخزين الخاص بـ{0} («{1}»). يحتاج التخزين المُدار إلى دليل خاص؛ اختر مجلدًا آخر.",
     "Widget.Error.FileWidgetPathConflictInsideOther": "لا يمكن استخدام هذا المجلد: يقع داخل مسار التخزين «{1}» الخاص بـ{0}. يحتاج التخزين المُدار إلى شجرة أدلة خاصة حتى لا تتقاطع عملية الترحيل والتنظيف أبدًا. وتُسمح بالتعيين الأب/الابن بين أدوات المجلدات العادية.",
     "Widget.Error.FileWidgetPathConflictContainsOther": "لا يمكن استخدام هذا المجلد: يحتوي على مسار التخزين «{1}» الخاص بـ{0}. يحتاج التخزين المُدار إلى شجرة أدلة خاصة حتى لا تتقاطع عملية الترحيل والتنظيف أبدًا. وتُسمح بالتعيين الأب/الابن بين أدوات المجلدات العادية.",
     "Widget.Error.FileWidgetPathConflictUnresolvable": "لا يمكن استخدام هذا المجلد: يتداخل مع مسار التخزين «{1}» الخاص بـ{0}، أو لا يمكن التحقق من التداخل بأمان. اختر مجلدًا غير متداخل.",
     "Widget.MapFolder.ConflictWidgetHint": "هذا المجلد مستخدم بالفعل بواسطة الأداة \"{0}\"؛ تم فتح تلك الأداة لك.",
     "Widget.MapFolder.ConflictRootHint": "هذا المجلد يتداخل مع مجلد التخزين. تم فتح إعدادات التخزين لتغيير موقع التخزين أو اختيار مجلد آخر.",
->>>>>>> upstream/main
     "Widget.Error.UnsafeFolderTransfer": "لا يمكن نسخ مجلد أو نقله إلى نفسه أو إلى أحد مجلداته الفرعية.",
     "Widget.Error.OperationCanceled": "تم إلغاء العملية.",
     "Widget.Error.AccessDenied": "DeskBox ليس لديه الإذن لإنهاء هذه العملية.\n\n{0}",
@@ -1759,10 +1702,7 @@
     "Widget.Error.ManagedFolderStillActive": "لا يزال هذا المجلد ينتمي إلى عنصر واجهة مستخدم مُدار موجود ولا يمكن تنظيفه باعتباره معزولًا.",
     "Widget.Error.ManagedFolderActionOnlyDefault": "يمكن فقط لعناصر واجهة المستخدم المُدارة ضمن مسار التخزين الافتراضي مزامنة معالجة المجلد.",
     "Widget.Error.ManagedFolderNameExists": "هناك عنصر واجهة مستخدم مُدار بهذا الاسم موجود بالفعل. اختر اسمًا مختلفًا.",
-<<<<<<< HEAD
-=======
     "Widget.Error.ManagedFolderNameUnavailable": "لا يمكن استخدام هذا الاسم: يوجد عنصر بنفس الاسم بالفعل في مجلد التخزين ولا يمكن دمجه تلقائيًا. اختر اسمًا آخر.",
->>>>>>> upstream/main
     "QuickCapture.Name": "التقاط سريع",
     "QuickCapture.InputPlaceholder": "التقط شيئا...",
     "QuickCapture.AddInput": "إضافة سجل",
@@ -2085,12 +2025,9 @@
     "Settings.Search.MaxResults.Title": "الحد الأقصى لنتائج البحث",
     "Settings.Search.MaxResults.Description": "الحد الأقصى لعدد النتائج المعروضة لكل بحث",
     "Settings.Search.Hotkey.CustomTitle": "مفتاح البحث السريع المخصص",
-<<<<<<< HEAD
-=======
     "Settings.Search.Hotkey.PresetsTitle": "الاختصار",
     "Settings.Search.Hotkey.Status.GlobalHotkeyConflict": "يستخدم الاختصار الرئيسي لـ DeskBox هذا الاختصار بالفعل.",
     "Settings.GlobalHotkey.Status.SearchHotkeyConflict": "يستخدم اختصار البحث هذا الاختصار بالفعل.",
->>>>>>> upstream/main
     "Settings.Search.Hotkey.ChangeTooltip": "انقر، ثم اضغط على مجموعة المفاتيح الجديدة",
     "Settings.Search.Hotkey.ResetTooltip": "استعادة مفتاح التشغيل السريع الافتراضي",
     "Settings.Search.Hotkey.Recording": "اضغط على مجموعة المفاتيح...",
@@ -2700,13 +2637,10 @@
     "Glance.Speed.Standard": "قياسي",
     "Glance.Speed.Relaxed": "هادئ",
     "Glance.Typography.Title": "حجم الخط",
-<<<<<<< HEAD
-=======
     "Glance.Typography.TimeFormat": "تنسيق الوقت",
     "Glance.Typography.FollowSystem": "اتباع النظام",
     "Glance.Typography.Hour24": "تنسيق 24 ساعة",
     "Glance.Typography.Hour12": "تنسيق 12 ساعة",
->>>>>>> upstream/main
     "Glance.Typography.Font": "الخط",
     "Glance.Speed.Title": "سرعة الانتقال",
     "Glance.Typography.SystemDefault": "افتراضي النظام",
@@ -2753,7 +2687,6 @@
     "Widget.MoreSystemOperations": "المزيد من عمليات النظام",
     "Settings.ManagedPath.DesktopShortcut.Title": "اختصار مجلد التخزين على سطح المكتب",
     "Settings.ManagedPath.DesktopShortcut.Description": "ينشئ اختصارًا لمجلد التخزين الحالي. إذا حذفته، فلن يعيد DeskBox إنشاءه.",
-<<<<<<< HEAD
     "Settings.Animation.FrameRate.Title": "معدل إطارات الحركة",
     "Settings.Animation.FrameRate.Description": "إيقاع فتح/طي الكبسولات؛ معدل الإطارات الفعلي هو معدل التحديث مقسومًا على المستوى ولا يتجاوزه",
     "Settings.QuickCapture.RecordColors.Title": "ألوان السجلات",
@@ -2770,47 +2703,12 @@
     "Startup.Failure.Body": "فشل بدء التشغيل في مرحلة \"{0}\". يتم الاحتفاظ بالودجات والإعدادات المطبقة بالفعل. تم تسجيل الخطأ في السجل.",
     "Startup.Failure.Phase.Core": "الإعدادات والخدمات",
     "Startup.Failure.Phase.Widgets": "استعادة الودجات",
-    "Common.Close": "إغلاق",
     "Common.More": "المزيد",
     "Settings.ManagedPath.DesktopShortcut.StatusCreated": "تم إنشاء اختصار سطح المكتب",
     "Settings.ManagedPath.DesktopShortcut.StatusNotCreated": "لا يوجد اختصار على سطح المكتب",
     "Settings.ManagedPath.DesktopShortcut.Remove": "إزالة",
-    "Settings.Performance.ImmediateHiddenWorkingSetTrim.Title": "تقليل الذاكرة فور الإخفاء (تجريبي)",
-    "Settings.Performance.ImmediateHiddenWorkingSetTrim.Description": "يقلل الذاكرة المقيمة بمجرد انتهاء حركة إخفاء جميع عناصر الواجهة. قد يستغرق إظهارها مجددًا وقتًا أطول قليلًا.",
     "Settings.FileWidget.SystemContextMenu.Title": "قائمة سياق Windows",
     "Settings.FileWidget.SystemContextMenu.Description": "النقر بزر الماوس الأيمن على ملف واحد يعرض قائمة Windows الأصلية بدلاً من قائمة DeskBox المدمجة؛ تظل الحزم والتحديد المتعدد يستخدمان القائمة المدمجة",
-    "Settings.Feature.ListTextSize.Title": "List text size",
-    "Settings.Feature.ListTextSize.Description": "Controls text size for feature tile lists",
-    "Settings.Feature.ContentTextSize.Title": "Content text size",
-    "Settings.Feature.ContentTextSize.Description": "Controls text size for feature tile content",
-    "Settings.DataBackup.AutomaticBackup.Title": "نسخ احتياطي تلقائي",
-    "Settings.DataBackup.AutomaticBackup.Description": "ينشئ لقطات محلية للإعدادات وبيانات التطبيق وفق جدول زمني",
-    "Settings.DataBackup.AutomaticBackupInterval.Title": "الفاصل الزمني للنسخ الاحتياطي",
-    "Settings.DataBackup.AutomaticBackupInterval.Description": "عدد مرات إنشاء لقطة تلقائية جديدة",
-    "Settings.DataBackup.AutomaticBackupRetention.Title": "عدد اللقطات المراد الاحتفاظ بها",
-    "Settings.DataBackup.AutomaticBackupRetention.Description": "عند بلوغ الحد، يتم حذف أقدم اللقطات",
-    "Settings.DataBackup.AutomaticBackupDirectory.Title": "مجلد النسخ الاحتياطي",
-    "Settings.DataBackup.AutomaticBackupDirectory.Description": "تُحفظ اللقطات التلقائية هنا؛ الفرغ يعني استخدام مجلد الاسترداد الافتراضي",
-    "Settings.DataBackup.AutomaticBackupDirectory.Change": "تغيير المجلد",
-    "Settings.DataBackup.AutomaticBackupDirectory.Reset": "استخدام المجلد الافتراضي",
-    "Settings.DataBackup.AutomaticBackupDirectory.FallbackTitle": "مجلد النسخ الاحتياطي غير متوفر",
-    "Settings.DataBackup.AutomaticBackupDirectory.FallbackBody": "تعذّر على DeskBox الكتابة في مجلد النسخ الاحتياطي المُعد، فتم حفظ اللقطة في مجلد الاسترداد الافتراضي.",
-    "Settings.DataBackup.AutomaticBackupDirectory.FallbackWarning": "المجلد المُعد غير متوفر حاليًا. يتم حفظ اللقطات في المجلد الافتراضي:\n{0}",
-    "Settings.DataBackup.AutomaticBackupDirectory.InvalidTitle": "لا يمكن استخدام المجلد",
-    "Settings.DataBackup.AutomaticBackupDirectory.InvalidInsideDataRoot": "لا يمكن أن يكون مجلد النسخ الاحتياطي داخل مجلد بيانات DeskBox نفسه.",
-    "Settings.DataBackup.AutomaticBackupDirectory.InvalidPath": "مسار المجلد المحدد غير صالح.",
-    "Settings.DataBackup.Interval.Minutes": "{0} دقيقة",
-    "Settings.DataBackup.Interval.Hour": "ساعة واحدة",
-    "Settings.DataBackup.Interval.Hours": "{0} ساعة",
-    "Settings.DataBackup.Interval.Day": "يوم واحد",
-    "Settings.DataBackup.Interval.Days": "{0} يوم",
-    "Settings.DataBackup.Retention.Count": "الاحتفاظ بـ {0}",
-    "Glance.Typography.TimeFormat": "تنسيق الوقت",
-    "Glance.Typography.FollowSystem": "اتباع النظام",
-    "Glance.Typography.Hour24": "تنسيق 24 ساعة",
-    "Glance.Typography.Hour12": "تنسيق 12 ساعة",
-=======
->>>>>>> upstream/main
     "DesktopOrganization.Public.PersonalCount": "سطح المكتب الشخصي ({0} عنصر)",
     "DesktopOrganization.Public.SharedCount": "سطح المكتب العام ({0} عنصر، مشترك بين الحسابات)",
     "DesktopOrganization.Public.Unavailable": "سطح المكتب العام (غير متاح حاليًا)",

@@ -449,41 +449,10 @@ private string[]? _cachedWeatherRefreshIntervalDisplayNames;
         TodoUseWideDetailPane = _selectedTodoLayoutMode != SettingsService.TodoLayoutModeSinglePane;
         TodoAutoSelectFirstInWideLayout = settings.TodoAutoSelectFirstInWideLayout;
         TodoReminderEnabled = settings.TodoReminderEnabled;
-<<<<<<< HEAD
         var musicSettings = _musicSettingsStore.Load();
         MusicUseArtworkBackdrop = musicSettings.UseArtworkBackdrop;
         MusicEnableCoverHoverMotion = musicSettings.EnableCoverHoverMotion;
         _selectedMusicDisplayMode = SettingsService.NormalizeMusicDisplayMode(musicSettings.DisplayMode);
-WeatherAutoLocation = settings.WeatherAutoLocation;
-WeatherCityName = settings.WeatherCityName;
-_weatherCitySearchText = settings.WeatherCityName;
-_selectedWeatherTemperatureUnit = settings.WeatherTemperatureUnit == SettingsService.WeatherTemperatureUnitFahrenheit
-    ? SettingsService.WeatherTemperatureUnitFahrenheit
-    : SettingsService.WeatherTemperatureUnitCelsius;
-_selectedWeatherWindSpeedUnit = settings.WeatherWindSpeedUnit is SettingsService.WeatherWindSpeedUnitMs or SettingsService.WeatherWindSpeedUnitMph
-    ? settings.WeatherWindSpeedUnit
-    : SettingsService.WeatherWindSpeedUnitKmh;
-_selectedWeatherDefaultView = settings.WeatherDefaultView == SettingsService.WeatherDefaultViewWeek
-    ? SettingsService.WeatherDefaultViewWeek
-    : SettingsService.WeatherDefaultViewToday;
-_selectedWeatherSkin = settings.WeatherSkin == SettingsService.WeatherSkinRich
-    ? SettingsService.WeatherSkinRich
-    : SettingsService.WeatherSkinStandard;
-WeatherShowForecast = settings.WeatherShowForecast;
-WeatherShowSunrise = settings.WeatherShowSunrise;
-WeatherShowUvIndex = settings.WeatherShowUvIndex;
-WeatherShowPrecipitation = settings.WeatherShowPrecipitation;
-WeatherShowHumidity = settings.WeatherShowHumidity;
-WeatherShowWind = settings.WeatherShowWind;
-WeatherShowPressure = settings.WeatherShowPressure;
-_selectedWeatherRefreshInterval = Math.Clamp(
-    settings.WeatherRefreshIntervalMinutes,
-    SettingsService.WeatherRefreshMinMinutes,
-    SettingsService.WeatherRefreshMaxMinutes);
-=======
-        MusicUseArtworkBackdrop = settings.MusicUseArtworkBackdrop;
-        MusicEnableCoverHoverMotion = settings.MusicEnableCoverHoverMotion;
-        _selectedMusicDisplayMode = SettingsService.NormalizeMusicDisplayMode(settings.MusicDisplayMode);
         WeatherAutoLocation = settings.WeatherAutoLocation;
         WeatherCityName = settings.WeatherCityName;
         _weatherCitySearchText = settings.WeatherCityName;
@@ -510,7 +479,6 @@ _selectedWeatherRefreshInterval = Math.Clamp(
             settings.WeatherRefreshIntervalMinutes,
             SettingsService.WeatherRefreshMinMinutes,
             SettingsService.WeatherRefreshMaxMinutes);
->>>>>>> upstream/main
         _isRestoringDefaults = false;
         _selectedTodoNewTaskPosition = NormalizeTodoNewTaskPosition(settings.TodoNewTaskPosition);
         _selectedTodoDefaultFilter = NormalizeTodoDefaultFilter(settings.TodoDefaultFilter);

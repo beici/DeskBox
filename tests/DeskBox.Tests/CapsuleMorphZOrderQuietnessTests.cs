@@ -49,7 +49,7 @@ public sealed class CapsuleMorphZOrderQuietnessTests
     public void ZOrderRaises_NeverRepositionTheSharedExplorerOwner()
     {
         string helper = File.ReadAllText(TestPaths.FromRepository(
-            "src/DeskBox/Helpers/Win32Helper.cs"));
+            "src/DeskBox/Platform/Win32Helper.cs"));
         string convenience = helper[helper.IndexOf(
             "public static void SetWindowToBottom",
             StringComparison.Ordinal)..];

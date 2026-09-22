@@ -174,23 +174,6 @@ public sealed class DesktopDoubleClickActivationService : IDisposable, IHookHeal
         }
     }
 
-    public async Task<bool> RefreshRegistrationAsync()
-    {
-        Stop();
-        if (!_settingsService.Settings.DesktopDoubleClickEnabled)
-        {
-            return true;
-        }
-
-        if (!await TryStartAsync())
-        {
-            App.Log("[DesktopDoubleClick] Hook registration failed");
-            return false;
-        }
-
-        return true;
-    }
-
     public async Task<bool> TrySetEnabledAsync(bool enabled)
     {
         bool previous = _settingsService.Settings.DesktopDoubleClickEnabled;

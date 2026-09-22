@@ -41,13 +41,10 @@
     "Settings.Performance.CacheBudget.Description": "পুনরায় তৈরি করা যায় এমন আইকন, থাম্বনেইল ও ডিকোড করা ছবির ক্যাশ সীমা নিয়ন্ত্রণ করে",
     "Settings.Performance.IdleWorkingSetTrim.Title": "Compress memory when idle",
     "Settings.Performance.IdleWorkingSetTrim.Description": "While widgets are hidden or you are away, page unused memory out to the system; it is read back on demand when you return",
-<<<<<<< HEAD
-=======
     "Settings.Performance.ImmediateHiddenWorkingSetTrim.Title": "লুকানোর সঙ্গে সঙ্গে মেমরি কমান (পরীক্ষামূলক)",
     "Settings.Performance.ImmediateHiddenWorkingSetTrim.Description": "সব উইজেট লুকানোর 3 সেকেন্ড পরে রেসিডেন্ট মেমরি কমায়; দ্রুত লুকানো/দেখানো বারবার হলে ক্লিনআপ পুনরাবৃত্তি হয় না। সেগুলি আবার দেখাতে সামান্য বেশি সময় লাগতে পারে।",
     "Settings.Performance.QuiescenceWorkingSetTrim.Title": "ইন্টারঅ্যাকশনের পরে মেমরি সংকুচিত করুন",
     "Settings.Performance.QuiescenceWorkingSetTrim.Description": "সেটিংস বন্ধ করা, ক্যাপসুল ভাঁজ করা বা ড্র্যাগ শেষ করার কয়েক সেকেন্ড পরে, উইজেট দৃশ্যমান থাকলেও অব্যবহৃত মেমরি সিস্টেমে ফেরত দেওয়া হয়। মেমরি স্পষ্টভাবে বাড়লে এবং কোনো অ্যানিমেশন চলমান না থাকলেই কেবল চলে, তাই বারবার চলে না।",
->>>>>>> upstream/main
     "Settings.Performance.CacheBudget.Small": "ছোট",
     "Settings.Performance.CacheBudget.Balanced": "ভারসাম্যপূর্ণ",
     "Settings.Performance.CacheBudget.Large": "বড়",
@@ -142,7 +139,6 @@
     "Common.Ok": "ঠিক আছে",
     "Common.Cancel": "বাতিল",
     "Common.Save": "সংরক্ষণ",
-<<<<<<< HEAD
     "QuickCapture.ClipboardColor.Menu": "রেকর্ডের রং",
     "QuickCapture.ClipboardColor.FollowTheme": "থিম অনুসরণ করুন",
     "QuickCapture.ClipboardColor.Text": "রেকর্ডের লেখার রং…",
@@ -177,8 +173,6 @@
     "Widget.Margin.Reference.Screen": "পর্দার কিনারা",
     "Widget.Margin.ReferenceFormat": "{0} - {1} থেকে",
     "Widget.Margin.ReferenceHint": "প্রতিটি পাশ তার পাশের নিকটতম উইজেট বা ডেস্কটপ আইকন থেকে মাপা হয়। পাশে কিছু না থাকলেই কেবল পর্দার কিনারা ব্যবহার হয়।",
-=======
->>>>>>> upstream/main
     "Todo.Status.Saved": "কাজ সংরক্ষিত হয়েছে",
     "Todo.Status.MarkedCompleted": "সম্পন্ন হিসেবে চিহ্নিত হয়েছে",
     "Todo.Status.MarkedActive": "সক্রিয় হিসেবে চিহ্নিত হয়েছে",
@@ -455,15 +449,12 @@
     "Settings.TrayIcon.Colorful": "রঙিন",
     "Settings.TrayIcon.Black": "সাদা",
     "Settings.TrayIcon.White": "কালো",
-<<<<<<< HEAD
-=======
     "Settings.WindowShadow.Title": "উইন্ডো শ্যাডো (সিস্টেম)",
     "Settings.WindowShadow.Description": "Windows-ব্যাপী সেটিং — শুধু DeskBox নয়, সব অ্যাপের উইন্ডোর শ্যাডো চালু বা বন্ধ করে",
     "Settings.WindowShadow.Confirm.Title": "Windows ভিজ্যুয়াল এফেক্ট পরিবর্তন করুন",
     "Settings.WindowShadow.Confirm.Body": "এটি Windows-ব্যাপী উইন্ডো শ্যাডো সেটিং পরিবর্তন করে। এটি শুধু DeskBox নয়, এই ডিভাইসের সব অ্যাপের উইন্ডোকে প্রভাবিত করে। চালিয়ে যাবেন?",
     "Settings.WindowShadow.ApplyFailed": "সিস্টেম উইন্ডো শ্যাডো সেটিং পরিবর্তন করা যায়নি (ত্রুটি {0})।",
     "Settings.WindowShadow.ApplyFailedNoEffect": "Windows পরিবর্তনটি গ্রহণ করেছে, কিন্তু এই সেশনে সেটিংটি কার্যকর হয়নি। নীতি বা রিমোট ডেস্কটপ সেশনের কারণে আটকে থাকতে পারে।",
->>>>>>> upstream/main
     "Settings.WidgetLayerMode.Title": "উইজেট স্তর",
     "Settings.WidgetLayerMode.Description": "ডায়নামিক, ডেস্কটপে স্থির বা দ্রুত প্রদর্শনের আচরণ বেছে নিন",
     "Settings.WidgetLayerMode.Dynamic": "গতিশীল স্তর",
@@ -697,13 +688,10 @@
     "Settings.Opacity.Title": "পটভূমির স্বচ্ছতা",
     "Settings.Opacity.Description": "এক্রাইলিক ও একরঙা পটভূমির স্বচ্ছতা সামঞ্জস্য করুন; একরঙা পটভূমি সম্পূর্ণ স্বচ্ছ করা যায়",
     "Settings.IconSize.Title": "আইকনের আকার",
-<<<<<<< HEAD
-=======
     "Settings.Feature.ListTextSize.Title": "List text size",
     "Settings.Feature.ListTextSize.Description": "Controls text size for feature tile lists",
     "Settings.Feature.ContentTextSize.Title": "Content text size",
     "Settings.Feature.ContentTextSize.Description": "Controls text size for feature tile content",
->>>>>>> upstream/main
     "Settings.TextSize.Title": "পাঠ্যের আকার",
     "Settings.HorizontalSpacing.Title": "অনুভূমিক ব্যবধান",
     "Settings.VerticalSpacing.Title": "উল্লম্ব ব্যবধান",
@@ -826,20 +814,13 @@
     "Settings.Section.Interaction": "মিথস্ক্রিয়া",
     "Settings.WidgetLayerMode.QuickReveal": "দ্রুত প্রদর্শন",
     "Settings.GlobalHotkey.PresetsTitle": "শর্টকাট",
-<<<<<<< HEAD
     "Settings.GlobalHotkey.PresetsDescription": "DeskBox দেখানো বা লুকানোর জন্য শর্টকাট বেছে নিন",
-    "Settings.GlobalHotkey.Preset.F7": "F7 (ডিফল্ট)",
-=======
     "Settings.GlobalHotkey.Preset.F7": "F7",
->>>>>>> upstream/main
     "Settings.GlobalHotkey.Preset.DoubleControl": "ডাবল Ctrl",
     "Settings.GlobalHotkey.Preset.AltSpace": "Alt + Space",
     "Settings.GlobalHotkey.Preset.WinSpace": "Win + Space",
     "Settings.GlobalHotkey.Preset.WindowsTap": "Win",
-<<<<<<< HEAD
-=======
     "Settings.GlobalHotkey.Preset.CopilotKey": "Copilot",
->>>>>>> upstream/main
     "Settings.GlobalHotkey.WindowsTapWarning": "DeskBox চলার সময় শুধু Win চাপলে Start-এর বদলে DeskBox খুলবে। Ctrl + Esc দিয়ে Start খোলা যাবে। DeskBox প্রশাসক অধিকার ছাড়াই চলবে।",
     "Settings.GlobalHotkey.AltSpaceWarning": "DeskBox চলার সময় এটি সক্রিয় উইন্ডোর Alt + Space সিস্টেম মেনু প্রতিস্থাপন করে।",
     "Settings.DesktopDoubleClick.Title": "ডেস্কটপের খালি জায়গায় ডাবল-ক্লিক",
@@ -1041,8 +1022,6 @@
     "Settings.Onboarding.Tooltip": "DeskBox শুরু করার নির্দেশিকা খুলুন",
     "Settings.DataBackup.Title": "সেটিংস ও কনটেন্ট ব্যাকআপ",
     "Settings.DataBackup.Description": "সেটিংস, উইজেট, নোট, কাজ ও সংযুক্তির অনুলিপি ব্যাকআপ করে; ফাইল উইজেটের ফাইল এতে থাকে না",
-<<<<<<< HEAD
-=======
     "Settings.DataBackup.AutomaticBackup.Title": "স্বয়ংক্রিয় ব্যাকআপ",
     "Settings.DataBackup.AutomaticBackup.Description": "সময়সূচি অনুযায়ী সেটিংস ও অ্যাপ ডেটার স্থানীয় স্ন্যাপশট তৈরি করে",
     "Settings.DataBackup.AutomaticBackupInterval.Title": "ব্যাকআপ ব্যবধান",
@@ -1065,7 +1044,6 @@
     "Settings.DataBackup.Interval.Day": "1 দিন",
     "Settings.DataBackup.Interval.Days": "{0} দিন",
     "Settings.DataBackup.Retention.Count": "{0}টি রাখুন",
->>>>>>> upstream/main
     "Settings.DataBackup.Export": "ব্যাকআপ রপ্তানি করুন",
     "Settings.DataBackup.Tooltip": "ডেস্কবক্স সেটিংস, টোডো এবং দ্রুত ক্যাপচার একটি অখণ্ডতা-চেক করা জিপ ব্যাকআপ হিসাবে রপ্তানি করুন",
     "Settings.DataBackup.Restore": "ব্যাকআপ পুনরুদ্ধার করুন",
@@ -1093,18 +1071,12 @@
     "Settings.DataBackup.RestoreConfirmTitle": "এই অ্যাপ ডেটা পুনরুদ্ধার করবেন?",
     "Settings.DataBackup.RestoreConfirmBody": "ব্যাকআপ সময়: {0}\nডেস্কবক্স সংস্করণ: {1}\nফাইল: {2} ({3})\n\nঅন্তর্ভুক্ত: সেটিংস, উইজেট কনফিগারেশন, টোডো, দ্রুত ক্যাপচার, এবং ডেস্কবক্স দ্বারা সংরক্ষিত সংযুক্তি।\nঅন্তর্ভুক্ত নয়: ফাইল উইজেট এবং স্টোরেজ ফোল্ডারে প্রকৃত ফাইল, বাহ্যিকভাবে লিঙ্ক করা ফাইল, স্টার্টআপ নিবন্ধন, বা দ্রুত অ্যাক্সেসের অবস্থা।\n\nডেস্কবক্স বর্তমান ডেটা সংরক্ষণ করবে, পুনরায় চালু করবে এবং এই ব্যাকআপের মাধ্যমে তার বর্তমান অ্যাপ ডেটা প্রতিস্থাপন করবে।{4}",
     "Settings.DataBackup.LegacyIntegrityWarning": "এটি প্রতি-ফাইল SHA-256 ইন্টিগ্রিটি ম্যানিফেস্ট ছাড়াই একটি লিগ্যাসি ব্যাকআপ৷ ডেস্কবক্স এখনও এর গঠন এবং মূল ডেটা যাচাই করবে।",
-<<<<<<< HEAD
     "Settings.DataBackup.RestoreConfirmButton": "পুনরুদ্ধার করুন এবং পুনরায় চালু করুন",
     "Settings.DataBackup.RestoreFailedTitle": "এই ব্যাকআপ পুনরুদ্ধার করা যায়নি",
     "Settings.DataBackup.RestoreFailedBody": "ব্যাকআপটি বৈধতা পাস করেনি বা স্টেজ করা যায়নি। বর্তমান ডেটা পরিবর্তন করা হয়নি।\n\n{0}",
-=======
     "Settings.DataBackup.RestoreNewerVersionWarning": "⚠ এই ব্যাকআপটি DeskBox-এর নতুন সংস্করণ ({0}) দিয়ে তৈরি হয়েছে। এখানে রিস্টোর করলে শুধুমাত্র নতুন সংস্করণের ডেটা হারিয়ে যেতে পারে।",
-    "Settings.DataBackup.RestoreConfirmButton": "পুনরুদ্ধার করুন এবং পুনরায় চালু করুন",
-    "Settings.DataBackup.RestoreFailedTitle": "এই ব্যাকআপ পুনরুদ্ধার করা যায়নি",
-    "Settings.DataBackup.RestoreFailedBody": "ব্যাকআপটি বৈধতা পাস করেনি বা স্টেজ করা যায়নি। বর্তমান ডেটা পরিবর্তন করা হয়নি।\n\n{0}",
     "Settings.DataBackup.RestoreFailedSchemaVersion": "এই ব্যাকআপটি এমন ফরম্যাট সংস্করণ ({0}) ব্যবহার করে যা এই DeskBox সংস্করণ সমর্থন করে না।",
     "Settings.DataBackup.RestoreFailedInvalidManifest": "নির্বাচিত ফাইলটি একটি বৈধ DeskBox ব্যাকআপ নয় (ম্যানিফেস্ট অনুপস্থিত বা ক্ষতিগ্রস্ত)।",
->>>>>>> upstream/main
     "Settings.DataBackup.RestartFailedTitle": "ডেস্কবক্স পুনরায় চালু করা যায়নি",
     "Settings.DataBackup.RestartFailedBody": "পুনরুদ্ধার বাতিল করা হয়েছে এবং বর্তমান ডেটা পরিবর্তন করা হয়নি।\n\n{0}",
     "Settings.DataBackup.RestoreAppliedTitle": "ডেস্কবক্স ডেটা পুনরুদ্ধার করা হয়েছে",
@@ -1266,9 +1238,6 @@
     "Settings.About.Website": "অফিসিয়াল ওয়েবসাইট",
     "Settings.About.WebsiteDescription": "ডাউনলোড, চেঞ্জলগ এবং পণ্য নোট দেখুন",
     "Settings.About.FeedbackTitle": "প্রতিক্রিয়া",
-<<<<<<< HEAD
-    "Settings.About.FeedbackDescription": "আপনি যদি কোনো সমস্যার সম্মুখীন হন, তাহলে নির্দ্বিধায় ইমেলের মাধ্যমে আমার সাথে যোগাযোগ করুন",
-=======
     "Settings.About.FeedbackDescription": "বেনামী মতামত — সাইন-ইন বা ইমেল লাগবে না। deskbox.fun-এ প্রকাশ্য মতামত প্রাচীর দেখুন।",
     "Common.Close": "বন্ধ করুন",
     "Settings.About.FeedbackSendButton": "মতামত পাঠান",
@@ -1301,7 +1270,6 @@
     "Feedback.Status.InProgress": "চলমান",
     "Feedback.Status.Done": "সম্পন্ন",
     "Feedback.Status.Wontfix": "সমাধান করা হবে না",
->>>>>>> upstream/main
     "Settings.About.Repository": "ওপেন সোর্স ভান্ডার",
     "Settings.About.RepositoryDescription": "কোড দেখুন, সমস্যা রিপোর্ট করুন বা উন্নতিতে অবদান রাখুন",
     "Settings.About.StoreSupportTitle": "DeskBox সমর্থন করুন",
@@ -1334,8 +1302,6 @@
     "Settings.Dialog.MigrateFailedBody": "ডিফল্ট স্টোরেজ পাথ আপডেট করা হয়নি।\n\n{0}",
     "Settings.Dialog.MigrateCompleteTitle": "সরান সম্পূর্ণ",
     "Settings.Dialog.MigrateCompleteBody": "ডিফল্ট স্টোরেজ পাথ আপডেট হয়েছে। ডিফল্ট পথ অনুসরণকারী {0}টি পরিচালিত উইজেট সরানো হয়েছে এবং ফোল্ডার-ম্যাপিং শর্টকাট সিঙ্ক করা হয়েছে।\n\nপুরোনো পাথ:\n{1}\n\nনতুন পাথ:\n{2}",
-<<<<<<< HEAD
-=======
     "Settings.Dialog.MigrateResidueTitle": "মাইগ্রেশন সম্পন্ন, পুরোনো ফোল্ডার রয়ে গেছে",
     "Settings.Dialog.MigrateResidueBody": "ফাইলগুলো নতুন অবস্থানে অক্ষত আছে, কিন্তু {0} টি পুরোনো ফোল্ডার স্বয়ংক্রিয়ভাবে সরানো যায়নি (ফাইল ব্যবহারে ছিল বা রিড-ওনলি)।\n\nপুরোনো পথ:\n{1}\n\nঅবশিষ্ট ফোল্ডারগুলো রিসাইকেল বিনে সরাতে চান?",
     "Settings.Dialog.MigrateResidueCleanButton": "রিসাইকেল বিনে সরান",
@@ -1351,7 +1317,6 @@
     "Settings.Dialog.MigrateRollbackRetryButton": "পুনরায় ফেরানোর চেষ্টা",
     "Settings.Dialog.MigrateRollbackRetryComplete": "বাকি সব ফোল্ডার মূল স্থানে ফিরিয়ে আনা হয়েছে।",
     "Settings.Dialog.MigrateRollbackRetryPartial": "এখনও {0} টি ফোল্ডার মূল স্থানে ফেরানো যায়নি (সম্ভবত ব্যবহৃত হচ্ছে বা ইতিমধ্যে সরানো হয়েছে):",
->>>>>>> upstream/main
     "Settings.Dialog.PinQuickAccessTitle": "দ্রুত অ্যাক্সেসে পিন করা হয়েছে৷",
     "Settings.Dialog.PinQuickAccessBody": "DeskBox অনুরোধ করেছে যে ফোল্ডারটিকে ফাইল এক্সপ্লোরার দ্রুত অ্যাক্সেসে পিন করা হবে৷ ফাইল আপলোড করার সময় আপনি ফাইল পিকারের বাম দিক থেকে এটি প্রবেশ করতে পারেন।",
     "Settings.Dialog.PinQuickAccessFailedTitle": "দ্রুত অ্যাক্সেসে পিন করা ব্যর্থ হয়েছে৷",
@@ -1554,11 +1519,8 @@
     "Widget.Tooltip.Add": "নতুন",
     "Widget.Compact.Collapse": "উইজেট সঙ্কুচিত করুন",
     "Widget.Compact.Expand": "উইজেট প্রসারিত করুন",
-<<<<<<< HEAD
     "Widget.Compact.ExpansionSpaceInsufficient": "নির্বাচিত দিকে প্রসারিত করার জন্য পর্যাপ্ত জায়গা নেই। ক্যাপসুলটি সরিয়ে আবার চেষ্টা করুন।",
-=======
     "Widget.Compact.ExpansionDirection.FollowGlobal": "গ্লোবাল সেটিং অনুসরণ ({0})",
->>>>>>> upstream/main
     "Widget.Compact.Move": "উইজেট টেনে আনুন",
     "Widget.Compact.MoveOrCollapse": "উইজেট টানুন; ভেঙে পড়তে ক্লিক করুন",
     "Widget.Compact.MoveBar": "কম্পোনেন্ট বার টানুন",
@@ -1641,15 +1603,11 @@
     "Widget.Stack.Category.PreviousThirtyDays": "আগের 30 দিন",
     "Widget.Stack.Category.Earlier": "এর আগে",
     "Widget.Open": "খোলা",
-<<<<<<< HEAD
     "Widget.OpenItemDispatched": "Windows খোলার অনুরোধ গ্রহণ করেছে।",
-    "Widget.OpenItemBusy": "অন্য একটি খোলার অনুরোধ প্রক্রিয়াধীন। কিছুক্ষণ পরে আবার চেষ্টা করুন।",
-=======
+    "Widget.OpenItemBusy": "অন্য একটি খোলার অনুরোধ প্রক্রিয়াধীন। কিছুক্ষণ পরে আবার চেষ্টা করুন। এটি বারবার ঘটলে Windows Shell সাড়া দিচ্ছে না এমন হতে পারে — ফাইল এক্সপ্লোরার পুনরায় চালু করলে ঠিক হয়ে যাবে।",
     "Widget.DropOnShortcutCannotOpen": "“{0}” এই ফাইলটি খুলতে পারে না",
     "Widget.DropOnShortcutOpenWith": "“{0}” দিয়ে খুলুন",
     "Widget.OpenItemShortcutTargetMissing": "এই শর্টকাটের লক্ষ্য আর নেই। এটি Windows-কে দেওয়া হয়েছে।",
-    "Widget.OpenItemBusy": "অন্য একটি খোলার অনুরোধ প্রক্রিয়াধীন। কিছুক্ষণ পরে আবার চেষ্টা করুন। এটি বারবার ঘটলে Windows Shell সাড়া দিচ্ছে না এমন হতে পারে — ফাইল এক্সপ্লোরার পুনরায় চালু করলে ঠিক হয়ে যাবে।",
->>>>>>> upstream/main
     "Widget.OpenItemFailed": "এই ফাইলটি খুলতে পারেনি৷ কোনো ডিফল্ট অ্যাপ সেট করা যাবে না।",
     "Widget.ShowInExplorer": "ফাইলের অবস্থান খুলুন",
     "Widget.CopyPath": "কপি পাথ",
@@ -1665,14 +1623,11 @@
     "Widget.MoveBackToDesktopFailed": "ডেস্কটপে ফিরে যাওয়া ব্যর্থ হয়েছে৷",
     "Widget.MoveToDesktopFailed": "ডেস্কটপে সরানো ব্যর্থ হয়েছে৷",
     "Widget.NoItemsMoved": "কোন আইটেম সরানো হয়নি",
-<<<<<<< HEAD
-=======
     "Widget.ImportFailed": "ড্রপ করা আইটেমগুলো ইমপোর্ট করা যায়নি।",
     "Widget.ImportPartialFailure": "{1}টির মধ্যে {0}টি আইটেম ইমপোর্ট হয়েছে; বাকিগুলো ইমপোর্ট করা যায়নি।",
     "Widget.FileActionFailed": "ফাইল অ্যাকশন সম্পন্ন করা যায়নি।",
     "Widget.ImportSkippedUndisplayable": "{0}টি আইটেম বাদ দেওয়া হয়েছে যা বক্সে দেখানো যায় না (যেমন লুকানো ফাইল তাদের জায়গায় থাকে)।",
     "Widget.ImportBlockedUndisplayable": "ড্রপ বাতিল হয়েছে: এর মধ্যে {0}টি আইটেম বক্সে দেখানো যায় না (যেমন লুকানো ফাইল তাদের জায়গায় থাকে)।",
->>>>>>> upstream/main
     "Widget.CannotMoveToFolder": "এই ফোল্ডারে সরানো যাবে না৷",
     "Widget.CopyToFolder": "\"{0}\" এ কপি করুন",
     "Widget.MoveToFolder": "\"{0}\" এ যান",
@@ -1687,15 +1642,10 @@
     "Widget.CreateFolderFailed": "ফোল্ডার তৈরি করা ব্যর্থ হয়েছে৷",
     "Widget.DeleteFailed": "মুছে ফেলতে ব্যর্থ হয়েছে",
     "Widget.RenameFailed": "পুনঃনামকরণ ব্যর্থ হয়েছে৷",
-<<<<<<< HEAD
     "Widget.Rename.ExtensionChangeWarning": "কোনো ফাইল নাম এক্সটেনশন পরিবর্তন করলে ফাইলটি ব্যবহারযোগ্য নাও হতে পারে। আপনি কি সত্যিই এটি পরিবর্তন করতে চান?",
     "Widget.DeleteWidgetFailed": "উইজেট মুছে ফেলতে ব্যর্থ হয়েছে৷",
-=======
     "Widget.RenameFailedWithReason": "পুনঃনামকরণ ব্যর্থ হয়েছে: {0}",
-    "Widget.Rename.ExtensionChangeWarning": "কোনো ফাইল নাম এক্সটেনশন পরিবর্তন করলে ফাইলটি ব্যবহারযোগ্য নাও হতে পারে। আপনি কি সত্যিই এটি পরিবর্তন করতে চান?",
-    "Widget.DeleteWidgetFailed": "উইজেট মুছে ফেলতে ব্যর্থ হয়েছে৷",
     "Widget.DeleteWidgetFailedWithReason": "উইজেট মুছে ফেলতে ব্যর্থ হয়েছে: {0}",
->>>>>>> upstream/main
     "Widget.PasteFailed": "আটকানো ব্যর্থ হয়েছে৷",
     "Widget.RefreshFailed": "রিফ্রেশ ব্যর্থ হয়েছে",
     "Widget.NoCopyableItems": "কোন অনুলিপিযোগ্য আইটেম",
@@ -1723,11 +1673,7 @@
     "Widget.DeleteWidgetNote": "শুধুমাত্র এই উইজেট বন্ধ করুন. ফোল্ডার এবং তার ফাইল পরিবর্তন হবে না.",
     "Widget.DeleteWidgetConfirm": "উইজেট বন্ধ করুন",
     "Widget.DeleteManagedInfo": "এই উইজেটের ফাইলগুলির কি হওয়া উচিত?",
-<<<<<<< HEAD
-    "Widget.KeepManagedFolder": "ফাইল রাখুন",
-=======
     "Widget.KeepManagedFolder": "ফাইল রাখুন (ফোল্ডার জায়গায়ই থাকবে)",
->>>>>>> upstream/main
     "Widget.MoveBackThenDeleteFolder": "ফাইলগুলিকে ডেস্কটপে সরান",
     "Widget.DeleteFolderToRecycleBin": "এছাড়াও সমস্ত ফাইল মুছে দিন",
     "Widget.DeleteManagedFolderConfirmTitle": "রিসাইকেল বিনে \"{0}\" সরান?",
@@ -1735,15 +1681,12 @@
     "Widget.DeleteManagedFolderConfirmMessageUnknownCount": "উইজেটটি বন্ধ হয়ে যাবে এবং পুরো ফোল্ডার এবং এর বিষয়বস্তু রিসাইকেল বিনে চলে যাবে।\n\n{0}\n\nআপনি সেখান থেকে এটি পুনরুদ্ধার করতে পারেন।",
     "Widget.Error.OperationIncomplete": "অপারেশন সম্পূর্ণ হয়নি।",
     "Widget.Error.FileWidgetPathConflict": "এই ফোল্ডারটি ব্যবহার করা যাবে না কারণ এর পাথ ফাইল উইজেট \"{0}\" এর স্টোরেজ পাথের মতই, ধারণ করে বা ধারণ করে। একটি নন-ওভারল্যাপিং ফোল্ডার বেছে নিন।",
-<<<<<<< HEAD
-=======
     "Widget.Error.FileWidgetPathConflictSameFolder": "এই ফোল্ডারটি ব্যবহার করা যাবে না: এটি {0}-এর সংরক্ষণ পথ «{1}»-এর সাথে একই ফোল্ডার। পরিচালিত সংরক্ষণের জন্য একচ্ছত্র ডিরেক্টরি দরকার; অন্য ফোল্ডার বেছে নিন।",
     "Widget.Error.FileWidgetPathConflictInsideOther": "এই ফোল্ডারটি ব্যবহার করা যাবে না: এটি {0}-এর সংরক্ষণ পথ «{1}»-এর ভেতরে রয়েছে। মাইগ্রেশন ও পরিষ্কারকরণ যেন একে অপরকে স্পর্শ না করে সেজন্য পরিচালিত সংরক্ষণের একচ্ছত্র ডিরেক্টরি ট্রি দরকার। সাধারণ ফোল্ডার উইজেটের মধ্যে পিতা/পুত্র ম্যাপিং এই বিধিনিষেধের বাইরে।",
     "Widget.Error.FileWidgetPathConflictContainsOther": "এই ফোল্ডারটি ব্যবহার করা যাবে না: এটি {0}-এর সংরক্ষণ পথ «{1}» ধারণ করে। মাইগ্রেশন ও পরিষ্কারকরণ যেন একে অপরকে স্পর্শ না করে সেজন্য পরিচালিত সংরক্ষণের একচ্ছত্র ডিরেক্টরি ট্রি দরকার। সাধারণ ফোল্ডার উইজেটের মধ্যে পিতা/পুত্র ম্যাপিং এই বিধিনিষেধের বাইরে।",
     "Widget.Error.FileWidgetPathConflictUnresolvable": "এই ফোল্ডারটি ব্যবহার করা যাবে না: এটি {0}-এর সংরক্ষণ পথ «{1}»-এর সাথে ওভারল্যাপ করে, বা ওভারল্যাপ নিরাপদে যাচাই করা যায় না। ওভারল্যাপ ছাড়া ফোল্ডার বেছে নিন।",
     "Widget.MapFolder.ConflictWidgetHint": "এই ফোল্ডারটি ইতিমধ্যেই \"{0}\" উইজেট ব্যবহার করছে; সেই উইজেটটি খুলে দেওয়া হয়েছে।",
     "Widget.MapFolder.ConflictRootHint": "এই ফোল্ডারটি সংগ্রহ ফোল্ডারের সাথে ওভারল্যাপ করছে। সংগ্রহ সেটিংস খুলে দেওয়া হয়েছে যাতে সংগ্রহের অবস্থান বদলানো বা অন্য ফোল্ডার বেছে নেওয়া যায়।",
->>>>>>> upstream/main
     "Widget.Error.UnsafeFolderTransfer": "একটি ফোল্ডার অনুলিপি করা যাবে না বা নিজের মধ্যে বা তার একটি সাবফোল্ডারে সরানো যাবে না।",
     "Widget.Error.OperationCanceled": "অপারেশন বাতিল করা হয়।",
     "Widget.Error.AccessDenied": "DeskBox-এর এই অপারেশন শেষ করার অনুমতি নেই।\n\n{0}",
@@ -1759,10 +1702,7 @@
     "Widget.Error.ManagedFolderStillActive": "এই ফোল্ডারটি এখনও একটি বিদ্যমান পরিচালিত উইজেটের অন্তর্গত এবং অনাথ হিসাবে পরিষ্কার করা যাবে না৷",
     "Widget.Error.ManagedFolderActionOnlyDefault": "শুধুমাত্র ডিফল্ট স্টোরেজ পাথের অধীনে পরিচালিত উইজেটগুলি ফোল্ডার হ্যান্ডলিং সিঙ্ক্রোনাইজ করতে পারে।",
     "Widget.Error.ManagedFolderNameExists": "সেই নামের একটি পরিচালিত উইজেট ইতিমধ্যেই বিদ্যমান। একটি ভিন্ন নাম চয়ন করুন.",
-<<<<<<< HEAD
-=======
     "Widget.Error.ManagedFolderNameUnavailable": "এই নামটি ব্যবহার করা যাবে না: সংরক্ষণ ফোল্ডারে একই নামের আইটেম আছে এবং স্বয়ংক্রিয়ভাবে একত্র করা যায় না। অন্য নাম দিন।",
->>>>>>> upstream/main
     "QuickCapture.Name": "দ্রুত ক্যাপচার",
     "QuickCapture.InputPlaceholder": "কিছু ক্যাপচার...",
     "QuickCapture.AddInput": "রেকর্ড যোগ করুন",
@@ -2085,12 +2025,9 @@
     "Settings.Search.MaxResults.Title": "সর্বোচ্চ অনুসন্ধান ফলাফল",
     "Settings.Search.MaxResults.Description": "সার্চ প্রতি প্রদর্শিত ফলাফলের সর্বোচ্চ সংখ্যা",
     "Settings.Search.Hotkey.CustomTitle": "কাস্টম সার্চ হটকি",
-<<<<<<< HEAD
-=======
     "Settings.Search.Hotkey.PresetsTitle": "শর্টকাট",
     "Settings.Search.Hotkey.Status.GlobalHotkeyConflict": "এই শর্টকাটটি DeskBox-এর প্রধান শর্টকাট দ্বারা ব্যবহৃত হচ্ছে।",
     "Settings.GlobalHotkey.Status.SearchHotkeyConflict": "এই শর্টকাটটি অনুসন্ধান শর্টকাট দ্বারা ব্যবহৃত হচ্ছে।",
->>>>>>> upstream/main
     "Settings.Search.Hotkey.ChangeTooltip": "ক্লিক করুন, তারপর নতুন কী সমন্বয় টিপুন",
     "Settings.Search.Hotkey.ResetTooltip": "ডিফল্ট হটকি পুনরুদ্ধার করুন",
     "Settings.Search.Hotkey.Recording": "একটি কী সমন্বয় টিপুন...",
@@ -2700,13 +2637,10 @@
     "Glance.Speed.Standard": "মানক",
     "Glance.Speed.Relaxed": "ধীর",
     "Glance.Typography.Title": "ফন্টের আকার",
-<<<<<<< HEAD
-=======
     "Glance.Typography.TimeFormat": "সময়ের ফর্ম্যাট",
     "Glance.Typography.FollowSystem": "সিস্টেম অনুসরণ করুন",
     "Glance.Typography.Hour24": "২৪ ঘণ্টা",
     "Glance.Typography.Hour12": "১২ ঘণ্টা",
->>>>>>> upstream/main
     "Glance.Typography.Font": "ফন্ট",
     "Glance.Speed.Title": "ট্রানজিশনের গতি",
     "Glance.Typography.SystemDefault": "সিস্টেম ডিফল্ট",
@@ -2753,7 +2687,6 @@
     "Widget.MoreSystemOperations": "আরও সিস্টেম অপারেশন",
     "Settings.ManagedPath.DesktopShortcut.Title": "ডেস্কটপ স্টোরেজ শর্টকাট",
     "Settings.ManagedPath.DesktopShortcut.Description": "বর্তমান স্টোরেজ ফোল্ডারের একটি শর্টকাট তৈরি করে। আপনি এটি মুছে দিলে DeskBox আবার তৈরি করবে না।",
-<<<<<<< HEAD
     "Settings.Animation.FrameRate.Title": "অ্যানিমেশন ফ্রেম হার",
     "Settings.Animation.FrameRate.Description": "ক্যাপসুল প্রসারণ/সংকোচনের ছন্দ; প্রকৃত ফ্রেম হার রিফ্রেশ হারকে স্তর দিয়ে ভাগ করা মান এবং নির্বাচিত মান অতিক্রম করে না",
     "Settings.QuickCapture.RecordColors.Title": "রেকর্ডের রং",
@@ -2770,47 +2703,12 @@
     "Startup.Failure.Body": "\"{0}\" ধাপে স্টার্টআপ ব্যর্থ হয়েছে। ইতিমধ্যে প্রয়োগ করা উইজেট ও সেটিংস সংরক্ষিত থাকবে। ত্রুটিটি লগে লেখা হয়েছে।",
     "Startup.Failure.Phase.Core": "সেটিংস ও সার্ভিস",
     "Startup.Failure.Phase.Widgets": "উইজেট পুনরুদ্ধার",
-    "Common.Close": "বন্ধ করুন",
     "Common.More": "আরও",
     "Settings.ManagedPath.DesktopShortcut.StatusCreated": "ডেস্কটপ শর্টকাট তৈরি করা হয়েছে",
     "Settings.ManagedPath.DesktopShortcut.StatusNotCreated": "কোনো ডেস্কটপ শর্টকাট নেই",
     "Settings.ManagedPath.DesktopShortcut.Remove": "সরান",
-    "Settings.Performance.ImmediateHiddenWorkingSetTrim.Title": "লুকানোর সঙ্গে সঙ্গে মেমরি কমান (পরীক্ষামূলক)",
-    "Settings.Performance.ImmediateHiddenWorkingSetTrim.Description": "সব উইজেট লুকানোর অ্যানিমেশন শেষ হলেই রেসিডেন্ট মেমরি কমায়। সেগুলি আবার দেখাতে সামান্য বেশি সময় লাগতে পারে।",
     "Settings.FileWidget.SystemContextMenu.Title": "Windows প্রসঙ্গ মেনু",
     "Settings.FileWidget.SystemContextMenu.Description": "একটি একক ফাইলে ডান-ক্লিক করলে DeskBox-এর অন্তর্নির্মিত মেনুর পরিবর্তে Windows-এর নিজস্ব মেনু দেখায়; স্ট্যাক এবং একাধিক নির্বাচনে অন্তর্নির্মিত মেনুই থাকে",
-    "Settings.Feature.ListTextSize.Title": "List text size",
-    "Settings.Feature.ListTextSize.Description": "Controls text size for feature tile lists",
-    "Settings.Feature.ContentTextSize.Title": "Content text size",
-    "Settings.Feature.ContentTextSize.Description": "Controls text size for feature tile content",
-    "Settings.DataBackup.AutomaticBackup.Title": "স্বয়ংক্রিয় ব্যাকআপ",
-    "Settings.DataBackup.AutomaticBackup.Description": "সময়সূচি অনুযায়ী সেটিংস ও অ্যাপ ডেটার স্থানীয় স্ন্যাপশট তৈরি করে",
-    "Settings.DataBackup.AutomaticBackupInterval.Title": "ব্যাকআপ ব্যবধান",
-    "Settings.DataBackup.AutomaticBackupInterval.Description": "কতক্ষণ পরপর নতুন স্বয়ংক্রিয় স্ন্যাপশট তৈরি হয়",
-    "Settings.DataBackup.AutomaticBackupRetention.Title": "যতগুলো স্ন্যাপশট রাখা হবে",
-    "Settings.DataBackup.AutomaticBackupRetention.Description": "সীমা পূর্ণ হলে পুরোনো স্ন্যাপশটগুলো মুছে ফেলা হয়",
-    "Settings.DataBackup.AutomaticBackupDirectory.Title": "ব্যাকআপ ফোল্ডার",
-    "Settings.DataBackup.AutomaticBackupDirectory.Description": "স্বয়ংক্রিয় স্ন্যাপশট এখানে সংরক্ষিত হয়; খালি থাকলে ডিফল্ট রিকভারি ফোল্ডার ব্যবহৃত হয়",
-    "Settings.DataBackup.AutomaticBackupDirectory.Change": "ফোল্ডার পরিবর্তন",
-    "Settings.DataBackup.AutomaticBackupDirectory.Reset": "ডিফল্ট ফোল্ডার ব্যবহার করুন",
-    "Settings.DataBackup.AutomaticBackupDirectory.FallbackTitle": "ব্যাকআপ ফোল্ডার অনুপলব্ধ",
-    "Settings.DataBackup.AutomaticBackupDirectory.FallbackBody": "কনফিগার করা ব্যাকআপ ফোল্ডারে লেখা যায়নি, তাই স্ন্যাপশট ডিফল্ট রিকভারি ফোল্ডারে সংরক্ষণ করা হয়েছে।",
-    "Settings.DataBackup.AutomaticBackupDirectory.FallbackWarning": "কনফিগার করা ফোল্ডারটি এখন অনুপলব্ধ। স্ন্যাপশট ডিফল্ট ফোল্ডারে সংরক্ষিত হচ্ছে:\n{0}",
-    "Settings.DataBackup.AutomaticBackupDirectory.InvalidTitle": "ফোল্ডারটি ব্যবহার করা যাবে না",
-    "Settings.DataBackup.AutomaticBackupDirectory.InvalidInsideDataRoot": "ব্যাকআপ ফোল্ডার DeskBox-এর নিজের ডেটা ফোল্ডারের ভেতরে থাকতে পারে না।",
-    "Settings.DataBackup.AutomaticBackupDirectory.InvalidPath": "নির্বাচিত ফোল্ডারের পাথটি সঠিক নয়।",
-    "Settings.DataBackup.Interval.Minutes": "{0} মিনিট",
-    "Settings.DataBackup.Interval.Hour": "1 ঘণ্টা",
-    "Settings.DataBackup.Interval.Hours": "{0} ঘণ্টা",
-    "Settings.DataBackup.Interval.Day": "1 দিন",
-    "Settings.DataBackup.Interval.Days": "{0} দিন",
-    "Settings.DataBackup.Retention.Count": "{0}টি রাখুন",
-    "Glance.Typography.TimeFormat": "সময়ের ফর্ম্যাট",
-    "Glance.Typography.FollowSystem": "সিস্টেম অনুসরণ করুন",
-    "Glance.Typography.Hour24": "২৪ ঘণ্টা",
-    "Glance.Typography.Hour12": "১২ ঘণ্টা",
-=======
->>>>>>> upstream/main
     "DesktopOrganization.Public.PersonalCount": "ব্যক্তিগত ডেস্কটপ ({0}টি আইটেম)",
     "DesktopOrganization.Public.SharedCount": "সর্বজনীন ডেস্কটপ ({0}টি আইটেম, সব অ্যাকাউন্টে ভাগ করা)",
     "DesktopOrganization.Public.Unavailable": "সর্বজনীন ডেস্কটপ (এখন উপলব্ধ নয়)",

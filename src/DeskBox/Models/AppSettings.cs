@@ -209,6 +209,167 @@ public class AppSettings
 
     /// <inheritdoc cref="TodoSettingsSlice.TodoShowAllTab"/>
     public bool TodoShowAllTab { get => Todo.TodoShowAllTab; set => Todo.TodoShowAllTab = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoShowActiveTab"/>
+    public bool TodoShowActiveTab { get => Todo.TodoShowActiveTab; set => Todo.TodoShowActiveTab = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoShowTodayTab"/>
+    public bool TodoShowTodayTab { get => Todo.TodoShowTodayTab; set => Todo.TodoShowTodayTab = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoShowThisWeekTab"/>
+    public bool TodoShowThisWeekTab { get => Todo.TodoShowThisWeekTab; set => Todo.TodoShowThisWeekTab = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoShowThisMonthTab"/>
+    public bool TodoShowThisMonthTab { get => Todo.TodoShowThisMonthTab; set => Todo.TodoShowThisMonthTab = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoShowImportantTab"/>
+    public bool TodoShowImportantTab { get => Todo.TodoShowImportantTab; set => Todo.TodoShowImportantTab = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoShowCompletedTab"/>
+    public bool TodoShowCompletedTab { get => Todo.TodoShowCompletedTab; set => Todo.TodoShowCompletedTab = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoDefaultFilter"/>
+    public string TodoDefaultFilter { get => Todo.TodoDefaultFilter; set => Todo.TodoDefaultFilter = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoShowCompletedTasks"/>
+    public bool TodoShowCompletedTasks { get => Todo.TodoShowCompletedTasks; set => Todo.TodoShowCompletedTasks = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoItemPreviewLineCount"/>
+    public int TodoItemPreviewLineCount { get => Todo.TodoItemPreviewLineCount; set => Todo.TodoItemPreviewLineCount = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoListTextSize"/>
+    public double TodoListTextSize { get => Todo.TodoListTextSize; set => Todo.TodoListTextSize = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoContentTextSize"/>
+    public double TodoContentTextSize { get => Todo.TodoContentTextSize; set => Todo.TodoContentTextSize = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoEditorEnterBehavior"/>
+    public string TodoEditorEnterBehavior { get => Todo.TodoEditorEnterBehavior; set => Todo.TodoEditorEnterBehavior = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoShowFooterStats"/>
+    public bool TodoShowFooterStats { get => Todo.TodoShowFooterStats; set => Todo.TodoShowFooterStats = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoShowClearCompletedButton"/>
+    public bool TodoShowClearCompletedButton { get => Todo.TodoShowClearCompletedButton; set => Todo.TodoShowClearCompletedButton = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoReminderEnabled"/>
+    public bool TodoReminderEnabled { get => Todo.TodoReminderEnabled; set => Todo.TodoReminderEnabled = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoDefaultReminderOffsetMinutes"/>
+    public int TodoDefaultReminderOffsetMinutes { get => Todo.TodoDefaultReminderOffsetMinutes; set => Todo.TodoDefaultReminderOffsetMinutes = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoUseWideDetailPane"/>
+    public bool TodoUseWideDetailPane { get => Todo.TodoUseWideDetailPane; set => Todo.TodoUseWideDetailPane = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoLayoutMode"/>
+    public string TodoLayoutMode { get => Todo.TodoLayoutMode; set => Todo.TodoLayoutMode = value; }
+
+    /// <inheritdoc cref="TodoSettingsSlice.TodoAutoSelectFirstInWideLayout"/>
+    public bool TodoAutoSelectFirstInWideLayout { get => Todo.TodoAutoSelectFirstInWideLayout; set => Todo.TodoAutoSelectFirstInWideLayout = value; }
+
+    /// <inheritdoc cref="MusicSettingsSlice.MusicUseArtworkBackdrop"/>
+    public bool MusicUseArtworkBackdrop { get => Music.MusicUseArtworkBackdrop; set => Music.MusicUseArtworkBackdrop = value; }
+
+    /// <inheritdoc cref="MusicSettingsSlice.MusicEnableCoverHoverMotion"/>
+    public bool MusicEnableCoverHoverMotion { get => Music.MusicEnableCoverHoverMotion; set => Music.MusicEnableCoverHoverMotion = value; }
+
+    /// <inheritdoc cref="MusicSettingsSlice.MusicDisplayMode"/>
+    public string MusicDisplayMode { get => Music.MusicDisplayMode; set => Music.MusicDisplayMode = value; }
+
+    /// <inheritdoc cref="QuickCaptureSettingsSlice.LastQuickCaptureFileWidgetId"/>
+    public string LastQuickCaptureFileWidgetId { get => QuickCapture.LastQuickCaptureFileWidgetId; set => QuickCapture.LastQuickCaptureFileWidgetId = value; }
+
+    /// <inheritdoc cref="CoreSettingsSlice.GlobalHotkeyEnabled"/>
+    public bool GlobalHotkeyEnabled { get => Core.GlobalHotkeyEnabled; set => Core.GlobalHotkeyEnabled = value; }
+
+    /// <inheritdoc cref="CoreSettingsSlice.GlobalHotkeyActivationKind"/>
+    public HotkeyActivationKind GlobalHotkeyActivationKind { get => Core.GlobalHotkeyActivationKind; set => Core.GlobalHotkeyActivationKind = value; }
+
+    /// <inheritdoc cref="CoreSettingsSlice.GlobalHotkeyModifiers"/>
+    public int GlobalHotkeyModifiers { get => Core.GlobalHotkeyModifiers; set => Core.GlobalHotkeyModifiers = value; }
+
+    /// <inheritdoc cref="CoreSettingsSlice.GlobalHotkeyKey"/>
+    public int GlobalHotkeyKey { get => Core.GlobalHotkeyKey; set => Core.GlobalHotkeyKey = value; }
+
+    /// <inheritdoc cref="CoreSettingsSlice.DesktopDoubleClickEnabled"/>
+    public bool DesktopDoubleClickEnabled { get => Core.DesktopDoubleClickEnabled; set => Core.DesktopDoubleClickEnabled = value; }
+
+    /// <inheritdoc cref="CoreSettingsSlice.HasCompletedOnboarding"/>
+    public bool HasCompletedOnboarding { get => Core.HasCompletedOnboarding; set => Core.HasCompletedOnboarding = value; }
+
+    /// <inheritdoc cref="CoreSettingsSlice.OnboardingStepIndex"/>
+    public int OnboardingStepIndex { get => Core.OnboardingStepIndex; set => Core.OnboardingStepIndex = value; }
+
+    /// <inheritdoc cref="CoreSettingsSlice.CompletedOnboardingVersion"/>
+    public int CompletedOnboardingVersion { get => Core.CompletedOnboardingVersion; set => Core.CompletedOnboardingVersion = value; }
+
+    /// <inheritdoc cref="CoreSettingsSlice.HasResolvedInitialFileWidgetSetup"/>
+    public bool HasResolvedInitialFileWidgetSetup { get => Core.HasResolvedInitialFileWidgetSetup; set => Core.HasResolvedInitialFileWidgetSetup = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.DefaultWidgetWidth"/>
+    public double DefaultWidgetWidth { get => WidgetShell.DefaultWidgetWidth; set => WidgetShell.DefaultWidgetWidth = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.DefaultWidgetHeight"/>
+    public double DefaultWidgetHeight { get => WidgetShell.DefaultWidgetHeight; set => WidgetShell.DefaultWidgetHeight = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetOpacity"/>
+    public double WidgetOpacity { get => WidgetShell.WidgetOpacity; set => WidgetShell.WidgetOpacity = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetMaterialType"/>
+    public string WidgetMaterialType { get => WidgetShell.WidgetMaterialType; set => WidgetShell.WidgetMaterialType = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetMaterialIntensity"/>
+    public double WidgetMaterialIntensity { get => WidgetShell.WidgetMaterialIntensity; set => WidgetShell.WidgetMaterialIntensity = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetForegroundMode"/>
+    public string WidgetForegroundMode { get => WidgetShell.WidgetForegroundMode; set => WidgetShell.WidgetForegroundMode = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetForegroundColor"/>
+    public string WidgetForegroundColor { get => WidgetShell.WidgetForegroundColor; set => WidgetShell.WidgetForegroundColor = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetTitleAlignment"/>
+    public string WidgetTitleAlignment { get => WidgetShell.WidgetTitleAlignment; set => WidgetShell.WidgetTitleAlignment = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetAnimationFrameRate"/>
+    public int WidgetAnimationFrameRate { get => WidgetShell.WidgetAnimationFrameRate; set => WidgetShell.WidgetAnimationFrameRate = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetBorderColorMode"/>
+    public string WidgetBorderColorMode { get => WidgetShell.WidgetBorderColorMode; set => WidgetShell.WidgetBorderColorMode = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetBorderStyle"/>
+    public string WidgetBorderStyle { get => WidgetShell.WidgetBorderStyle; set => WidgetShell.WidgetBorderStyle = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetCornerPreference"/>
+    public string WidgetCornerPreference { get => WidgetShell.WidgetCornerPreference; set => WidgetShell.WidgetCornerPreference = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetAnimationEffect"/>
+    public string WidgetAnimationEffect { get => WidgetShell.WidgetAnimationEffect; set => WidgetShell.WidgetAnimationEffect = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetAnimationSpeed"/>
+    public string WidgetAnimationSpeed { get => WidgetShell.WidgetAnimationSpeed; set => WidgetShell.WidgetAnimationSpeed = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetAnimationSlideDirection"/>
+    public string WidgetAnimationSlideDirection { get => WidgetShell.WidgetAnimationSlideDirection; set => WidgetShell.WidgetAnimationSlideDirection = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetAnimationEasingIntensity"/>
+    public string WidgetAnimationEasingIntensity { get => WidgetShell.WidgetAnimationEasingIntensity; set => WidgetShell.WidgetAnimationEasingIntensity = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetLayerMode"/>
+    public string WidgetLayerMode { get => WidgetShell.WidgetLayerMode; set => WidgetShell.WidgetLayerMode = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.KeepWidgetsVisibleOnShowDesktop"/>
+    public bool KeepWidgetsVisibleOnShowDesktop { get => WidgetShell.KeepWidgetsVisibleOnShowDesktop; set => WidgetShell.KeepWidgetsVisibleOnShowDesktop = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.DisplayWidgetChromeMode"/>
+    public string DisplayWidgetChromeMode { get => WidgetShell.DisplayWidgetChromeMode; set => WidgetShell.DisplayWidgetChromeMode = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.InteractiveWidgetChromeMode"/>
+    public string InteractiveWidgetChromeMode { get => WidgetShell.InteractiveWidgetChromeMode; set => WidgetShell.InteractiveWidgetChromeMode = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetCollapseBehavior"/>
+    public string WidgetCollapseBehavior { get => WidgetShell.WidgetCollapseBehavior; set => WidgetShell.WidgetCollapseBehavior = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.LegacyWidgetCapsuleModeEnabled"/>
     [JsonPropertyName("widgetCapsuleModeEnabled")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? LegacyWidgetCapsuleModeEnabled { get => WidgetShell.LegacyWidgetCapsuleModeEnabled; set => WidgetShell.LegacyWidgetCapsuleModeEnabled = value; }

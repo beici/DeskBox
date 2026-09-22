@@ -41,13 +41,10 @@
     "Settings.Performance.CacheBudget.Description": "Controls the limit for recreatable icon, thumbnail, and decoded-image caches",
     "Settings.Performance.IdleWorkingSetTrim.Title": "Compress memory when idle",
     "Settings.Performance.IdleWorkingSetTrim.Description": "While widgets are hidden or you are away, page unused memory out to the system; it is read back on demand when you return",
-<<<<<<< HEAD
-=======
     "Settings.Performance.ImmediateHiddenWorkingSetTrim.Title": "Trim memory immediately after hiding (experimental)",
     "Settings.Performance.ImmediateHiddenWorkingSetTrim.Description": "Reduce resident memory 3 seconds after all widgets hide; quick hide/show round trips will not trim repeatedly. Showing them again may briefly take longer.",
     "Settings.Performance.QuiescenceWorkingSetTrim.Title": "Compress memory after interactions",
     "Settings.Performance.QuiescenceWorkingSetTrim.Description": "A few seconds after closing settings, collapsing a capsule, or finishing a drag, page unused memory out even while widgets stay visible. Runs only when memory has grown noticeably and no animation is playing, so it never trims repeatedly.",
->>>>>>> upstream/main
     "Settings.Performance.CacheBudget.Small": "Small",
     "Settings.Performance.CacheBudget.Balanced": "Balanced",
     "Settings.Performance.CacheBudget.Large": "Large",
@@ -1510,6 +1507,7 @@
     "Widget.Compact.FileCount": "{0} items",
     "Widget.Compact.QuickCaptureCount": "{0} notes",
     "Widget.Compact.TodoSummary": "{0} today · {1} overdue",
+    "Widget.Compact.ExpansionSpaceInsufficient": "There isn't enough room to expand in the selected direction. Move the capsule and try again.",
     "Widget.CollapseBehavior.Title": "Display mode",
     "Widget.CollapseBehavior.System": "Follow default",
     "Widget.CollapseBehavior.SystemWithDefault": "Follow default ({0})",
@@ -2002,6 +2000,7 @@
     "Settings.Search.Hotkey.PresetsTitle": "Shortcut",
     "Settings.Search.Hotkey.Status.GlobalHotkeyConflict": "This shortcut is already used by the main DeskBox shortcut.",
     "Settings.GlobalHotkey.Status.SearchHotkeyConflict": "This shortcut is already used by the search shortcut.",
+    "Settings.GlobalHotkey.PresetsDescription": "Choose the shortcut used to show or hide DeskBox",
     "Settings.Search.Hotkey.ChangeTooltip": "Click, then press the new key combination",
     "Settings.Search.Hotkey.ResetTooltip": "Restore default hotkey",
     "Settings.Search.Hotkey.Recording": "Press a key combination...",
@@ -2611,13 +2610,10 @@
     "Glance.Speed.Standard": "Standard",
     "Glance.Speed.Relaxed": "Relaxed",
     "Glance.Typography.Title": "Font size",
-<<<<<<< HEAD
-=======
     "Glance.Typography.TimeFormat": "Time format",
     "Glance.Typography.FollowSystem": "Follow system",
     "Glance.Typography.Hour24": "24-hour",
     "Glance.Typography.Hour12": "12-hour",
->>>>>>> upstream/main
     "Glance.Typography.Font": "Font",
     "Glance.Speed.Title": "Transition speed",
     "Glance.Typography.SystemDefault": "System default",
@@ -2662,9 +2658,9 @@
     "Widget.RunAsAdministrator.NotElevated": "Windows could not create an administrator process. Check UAC settings and try again.",
     "Widget.CreateShortcut": "Create shortcut",
     "Widget.MoreSystemOperations": "More system operations",
+    "Widget.OpenItemDispatched": "Windows has accepted the open request.",
     "Settings.ManagedPath.DesktopShortcut.Title": "Desktop storage shortcut",
     "Settings.ManagedPath.DesktopShortcut.Description": "Creates a shortcut to the current storage folder. If you delete it, DeskBox will not create it again.",
-<<<<<<< HEAD
     "Settings.Animation.FrameRate.Title": "Animation frame rate",
     "Settings.Animation.FrameRate.Description": "Capsule expand/collapse cadence. Delivered rate is the display refresh divided by the cap and never exceeds it.",
     "Settings.QuickCapture.RecordColors.Title": "Record colors",
@@ -2681,13 +2677,10 @@
     "Startup.Failure.Body": "Startup failed at \"{0}\". Widgets and settings already applied are kept. The error was written to the log.",
     "Startup.Failure.Phase.Core": "settings and services",
     "Startup.Failure.Phase.Widgets": "widget restoration",
-    "Common.Close": "Close",
     "Common.More": "More",
     "Settings.ManagedPath.DesktopShortcut.StatusCreated": "Desktop shortcut created",
     "Settings.ManagedPath.DesktopShortcut.StatusNotCreated": "No desktop shortcut",
     "Settings.ManagedPath.DesktopShortcut.Remove": "Remove",
-    "Settings.Performance.ImmediateHiddenWorkingSetTrim.Title": "Trim memory immediately after hiding (experimental)",
-    "Settings.Performance.ImmediateHiddenWorkingSetTrim.Description": "Reduce resident memory as soon as all widgets finish hiding. Showing them again may briefly take longer.",
     "Settings.FileWidget.SystemContextMenu.Title": "Native context menu",
     "Settings.FileWidget.SystemContextMenu.Description": "Right-clicking a single file shows the native Windows menu instead of the built-in DeskBox menu; stacks and multi-selection keep the built-in menu",
     "Settings.Feature.ListTextSize.Title": "List text size",
@@ -2716,12 +2709,6 @@
     "Settings.DataBackup.Interval.Day": "1 day",
     "Settings.DataBackup.Interval.Days": "{0} days",
     "Settings.DataBackup.Retention.Count": "Keep {0}",
-    "Glance.Typography.TimeFormat": "Time format",
-    "Glance.Typography.FollowSystem": "Follow system",
-    "Glance.Typography.Hour24": "24-hour",
-    "Glance.Typography.Hour12": "12-hour",
-=======
->>>>>>> upstream/main
     "DesktopOrganization.Public.PersonalCount": "Personal desktop ({0} items)",
     "DesktopOrganization.Public.SharedCount": "Public desktop ({0} items, shared by all accounts)",
     "DesktopOrganization.Public.Unavailable": "Public desktop (currently unavailable)",

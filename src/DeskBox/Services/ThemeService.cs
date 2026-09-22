@@ -15,14 +15,7 @@ public sealed class ThemeService
     public const string AccentModeCustom = "Custom";
 
     private readonly SettingsService _settingsService;
-<<<<<<< HEAD
-    // UI-thread owned: TrackWindow/OnTrackedWindowClosed/ApplyToAllWindows
-    // run on the UI thread by the repo-wide convention (all RefreshAppearance
-    // callers are UI-thread), so this list is never mutated concurrently.
-    private readonly List<Window> _trackedWindows = new();
-=======
     private readonly WindowTrackingRegistry<Window> _trackedWindows = new();
->>>>>>> upstream/main
     private readonly Windows.UI.ViewManagement.UISettings _uiSettings = new();
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _appearanceDebounceTimer;
 
@@ -235,7 +228,8 @@ public sealed class ThemeService
 
     public void RefreshAppearance()
     {
-<<<<<<< HEAD
+        App.LogVerbose($"[Theme] RefreshAppearance tracked={_trackedWindows.TrackedCount}");
+
         // ApplyToAllWindows reads window.Content and the broadcast reaches
         // subscribers without dispatch protection, so the refresh must run
         // on the UI thread (DEF-010: startup once pushed it to a thread-pool
@@ -246,15 +240,11 @@ public sealed class ThemeService
             return;
         }
 
-=======
-        App.LogVerbose($"[Theme] RefreshAppearance tracked={_trackedWindows.TrackedCount}");
->>>>>>> upstream/main
         ApplyToAllWindows();
         RaiseAppearanceChanged();
         App.ScheduleLightMemoryCleanup();
     }
 
-<<<<<<< HEAD
     /// <summary>
     /// DEF-019 (EVT-01): broadcast with per-handler exception isolation,
     /// mirroring LocalizationService.RaiseLanguageChanged. Without the
@@ -281,13 +271,14 @@ public sealed class ThemeService
                     "[ThemeService] AppearanceChanged handler " +
                     $"'{handler.Method.DeclaringType?.Name}.{handler.Method.Name}' threw: {ex.Message}");
             }
-=======
+        }
+    }
+
     private static void EnsureUiThread(string operation)
     {
         if (App.UiDispatcherQueue is { HasThreadAccess: false })
         {
             App.Log($"[Theme] {operation} invoked off the UI thread");
->>>>>>> upstream/main
         }
     }
 }

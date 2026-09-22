@@ -41,13 +41,10 @@
     "Settings.Performance.CacheBudget.Description": "再作成可能なアイコン、サムネイル、デコード画像のキャッシュ上限を制御します",
     "Settings.Performance.IdleWorkingSetTrim.Title": "Compress memory when idle",
     "Settings.Performance.IdleWorkingSetTrim.Description": "While widgets are hidden or you are away, page unused memory out to the system; it is read back on demand when you return",
-<<<<<<< HEAD
-=======
     "Settings.Performance.ImmediateHiddenWorkingSetTrim.Title": "非表示後すぐにメモリを削減（試験的）",
     "Settings.Performance.ImmediateHiddenWorkingSetTrim.Description": "すべてのウィジェットが非表示になってから 3 秒後に常駐メモリを削減します。非表示と表示を短時間で繰り返しても再実行されません。再表示時に少し時間がかかる場合があります。",
     "Settings.Performance.QuiescenceWorkingSetTrim.Title": "操作後にメモリを圧縮",
     "Settings.Performance.QuiescenceWorkingSetTrim.Description": "設定を閉じる、カプセルを折りたたむ、ドラッグを終えるなどの数秒後に、ウィジェットが表示中でも未使用メモリをシステムへ退避します。メモリが明らかに増加し、アニメーションが動いていないときだけ実行されるため、繰り返し実行されません。",
->>>>>>> upstream/main
     "Settings.Performance.CacheBudget.Small": "小",
     "Settings.Performance.CacheBudget.Balanced": "バランス",
     "Settings.Performance.CacheBudget.Large": "大",
@@ -1507,6 +1504,7 @@
     "Widget.Compact.FileCount": "{0} アイテム",
     "Widget.Compact.QuickCaptureCount": "{0} 件のメモ",
     "Widget.Compact.TodoSummary": "今日 {0} · 期限超過 {1}",
+    "Widget.Compact.ExpansionSpaceInsufficient": "選択した展開方向に十分な空きがありません。カプセルを移動して再試行してください。",
     "Widget.CollapseBehavior.Title": "表示方法",
     "Widget.CollapseBehavior.System": "既定に従う",
     "Widget.CollapseBehavior.SystemWithDefault": "既定に従う（{0}）",
@@ -1990,6 +1988,7 @@
     "Settings.Search.Hotkey.PresetsTitle": "ショートカット",
     "Settings.Search.Hotkey.Status.GlobalHotkeyConflict": "このショートカットは DeskBox のメイン ショートカットで使用されています。",
     "Settings.GlobalHotkey.Status.SearchHotkeyConflict": "このショートカットは検索ショートカットで使用されています。",
+    "Settings.GlobalHotkey.PresetsDescription": "DeskBoxを表示または非表示にするショートカットを選択します",
     "Settings.Search.Hotkey.ChangeTooltip": "クリックしてから新しいキーの組み合わせを押してください",
     "Settings.Search.Hotkey.ResetTooltip": "デフォルトのホットキーを復元",
     "Settings.Search.Hotkey.Recording": "キーの組み合わせを押してください...",
@@ -2611,13 +2610,10 @@
     "Glance.Speed.Standard": "標準",
     "Glance.Speed.Relaxed": "ゆったり",
     "Glance.Typography.Title": "フォント サイズ",
-<<<<<<< HEAD
-=======
     "Glance.Typography.TimeFormat": "時刻形式",
     "Glance.Typography.FollowSystem": "システムに従う",
     "Glance.Typography.Hour24": "24時間制",
     "Glance.Typography.Hour12": "12時間制",
->>>>>>> upstream/main
     "Glance.Typography.Font": "フォント",
     "Glance.Speed.Title": "切り替え速度",
     "Glance.Typography.SystemDefault": "システム既定",
@@ -2662,9 +2658,9 @@
     "Widget.RunAsAdministrator.NotElevated": "Windows は管理者プロセスを作成できませんでした。UAC の設定を確認して、もう一度お試しください。",
     "Widget.CreateShortcut": "ショートカットを作成",
     "Widget.MoreSystemOperations": "その他のシステム操作",
+    "Widget.OpenItemDispatched": "Windows に開く要求を渡しました。",
     "Settings.ManagedPath.DesktopShortcut.Title": "保存フォルダーのデスクトップ ショートカット",
     "Settings.ManagedPath.DesktopShortcut.Description": "現在の保存フォルダーへのショートカットを作成します。削除した場合、DeskBox が再作成することはありません。",
-<<<<<<< HEAD
     "Settings.Animation.FrameRate.Title": "アニメーションフレームレート",
     "Settings.Animation.FrameRate.Description": "カプセル開閉の間隔。実効フレームレートはリフレッシュレートを段で割った値で、選択値を超えません",
     "Settings.QuickCapture.RecordColors.Title": "レコードの色",
@@ -2681,13 +2677,10 @@
     "Startup.Failure.Body": "「{0}」の段階で起動に失敗しました。適用済みのウィジェットと設定は保持されます。エラーはログに記録されました。",
     "Startup.Failure.Phase.Core": "設定とサービスの初期化",
     "Startup.Failure.Phase.Widgets": "ウィジェットの復元",
-    "Common.Close": "閉じる",
     "Common.More": "その他",
     "Settings.ManagedPath.DesktopShortcut.StatusCreated": "デスクトップ ショートカットを作成済み",
     "Settings.ManagedPath.DesktopShortcut.StatusNotCreated": "デスクトップ ショートカットはありません",
     "Settings.ManagedPath.DesktopShortcut.Remove": "削除",
-    "Settings.Performance.ImmediateHiddenWorkingSetTrim.Title": "非表示後すぐにメモリを削減（試験的）",
-    "Settings.Performance.ImmediateHiddenWorkingSetTrim.Description": "すべてのウィジェットの非表示アニメーション完了後、常駐メモリをすぐに削減します。再表示時に少し時間がかかる場合があります。",
     "Settings.FileWidget.SystemContextMenu.Title": "Windows 標準の右クリック メニュー",
     "Settings.FileWidget.SystemContextMenu.Description": "単一ファイルを右クリックしたとき、DeskBox 内蔵メニューの代わりに Windows 標準メニューを表示します。スタックと複数選択では内蔵メニューのままです",
     "Settings.Feature.ListTextSize.Title": "List text size",
@@ -2716,12 +2709,6 @@
     "Settings.DataBackup.Interval.Day": "1 日",
     "Settings.DataBackup.Interval.Days": "{0} 日",
     "Settings.DataBackup.Retention.Count": "{0} 件を保持",
-    "Glance.Typography.TimeFormat": "時刻形式",
-    "Glance.Typography.FollowSystem": "システムに従う",
-    "Glance.Typography.Hour24": "24時間制",
-    "Glance.Typography.Hour12": "12時間制",
-=======
->>>>>>> upstream/main
     "DesktopOrganization.Public.PersonalCount": "個人デスクトップ（{0} 項目）",
     "DesktopOrganization.Public.SharedCount": "パブリックデスクトップ（{0} 項目、全アカウント共有）",
     "DesktopOrganization.Public.Unavailable": "パブリックデスクトップ（現在読み取れません）",

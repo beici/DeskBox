@@ -11,12 +11,6 @@ namespace DeskBox.Views;
 
 public abstract partial class WidgetWindowBase
 {
-    /// <summary>
-    /// Room the colour picker asks for: spectrum, sliders and the hex entry.
-    /// </summary>
-    private const double ColorPickerContentWidthDips = 340;
-    private const double ColorPickerContentHeightDips = 500;
-
     private AccessibilitySettings? _foregroundAccessibilitySettings;
 
     protected virtual void ApplyWidgetForegroundAppearance()
@@ -55,41 +49,12 @@ public abstract partial class WidgetWindowBase
     /// </summary>
     protected Flyout BuildWidgetForegroundColorPickerFlyout()
     {
-<<<<<<< HEAD
-        if (RootElement.XamlRoot is null)
-        {
-            return;
-        }
-
-        // Same host constraint as the margin editor: a colour picker is far taller
-        // than a widget, so it is shown in the shared tool window instead of a
-        // ContentDialog that the widget would clip.
-        WidgetDialogViewport viewport = ResolveToolDialogViewport(
-            ColorPickerContentWidthDips,
-            ColorPickerContentHeightDips);
-=======
->>>>>>> upstream/main
         var picker = new ColorPicker
         {
             Color = WidgetForegroundSettings.ResolveCustomColor(
                 Config,
                 SettingsService.Settings),
             IsAlphaEnabled = false,
-<<<<<<< HEAD
-            MaxWidth = viewport.ContentWidth
-        };
-        var localization = App.Current.LocalizationService;
-
-        try
-        {
-            bool saved = await ShowToolDialogAsync(
-                localization.T("Widget.Foreground.CustomColor"),
-                picker,
-                localization.T("Common.Save"),
-                localization.T("Common.Cancel"),
-                viewport);
-            if (!saved)
-=======
             MinWidth = 256
         };
         var localization = App.Current.LocalizationService;
@@ -107,7 +72,6 @@ public abstract partial class WidgetWindowBase
         {
             ShouldConstrainToRootBounds = false,
             Content = new StackPanel
->>>>>>> upstream/main
             {
                 Spacing = 12,
                 Children =

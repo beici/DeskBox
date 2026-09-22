@@ -41,13 +41,10 @@
     "Settings.Performance.CacheBudget.Description": "控制可重建的图标、缩略图和解码图片缓存上限",
     "Settings.Performance.IdleWorkingSetTrim.Title": "空闲时压缩内存占用",
     "Settings.Performance.IdleWorkingSetTrim.Description": "小组件隐藏或你离开时把暂不使用的内存换出到系统，回到桌面时按需读回",
-<<<<<<< HEAD
-=======
     "Settings.Performance.ImmediateHiddenWorkingSetTrim.Title": "隐藏后立即裁剪工作集（实验性）",
     "Settings.Performance.ImmediateHiddenWorkingSetTrim.Description": "全部格子隐藏 3 秒后才裁剪驻留内存，连续隐藏/显示不会反复清理；再次显示时可能短暂延迟",
     "Settings.Performance.QuiescenceWorkingSetTrim.Title": "操作结束后压缩内存占用",
     "Settings.Performance.QuiescenceWorkingSetTrim.Description": "关闭设置、收起胶囊或完成拖拽等操作后，格子仍可见时也在几秒静默后换出暂不使用的内存；只在内存明显增长且无动画进行时执行，避免反复清理",
->>>>>>> upstream/main
     "Settings.Performance.CacheBudget.Small": "较小",
     "Settings.Performance.CacheBudget.Balanced": "均衡",
     "Settings.Performance.CacheBudget.Large": "较大",
@@ -1119,10 +1116,7 @@
     "Settings.CollapseBehavior.Manual": "点击展开",
     "Onboarding.Step3.MaterialSection": "材质",
     "Widget.DeleteWidgetFailed": "关闭格子失败",
-<<<<<<< HEAD
-=======
     "Widget.DeleteWidgetFailedWithReason": "关闭格子失败：{0}",
->>>>>>> upstream/main
     "Onboarding.Step5.Body": "屏幕右侧已经为你创建了一个空的收纳格子。把文件拖进去试试吧。",
     "History.OperationFailed": "操作失败",
     "Settings.DataBackup.Snapshots.Delete": "删除",
@@ -1828,6 +1822,7 @@
     "Onboarding.Scene.NewWidget": "新建格子",
     "Settings.Update.Detail.Failed": "暂时无法完成更新，可稍后重试。",
     "Widget.Compact.Collapse": "收起格子",
+    "Widget.Compact.ExpansionSpaceInsufficient": "所选展开方向的空间不足。请移动胶囊后重试。",
     "Settings.DragDropPermission.OpenUacTooltip": "打开 Windows 安全通知设置；最底部“从不通知”代表关闭",
     "Settings.Todo.PageDescription": "调整待办格子的列表、日期和删除行为。",
     "Settings.FileStacks.Custom.Preview.None": "当前文件格子中没有匹配项",
@@ -1992,6 +1987,7 @@
     "Settings.Search.Hotkey.PresetsTitle": "快捷键",
     "Settings.Search.Hotkey.Status.GlobalHotkeyConflict": "此快捷键已被 DeskBox 主快捷键占用。",
     "Settings.GlobalHotkey.Status.SearchHotkeyConflict": "此快捷键已被搜索快捷键占用。",
+    "Settings.GlobalHotkey.PresetsDescription": "选择用于唤起或收起 DeskBox 的快捷键",
     "Settings.Search.Hotkey.ChangeTooltip": "点击后按下新的组合键进行设置",
     "Settings.Search.Hotkey.ResetTooltip": "恢复默认快捷键",
     "Settings.Search.Hotkey.Recording": "请按下组合键…",
@@ -2614,13 +2610,10 @@
     "Glance.Speed.Standard": "标准",
     "Glance.Speed.Relaxed": "舒缓",
     "Glance.Typography.Title": "字体大小",
-<<<<<<< HEAD
-=======
     "Glance.Typography.TimeFormat": "时间格式",
     "Glance.Typography.FollowSystem": "跟随系统",
     "Glance.Typography.Hour24": "24 小时制",
     "Glance.Typography.Hour12": "12 小时制",
->>>>>>> upstream/main
     "Glance.Typography.Font": "字体",
     "Glance.Speed.Title": "切换速度",
     "Glance.Typography.SystemDefault": "系统默认",
@@ -2665,9 +2658,9 @@
     "Widget.RunAsAdministrator.NotElevated": "Windows 未能创建管理员进程，请检查 UAC 设置后重试。",
     "Widget.CreateShortcut": "创建快捷方式",
     "Widget.MoreSystemOperations": "更多系统操作",
+    "Widget.OpenItemDispatched": "已交给系统打开",
     "Settings.ManagedPath.DesktopShortcut.Title": "桌面上的收纳文件入口",
     "Settings.ManagedPath.DesktopShortcut.Description": "创建后可直接打开当前收纳目录；手动删除后，DeskBox 不会重新创建",
-<<<<<<< HEAD
     "Settings.Animation.FrameRate.Title": "动画帧率",
     "Settings.Animation.FrameRate.Description": "胶囊展开/收起节奏，实际帧率为刷新率除以档位且不超过所选值",
     "Settings.QuickCapture.RecordColors.Title": "记录配色",
@@ -2684,13 +2677,10 @@
     "Startup.Failure.Body": "启动在「{0}」阶段失败。已应用的格子与设置会保留。错误已写入日志。",
     "Startup.Failure.Phase.Core": "设置与服务初始化",
     "Startup.Failure.Phase.Widgets": "格子恢复",
-    "Common.Close": "关闭",
     "Common.More": "更多",
     "Settings.ManagedPath.DesktopShortcut.StatusCreated": "已创建桌面快捷方式",
     "Settings.ManagedPath.DesktopShortcut.StatusNotCreated": "尚未创建桌面快捷方式",
     "Settings.ManagedPath.DesktopShortcut.Remove": "移除",
-    "Settings.Performance.ImmediateHiddenWorkingSetTrim.Title": "隐藏后立即裁剪工作集（实验性）",
-    "Settings.Performance.ImmediateHiddenWorkingSetTrim.Description": "全部格子隐藏动画结束后立即减少驻留内存，再次显示时可能短暂延迟",
     "Settings.FileWidget.SystemContextMenu.Title": "桌面原版右键菜单",
     "Settings.FileWidget.SystemContextMenu.Description": "右键单个文件时直接显示 Windows 系统菜单，代替 DeskBox 内置菜单；叠放与多选仍使用内置菜单",
     "Settings.DataBackup.AutomaticBackup.Title": "自动备份",
@@ -2719,12 +2709,6 @@
     "Settings.Feature.ListTextSize.Description": "控制功能格子列表中的文字大小",
     "Settings.Feature.ContentTextSize.Title": "内容文字大小",
     "Settings.Feature.ContentTextSize.Description": "控制功能格子详细内容中的文字大小",
-    "Glance.Typography.TimeFormat": "时间格式",
-    "Glance.Typography.FollowSystem": "跟随系统",
-    "Glance.Typography.Hour24": "24 小时制",
-    "Glance.Typography.Hour12": "12 小时制",
-=======
->>>>>>> upstream/main
     "DesktopOrganization.Public.PersonalCount": "个人桌面（{0} 项）",
     "DesktopOrganization.Public.SharedCount": "公用桌面（{0} 项，所有账户共享）",
     "DesktopOrganization.Public.Unavailable": "公用桌面（暂时无法读取）",
