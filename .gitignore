@@ -38,6 +38,7 @@ build_*.txt
 .mimocode/
 .claude/
 .workbuddy/
+.workbuddy-ai/
 .mimosa/
 
 # Local one-off analysis reports
