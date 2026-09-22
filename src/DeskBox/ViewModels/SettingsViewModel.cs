@@ -48,7 +48,6 @@ public partial class SettingsViewModel : ObservableObject, IDisposable
     private const string ShowDesktopBehaviorHideWithWindows = "HideWithWindows";
     private const string WeatherLocationModeAuto = "Auto";
     private const string WeatherLocationModeManual = "Manual";
-    private const string FeedbackEmail = "1047078635@qq.com";
     private const string RepositoryUrl = "https://github.com/Tianyu199509/DeskBox";
     private const string OfficialWebsiteUrl = "https://deskbox.fun";
     private const string MicrosoftStoreProductId = "9PBZSNB4D69H";
@@ -109,12 +108,12 @@ public partial class SettingsViewModel : ObservableObject, IDisposable
     private string _selectedTodoTabStyle = SettingsService.WidgetTabStyleButton;
     private int _selectedTodoReminderOffsetMinutes = SettingsService.DefaultTodoReminderOffsetMinutes;
     private string _selectedMusicDisplayMode = SettingsService.MusicDisplayModeAuto;
-private string _selectedWeatherTemperatureUnit = SettingsService.WeatherTemperatureUnitCelsius;
-private string _selectedWeatherWindSpeedUnit = SettingsService.WeatherWindSpeedUnitKmh;
-private string _selectedWeatherDefaultView = SettingsService.WeatherDefaultViewToday;
-private string _selectedWeatherSkin = SettingsService.WeatherSkinRich;
-private string _selectedWeatherDataSource = SettingsService.WeatherDataSourceMsn;
-private int _selectedWeatherRefreshInterval = 60;
+    private string _selectedWeatherTemperatureUnit = SettingsService.WeatherTemperatureUnitCelsius;
+    private string _selectedWeatherWindSpeedUnit = SettingsService.WeatherWindSpeedUnitKmh;
+    private string _selectedWeatherDefaultView = SettingsService.WeatherDefaultViewToday;
+    private string _selectedWeatherSkin = SettingsService.WeatherSkinRich;
+    private string _selectedWeatherDataSource = SettingsService.WeatherDataSourceMsn;
+    private int _selectedWeatherRefreshInterval = 60;
     private bool _useSystemAccentColor;
     private string _accentColorHex = AccentColorHelper.DefaultAccentColorHex;
     private string _managedStorageRootPath = SettingsService.GetDefaultManagedStorageRootPath();
@@ -175,24 +174,38 @@ private string[]? _cachedWeatherDataSourceDisplayNames;
 private string[]? _cachedWeatherRefreshIntervalDisplayNames;
 
     [ObservableProperty] public partial bool AutoStart { get; set; }
+    private bool _autoStartUsedFallback;
+    private bool _autoStartOperationFailed;
+    [ObservableProperty] public partial string SelectedAutoStartMode { get; set; } = nameof(StartupMode.Standard);
+    public object[] AvailableAutoStartModeOptions =>
+    [
+        new SettingsOption(nameof(StartupMode.Standard), _localizationService.T("Settings.AutoStart.Mode.Standard")),
+        new SettingsOption(nameof(StartupMode.ScheduledTask), _localizationService.T("Settings.AutoStart.Mode.ScheduledTask"))
+    ];
+    // Keep the choice available while off, including when Standard cannot be
+    // registered (for example an executable command longer than Run's limit).
+    // SetMode only records a preference while startup is disabled.
+    public Visibility AutoStartModeVisibility => StartupService.Current is DirectStartupService
+        ? Visibility.Visible : Visibility.Collapsed;
     public string AutoStartStatusText => _autoStartState switch
     {
         StartupRegistrationState.DisabledByUser =>
             _localizationService.T("Settings.AutoStart.WindowsDisabled"),
+        StartupRegistrationState.DisabledByTaskScheduler =>
+            _localizationService.T("Settings.AutoStart.TaskDisabled"),
         StartupRegistrationState.Pending =>
             _localizationService.T("Settings.AutoStart.Pending"),
+        StartupRegistrationState.Enabled when _autoStartUsedFallback =>
+            _localizationService.T("Settings.AutoStart.Fallback"),
+        _ when _autoStartOperationFailed =>
+            _localizationService.T("Settings.AutoStart.ChangeFailed"),
         StartupRegistrationState.PathMismatch or
         StartupRegistrationState.BlockedOrFailed =>
             _localizationService.T("Settings.AutoStart.Failed"),
         _ => string.Empty
     };
-    public Visibility AutoStartStatusVisibility =>
-        _autoStartState is StartupRegistrationState.DisabledByUser or
-            StartupRegistrationState.Pending or
-            StartupRegistrationState.PathMismatch or
-            StartupRegistrationState.BlockedOrFailed
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+    public Visibility AutoStartStatusVisibility => string.IsNullOrEmpty(AutoStartStatusText)
+        ? Visibility.Collapsed : Visibility.Visible;
     public Visibility AutoStartSystemSettingsVisibility =>
         _autoStartState == StartupRegistrationState.DisabledByUser
             ? Visibility.Visible
@@ -228,6 +241,7 @@ private string[]? _cachedWeatherRefreshIntervalDisplayNames;
     [ObservableProperty] public partial bool HideShortcutExtensionWhenShowingFileExtensions { get; set; } = true;
     [ObservableProperty] public partial bool IdleWorkingSetTrimEnabled { get; set; } = true;
     [ObservableProperty] public partial bool ImmediateHiddenWorkingSetTrimEnabled { get; set; }
+    [ObservableProperty] public partial bool QuiescenceWorkingSetTrimEnabled { get; set; } = true;
     [ObservableProperty] public partial bool QuickCaptureEnabled { get; set; }
     [ObservableProperty] public partial bool QuickCaptureShowTabBar { get; set; } = true;
     [ObservableProperty] public partial bool QuickCaptureShowRecordsTab { get; set; } = true;
@@ -305,6 +319,8 @@ private string[]? _cachedWeatherRefreshIntervalDisplayNames;
         _autoStartState = AutoStart
             ? StartupRegistrationState.Enabled
             : StartupService.GetState();
+        if (StartupService.Current is DirectStartupService directStartup)
+            SelectedAutoStartMode = directStartup.Mode.ToString();
         AutoCheckForUpdates = settings.AutoCheckForUpdates;
         DoubleClickToOpen = settings.DoubleClickToOpen;
         FileItemSystemContextMenuEnabled = settings.FileItemSystemContextMenuEnabled;
@@ -386,6 +402,7 @@ private string[]? _cachedWeatherRefreshIntervalDisplayNames;
         HideShortcutExtensionWhenShowingFileExtensions = settings.HideShortcutExtensionWhenShowingFileExtensions;
         IdleWorkingSetTrimEnabled = settings.IdleWorkingSetTrimEnabled;
         ImmediateHiddenWorkingSetTrimEnabled = settings.ImmediateHiddenWorkingSetTrimEnabled;
+        QuiescenceWorkingSetTrimEnabled = settings.Performance.QuiescenceWorkingSetTrimEnabled;
         QuickCaptureEnabled = FeatureWidgetSettings.IsEnabled(settings, WidgetKind.QuickCapture);
         QuickCaptureClipboardEnabled = settings.QuickCaptureClipboardEnabled;
         QuickCaptureImageClipboardEnabled = settings.QuickCaptureImageClipboardEnabled;
@@ -432,6 +449,7 @@ private string[]? _cachedWeatherRefreshIntervalDisplayNames;
         TodoUseWideDetailPane = _selectedTodoLayoutMode != SettingsService.TodoLayoutModeSinglePane;
         TodoAutoSelectFirstInWideLayout = settings.TodoAutoSelectFirstInWideLayout;
         TodoReminderEnabled = settings.TodoReminderEnabled;
+<<<<<<< HEAD
         var musicSettings = _musicSettingsStore.Load();
         MusicUseArtworkBackdrop = musicSettings.UseArtworkBackdrop;
         MusicEnableCoverHoverMotion = musicSettings.EnableCoverHoverMotion;
@@ -462,6 +480,37 @@ _selectedWeatherRefreshInterval = Math.Clamp(
     settings.WeatherRefreshIntervalMinutes,
     SettingsService.WeatherRefreshMinMinutes,
     SettingsService.WeatherRefreshMaxMinutes);
+=======
+        MusicUseArtworkBackdrop = settings.MusicUseArtworkBackdrop;
+        MusicEnableCoverHoverMotion = settings.MusicEnableCoverHoverMotion;
+        _selectedMusicDisplayMode = SettingsService.NormalizeMusicDisplayMode(settings.MusicDisplayMode);
+        WeatherAutoLocation = settings.WeatherAutoLocation;
+        WeatherCityName = settings.WeatherCityName;
+        _weatherCitySearchText = settings.WeatherCityName;
+        _selectedWeatherTemperatureUnit = settings.WeatherTemperatureUnit == SettingsService.WeatherTemperatureUnitFahrenheit
+            ? SettingsService.WeatherTemperatureUnitFahrenheit
+            : SettingsService.WeatherTemperatureUnitCelsius;
+        _selectedWeatherWindSpeedUnit = settings.WeatherWindSpeedUnit is SettingsService.WeatherWindSpeedUnitMs or SettingsService.WeatherWindSpeedUnitMph
+            ? settings.WeatherWindSpeedUnit
+            : SettingsService.WeatherWindSpeedUnitKmh;
+        _selectedWeatherDefaultView = settings.WeatherDefaultView == SettingsService.WeatherDefaultViewWeek
+            ? SettingsService.WeatherDefaultViewWeek
+            : SettingsService.WeatherDefaultViewToday;
+        _selectedWeatherSkin = settings.WeatherSkin == SettingsService.WeatherSkinRich
+            ? SettingsService.WeatherSkinRich
+            : SettingsService.WeatherSkinStandard;
+        WeatherShowForecast = settings.WeatherShowForecast;
+        WeatherShowSunrise = settings.WeatherShowSunrise;
+        WeatherShowUvIndex = settings.WeatherShowUvIndex;
+        WeatherShowPrecipitation = settings.WeatherShowPrecipitation;
+        WeatherShowHumidity = settings.WeatherShowHumidity;
+        WeatherShowWind = settings.WeatherShowWind;
+        WeatherShowPressure = settings.WeatherShowPressure;
+        _selectedWeatherRefreshInterval = Math.Clamp(
+            settings.WeatherRefreshIntervalMinutes,
+            SettingsService.WeatherRefreshMinMinutes,
+            SettingsService.WeatherRefreshMaxMinutes);
+>>>>>>> upstream/main
         _isRestoringDefaults = false;
         _selectedTodoNewTaskPosition = NormalizeTodoNewTaskPosition(settings.TodoNewTaskPosition);
         _selectedTodoDefaultFilter = NormalizeTodoDefaultFilter(settings.TodoDefaultFilter);
@@ -475,6 +524,20 @@ _selectedWeatherRefreshInterval = Math.Clamp(
             settings.AutomaticBackupRetentionCount);
         _automaticBackupDirectory =
             DataBackupSettingsPolicy.NormalizeCustomDirectory(settings.AutomaticBackupDirectory) ?? string.Empty;
+        CloudBackupSettingsSlice cloudBackup = settings.CloudBackup;
+        _selectedCloudBackupProvider = cloudBackup.CloudBackupProvider is CloudBackupSettingsPolicy.ProviderWebDav
+            ? CloudBackupSettingsPolicy.ProviderWebDav
+            : CloudBackupSettingsPolicy.ProviderNone;
+        _cloudBackupServerUrl = cloudBackup.CloudBackupServerUrl ?? string.Empty;
+        _cloudBackupRemotePath = cloudBackup.CloudBackupRemotePath ?? string.Empty;
+        _cloudBackupUsername = cloudBackup.CloudBackupUsername ?? string.Empty;
+        CloudBackupTodoDataEnabled = cloudBackup.CloudBackupTodoDataEnabled;
+        CloudBackupQuickCaptureDataEnabled = cloudBackup.CloudBackupQuickCaptureDataEnabled;
+        CloudBackupWidgetStyleEnabled = cloudBackup.CloudBackupWidgetStyleEnabled;
+        _selectedCloudBackupIntervalMinutes = CloudBackupSettingsPolicy.NormalizeIntervalMinutes(
+            cloudBackup.CloudBackupIntervalMinutes);
+        _selectedCloudBackupRetentionCount = CloudBackupSettingsPolicy.NormalizeRetentionCount(
+            cloudBackup.CloudBackupRetentionCount);
 
         ApplyCachedUpdateResult();
         RefreshAccentPreview();

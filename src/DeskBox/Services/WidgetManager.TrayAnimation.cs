@@ -3,6 +3,7 @@
 using DeskBox.Models;
 using DeskBox.Helpers;
 using DeskBox.Controls.WidgetContents;
+using DeskBox.Platform;
 using DeskBox.ViewModels;
 using DeskBox.Views;
 using Microsoft.UI.Dispatching;
@@ -549,6 +550,11 @@ public sealed partial class WidgetManager
             // newly activated application without taking focus, then releases
             // TOPMOST only from each window's hide-animation completion path.
             WidgetLayerService.HoldGroupTopMostWithoutActivation(visibleHandles);
+            // Auxiliary surfaces that were already open before this raise
+            // (settings, search popup, desktop organization) join the band
+            // above the widgets; after the group hold, SetWindowTopMost leaves
+            // each of them above the whole widget group.
+            HoldVisibleAuxiliaryWindowsAboveRaisedWidgets();
             return;
         }
 

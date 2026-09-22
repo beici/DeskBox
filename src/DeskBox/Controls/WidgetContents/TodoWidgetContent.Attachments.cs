@@ -1,4 +1,5 @@
 using DeskBox.Helpers;
+using DeskBox.Platform;
 using DeskBox.ViewModels;
 using Microsoft.UI.Xaml;
 using Windows.Storage;
@@ -68,7 +69,6 @@ public sealed partial class TodoWidgetContent
 
             ShowUndoToast(
                 ViewModel?.DetailFileMissingText ?? string.Empty,
-                durationMs: CopyToastMs,
                 clearUndoOnHide: false);
         }
         catch (Exception ex)

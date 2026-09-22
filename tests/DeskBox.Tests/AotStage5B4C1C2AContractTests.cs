@@ -130,8 +130,11 @@ public sealed class AotStage5B4C1C2AContractTests
         Assert.Contains("TranslationZ >= 64", scenario, StringComparison.Ordinal);
         Assert.Contains("BackgroundIsAcrylicBrush", scenario, StringComparison.Ordinal);
         Assert.Contains("GetAotNativeFolderVisualState(", probe, StringComparison.Ordinal);
-        Assert.Contains("thickness.Left >= 0.5", probe, StringComparison.Ordinal);
-        Assert.Contains("borderBrush.Color.A > 0", probe, StringComparison.Ordinal);
+        // The drop visual is a neutral hover surface with no border, so the
+        // probe reports the recorded drop target instead of drawing state.
+        Assert.Contains("IsActiveChildDropTarget(border)", probe, StringComparison.Ordinal);
+        Assert.Contains("_folderDropTarget", probe, StringComparison.Ordinal);
+        Assert.Contains("_launchDropTarget", probe, StringComparison.Ordinal);
         Assert.Contains("Canvas.GetZIndex(ImportProgressCard)", probe, StringComparison.Ordinal);
         Assert.Contains("background is AcrylicBrush", probe, StringComparison.Ordinal);
         Assert.Contains("Canvas.ZIndex=\"1000\"", xaml, StringComparison.Ordinal);
@@ -187,7 +190,11 @@ public sealed class AotStage5B4C1C2AContractTests
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
         string rust = ReadRepositoryFile("native/deskbox-native/src/lib.rs");
 
+<<<<<<< HEAD
         Assert.Contains("$auditProfileVersion = 61", audit, StringComparison.Ordinal);
+=======
+        Assert.Contains("$auditProfileVersion = 59", audit, StringComparison.Ordinal);
+>>>>>>> upstream/main
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1C2ARequiredProductPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1C2AMissingSmokeScriptPatterns", audit, StringComparison.Ordinal);
@@ -196,7 +203,11 @@ public sealed class AotStage5B4C1C2AContractTests
         Assert.Contains("$sourceFile -eq $stage5B4C1ASourceFiles[4]", audit, StringComparison.Ordinal);
         Assert.Contains("$pattern -eq 'NativeDrop'", audit, StringComparison.Ordinal);
         Assert.Contains("C1C2A applies its own narrow gate", audit, StringComparison.Ordinal);
+<<<<<<< HEAD
         Assert.Contains("$RequiredAuditProfileVersion = 61", launcher, StringComparison.Ordinal);
+=======
+        Assert.Contains("$RequiredAuditProfileVersion = 59", launcher, StringComparison.Ordinal);
+>>>>>>> upstream/main
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("Native AOT stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("assert_eq!(deskbox_native_capabilities(), 511);", rust, StringComparison.Ordinal);

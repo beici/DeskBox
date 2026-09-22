@@ -68,10 +68,13 @@ public sealed class WidgetVisualActivityContractTests
         Assert.DoesNotContain("FileService.ClearShellKindCache()", app, StringComparison.Ordinal);
         Assert.DoesNotContain("SuspendVisibleIdleVisualActivity", app, StringComparison.Ordinal);
 
+        // The gate section stops at HasAmbientVisualWork on purpose: that
+        // property legitimately references _compactMarqueeStoryboard, and it
+        // is excluded from HasActiveVisualWork by design.
         string shellGate = ExtractSection(
             shell,
             "internal bool HasActiveVisualWork =>",
-            "public bool HasWidgetGroup");
+            "internal bool HasAmbientVisualWork =>");
         Assert.DoesNotContain("_isCompactVinylRotating", shellGate, StringComparison.Ordinal);
         Assert.DoesNotContain("_compactMarqueeStoryboard", shellGate, StringComparison.Ordinal);
         Assert.DoesNotContain("ActiveMusicTimerCount", manager, StringComparison.Ordinal);
@@ -257,7 +260,7 @@ public sealed class WidgetVisualActivityContractTests
     [Fact]
     public void AutomaticCleanup_HasNoForcedGcWorkingSetTrimOrHeapCompaction()
     {
-        string helper = Read("src/DeskBox/Helpers/Win32Helper.cs");
+        string helper = Read("src/DeskBox/Platform/Win32Helper.cs");
         string app = Read("src/DeskBox/App.xaml.cs");
         string reclaimer = Read("src/DeskBox/Services/MemoryReclaimer.cs");
 

@@ -2,6 +2,7 @@
 
 using DeskBox.Helpers;
 using DeskBox.Models;
+using DeskBox.Platform;
 using DeskBox.Services;
 using Microsoft.UI;
 using Microsoft.UI.Composition;
@@ -475,6 +476,13 @@ public abstract partial class WidgetWindowBase
             finalBounds = CompleteExpandedWidgetDrag(finalBounds);
             CapturePositionAnchor(finalBounds.X, finalBounds.Y, finalBounds.Width, finalBounds.Height);
             UpdateConfigBoundsFromPhysical(finalBounds.X, finalBounds.Y, finalBounds.Width, finalBounds.Height, persist: true);
+            if (_targetCollapsed)
+            {
+                // The pointer is still resting on the just-dropped capsule; an
+                // immediate Smart hover-expand would look like the placement
+                // snapped back on its own.
+                _suppressHoverExpansionAfterDragUntilPointerExit = true;
+            }
         }
         EndWidgetBoundsInteraction();
         OnDragEnd(hasMoved);
@@ -753,6 +761,10 @@ public abstract partial class WidgetWindowBase
             finalBounds = CompleteExpandedWidgetDrag(finalBounds);
             CapturePositionAnchor(finalBounds.X, finalBounds.Y, finalBounds.Width, finalBounds.Height);
             UpdateConfigBoundsFromPhysical(finalBounds.X, finalBounds.Y, finalBounds.Width, finalBounds.Height, persist: true);
+            if (_targetCollapsed)
+            {
+                _suppressHoverExpansionAfterDragUntilPointerExit = true;
+            }
         }
         EndWidgetBoundsInteraction();
         OnDragEnd(hasMoved);

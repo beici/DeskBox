@@ -1,11 +1,12 @@
 using System.Runtime.InteropServices;
 using DeskBox.Helpers;
 using DeskBox.Models;
+using DeskBox.Platform;
 using Windows.System;
 
 namespace DeskBox.Services;
 
-public sealed class GlobalHotkeyService : IDisposable
+public sealed class GlobalHotkeyService : IDisposable, IHookHealthProbeTarget
 {
     public const uint WmHotkey = 0x0312;
     private const uint WmReservedHotkey = 0x8442;
@@ -17,11 +18,11 @@ public sealed class GlobalHotkeyService : IDisposable
     private const uint ModNoRepeat = 0x4000;
     private static readonly UIntPtr SubclassId = new(0x4442);
 
-    public readonly record struct HotkeyApplyResult(bool Succeeded, string? Error)
-    {
-        public static HotkeyApplyResult Success(string? error) => new(true, error);
-        public static HotkeyApplyResult Failure(string? error) => new(false, error);
-    };
+    // Hardware Copilot keys deliver Left Shift + Win + F23 on most keyboards,
+    // so the preset registers that chord instead of adding a new activation kind.
+    public static GlobalHotkeyGesture CopilotKeyGesture { get; } = new(
+        HotkeyModifierKeys.Windows | HotkeyModifierKeys.Shift,
+        (int)VirtualKey.F23);
 
     private readonly SettingsService _settingsService;
     private readonly LocalizationService _localizationService;
@@ -197,90 +198,6 @@ public sealed class GlobalHotkeyService : IDisposable
         NotifyRegistrationChanged();
     }
 
-    public async Task<HotkeyApplyResult> RefreshRegistrationAsync()
-    {
-        Unregister();
-        LastError = null;
-
-        App.Log($"[GlobalHotkey] RefreshRegistrationAsync hwnd=0x{_windowHandle.ToInt64():X} enabled={_settingsService.Settings.GlobalHotkeyEnabled} gesture={CurrentGestureText}");
-
-        if (_windowHandle == IntPtr.Zero || !_settingsService.Settings.GlobalHotkeyEnabled)
-        {
-            App.Log("[GlobalHotkey] RefreshRegistrationAsync skipped: handle=0 or disabled");
-            NotifyRegistrationChanged();
-            return HotkeyApplyResult.Success(null);
-        }
-
-        GlobalHotkeyActivation activation = CurrentActivation;
-        if (!IsValidActivation(activation))
-        {
-            App.Log("[GlobalHotkey] RefreshRegistrationAsync skipped: invalid activation");
-            LastError = _localizationService.T("Settings.GlobalHotkey.Status.Invalid");
-            NotifyRegistrationChanged();
-            return HotkeyApplyResult.Failure(_localizationService.T("Settings.GlobalHotkey.Status.Invalid"));
-        }
-
-        if (!_isSubclassInstalled)
-        {
-            App.Log("[GlobalHotkey] RefreshRegistrationAsync skipped: window subclass unavailable");
-            LastError = _localizationService.T("Settings.GlobalHotkey.Status.Unavailable");
-            NotifyRegistrationChanged();
-            return HotkeyApplyResult.Failure(_localizationService.T("Settings.GlobalHotkey.Status.Unavailable"));
-        }
-
-        if (TryGetReservedHookMode(activation, out ReservedHotkeyMode reservedMode))
-        {
-            if (IsReservedHookDisabledByEnvironment())
-            {
-                App.Log("[GlobalHotkey] Reserved hotkey hook disabled by environment");
-                LastError = _localizationService.T("Settings.GlobalHotkey.Status.Unavailable");
-                NotifyRegistrationChanged();
-                return HotkeyApplyResult.Failure(_localizationService.T("Settings.GlobalHotkey.Status.Unavailable"));
-            }
-
-            try
-            {
-                if (await _reservedHotkeyHook.TryStartAsync(
-                        _windowHandle,
-                        WmReservedHotkey,
-                        reservedMode))
-                {
-                    _isRegistered = true;
-                    _usesReservedHook = true;
-                    App.Log(
-                        $"[GlobalHotkey] Registered reserved gesture={CurrentGestureText} " +
-                        $"mode=hook hwnd=0x{_windowHandle.ToInt64():X}");
-                    NotifyRegistrationChanged();
-                    return HotkeyApplyResult.Success(null);
-                }
-            }
-            catch (Exception ex)
-            {
-                App.Log($"[GlobalHotkey] Reserved hook startup threw: {ex}");
-            }
-
-            App.Log(
-                $"[GlobalHotkey] Reserved hook registration failed gesture={CurrentGestureText} " +
-                $"error={_reservedHotkeyHook.LastErrorCode}");
-            LastError = _localizationService.T("Settings.GlobalHotkey.Status.Unavailable");
-            NotifyRegistrationChanged();
-            return HotkeyApplyResult.Failure(_localizationService.T("Settings.GlobalHotkey.Status.Unavailable"));
-        }
-
-        if (Register(_windowHandle, MainHotkeyId, activation.Gesture, out int registerError))
-        {
-            _isRegistered = true;
-            App.Log($"[GlobalHotkey] Registered gesture={CurrentGestureText} hwnd=0x{_windowHandle.ToInt64():X}");
-            NotifyRegistrationChanged();
-            return HotkeyApplyResult.Success(null);
-        }
-
-        App.Log($"[GlobalHotkey] RegisterHotKey failed gesture={CurrentGestureText} error={registerError}");
-        LastError = _localizationService.T("Settings.GlobalHotkey.Status.Conflict");
-        NotifyRegistrationChanged();
-        return HotkeyApplyResult.Failure(_localizationService.T("Settings.GlobalHotkey.Status.Conflict"));
-    }
-
     public bool TryApplyGesture(GlobalHotkeyGesture gesture, out string? error)
     {
         return TryApplyActivation(GlobalHotkeyActivation.FromChord(gesture), out error);
@@ -296,6 +213,14 @@ public sealed class GlobalHotkeyService : IDisposable
         if (!IsValidActivation(activation))
         {
             error = _localizationService.T("Settings.GlobalHotkey.Status.Invalid");
+            return false;
+        }
+
+        if (activation.Kind == HotkeyActivationKind.Chord &&
+            IsReservedSystemGesture(activation.Gesture) &&
+            IsGestureOwnedBySearchHotkey(activation.Gesture))
+        {
+            error = _localizationService.T("Settings.GlobalHotkey.Status.SearchHotkeyConflict");
             return false;
         }
 
@@ -362,87 +287,6 @@ public sealed class GlobalHotkeyService : IDisposable
         return false;
     }
 
-    public Task<HotkeyApplyResult> TryApplyGestureAsync(GlobalHotkeyGesture gesture)
-    {
-        return TryApplyActivationAsync(GlobalHotkeyActivation.FromChord(gesture));
-    }
-
-    public async Task<HotkeyApplyResult> TryApplyActivationAsync(GlobalHotkeyActivation activation)
-    {
-        activation = NormalizeActivation(
-            activation.Kind,
-            (int)activation.Gesture.Modifiers,
-            activation.Gesture.VirtualKey);
-        if (!IsValidActivation(activation))
-        {
-            string error = _localizationService.T("Settings.GlobalHotkey.Status.Invalid");
-            LastError = error;
-            return HotkeyApplyResult.Failure(error);
-        }
-
-        var settings = _settingsService.Settings;
-        HotkeyActivationKind previousKind = settings.GlobalHotkeyActivationKind;
-        int previousModifiers = settings.GlobalHotkeyModifiers;
-        int previousVirtualKey = settings.GlobalHotkeyKey;
-        GlobalHotkeyActivation previousActivation = NormalizeActivation(
-            previousKind,
-            previousModifiers,
-            previousVirtualKey);
-        bool isCurrentActivation = activation.Equals(previousActivation);
-        bool shouldBeActive = _windowHandle != IntPtr.Zero && settings.GlobalHotkeyEnabled;
-
-        if (isCurrentActivation)
-        {
-            if (shouldBeActive && !IsRegistered)
-            {
-                HotkeyApplyResult refreshResult = await RefreshRegistrationAsync();
-                if (!IsRegistered)
-                {
-                    return refreshResult.Error is not null
-                        ? HotkeyApplyResult.Failure(refreshResult.Error)
-                        : HotkeyApplyResult.Failure(_localizationService.T("Settings.GlobalHotkey.Status.Unavailable"));
-                }
-            }
-
-            return HotkeyApplyResult.Success(null);
-        }
-
-        settings.GlobalHotkeyActivationKind = activation.Kind;
-        settings.GlobalHotkeyModifiers = (int)activation.Gesture.Modifiers;
-        settings.GlobalHotkeyKey = activation.Gesture.VirtualKey;
-
-        if (!shouldBeActive)
-        {
-            _settingsService.SaveDebounced();
-            return HotkeyApplyResult.Success(null);
-        }
-
-        // The real registration is the commit point. A probe can become stale
-        // before the subsequent RegisterHotKey call, so register the requested
-        // gesture first and roll back both settings and registration on failure.
-        HotkeyApplyResult result = await RefreshRegistrationAsync();
-        if (IsRegistered)
-        {
-            _settingsService.SaveDebounced();
-            return result;
-        }
-
-        string registrationError = result.Error ??
-            _localizationService.T("Settings.GlobalHotkey.Status.Unavailable");
-        settings.GlobalHotkeyActivationKind = previousKind;
-        settings.GlobalHotkeyModifiers = previousModifiers;
-        settings.GlobalHotkeyKey = previousVirtualKey;
-        result = await RefreshRegistrationAsync();
-        if (!IsRegistered)
-        {
-            App.Log(
-                $"[GlobalHotkey] Rollback registration failed previousActivation=" +
-                $"{FormatActivation(previousActivation, _localizationService)}");
-        }
-
-        return HotkeyApplyResult.Failure(registrationError);
-    }
-
     public void SetEnabled(bool enabled)
     {
         if (_settingsService.Settings.GlobalHotkeyEnabled == enabled)
@@ -454,6 +298,21 @@ public sealed class GlobalHotkeyService : IDisposable
         _settingsService.SaveDebounced();
         RefreshRegistration();
     }
+
+    string IHookHealthProbeTarget.ProbeName => "global-hotkey";
+
+    // Only the reserved-gesture path owns a low-level hook; RegisterHotKey
+    // chords are delivered as WM_HOTKEY and cannot be silently unhooked.
+    bool IHookHealthProbeTarget.HookProbeWanted => _usesReservedHook && _isRegistered;
+
+    bool IHookHealthProbeTarget.HookConfirmedDead => !_reservedHotkeyHook.IsActive;
+
+    long IHookHealthProbeTarget.LastHookCallbackTicks => _reservedHotkeyHook.LastCallbackTicks;
+
+    Task<bool> IHookHealthProbeTarget.ProbeHookAliveAsync(int echoWaitMilliseconds) =>
+        _reservedHotkeyHook.ProbeAliveAsync(echoWaitMilliseconds);
+
+    void IHookHealthProbeTarget.RecoverHook() => RefreshRegistration();
 
     public bool ResetToDefault(out string? error)
     {
@@ -500,6 +359,11 @@ public sealed class GlobalHotkeyService : IDisposable
                gesture.Modifiers is
                    HotkeyModifierKeys.Windows or
                    HotkeyModifierKeys.Alt;
+    }
+
+    internal static bool IsGestureOwnedBySearchHotkey(GlobalHotkeyGesture gesture)
+    {
+        return App.Current?.SearchHotkeyService?.CurrentGesture.Equals(gesture) == true;
     }
 
     public static bool IsValidActivation(GlobalHotkeyActivation activation)
@@ -566,6 +430,11 @@ public sealed class GlobalHotkeyService : IDisposable
         if (gesture.VirtualKey <= 0)
         {
             return localization.T("Settings.GlobalHotkey.NotSet");
+        }
+
+        if (gesture.Equals(CopilotKeyGesture))
+        {
+            return localization.T("Settings.GlobalHotkey.Preset.CopilotKey");
         }
 
         var parts = new List<string>();

@@ -1,5 +1,6 @@
 using DeskBox.Helpers;
 using DeskBox.Models;
+using DeskBox.Platform;
 using DeskBox.Services;
 using DeskBox.ViewModels;
 using System.ComponentModel;
@@ -128,6 +129,7 @@ public sealed partial class SettingsWindow
             "WindowsTap" => new GlobalHotkeyActivation(
                 HotkeyActivationKind.WindowsTap,
                 fallbackGesture),
+            "CopilotKey" => GlobalHotkeyActivation.FromChord(GlobalHotkeyService.CopilotKeyGesture),
             _ => default
         };
         if (!GlobalHotkeyService.IsValidActivation(activation))
@@ -147,9 +149,10 @@ public sealed partial class SettingsWindow
         }
 
         bool applied;
+        int errorCode = 0;
         if (App.Current.DesktopDoubleClickActivationService is { } service)
         {
-            applied = await service.TrySetEnabledAsync(toggle.IsOn);
+            applied = service.TrySetEnabled(toggle.IsOn, out errorCode);
         }
         else
         {
@@ -160,8 +163,8 @@ public sealed partial class SettingsWindow
 
         if (!applied)
         {
-            App.Log("[DesktopDoubleClick] Settings toggle failed");
-            _ = ShowInfoDialogAsync(
+            App.Log($"[DesktopDoubleClick] Settings toggle failed error={errorCode}");
+            await ShowInfoDialogAsync(
                 _localizationService.T("Settings.GlobalHotkey.Dialog.FailedTitle"),
                 _localizationService.T("Settings.DesktopDoubleClick.Status.Unavailable"));
         }
@@ -410,6 +413,9 @@ public sealed partial class SettingsWindow
                 activation.Gesture.VirtualKey == (int)VirtualKey.Space;
             GlobalHotkeyPresetWindowsTapButton.IsChecked =
                 activation.Kind == HotkeyActivationKind.WindowsTap;
+            GlobalHotkeyPresetCopilotKeyButton.IsChecked =
+                activation.Kind == HotkeyActivationKind.Chord &&
+                activation.Gesture.Equals(GlobalHotkeyService.CopilotKeyGesture);
             DesktopDoubleClickToggle.IsOn =
                 _settingsService.Settings.DesktopDoubleClickEnabled;
         }
@@ -447,12 +453,11 @@ public sealed partial class SettingsWindow
             return;
         }
 
-        GlobalHotkeyService.HotkeyApplyResult result = await hotkeyService.TryApplyActivationAsync(activation);
-        if (!result.Succeeded)
+        if (!hotkeyService.TryApplyActivation(activation, out string? error))
         {
-            _ = ShowInfoDialogAsync(
+            await ShowInfoDialogAsync(
                 _localizationService.T("Settings.GlobalHotkey.Dialog.FailedTitle"),
-                result.Error ?? _localizationService.T("Settings.GlobalHotkey.Status.Unregistered"));
+                error ?? _localizationService.T("Settings.GlobalHotkey.Status.Unregistered"));
         }
 
         ViewModel.RefreshGlobalHotkeyState();

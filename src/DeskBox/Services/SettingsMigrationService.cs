@@ -1,4 +1,5 @@
 using DeskBox.Models;
+using System.Text.Json;
 
 namespace DeskBox.Services;
 
@@ -46,40 +47,120 @@ public sealed class SettingsMigrationPipeline
     }
 
     /// <summary>
-    /// Runs all necessary migrations to bring the settings from their current
-    /// schema version up to <see cref="CurrentSchemaVersion"/>.
-    /// Returns true if any migration was applied.
+    /// Test seam for fault-injection: the chain behavior (step failures,
+    /// checkpoints, ordering) is what the tests pin, not the real steps.
     /// </summary>
-    public async Task<bool> RunMigrationsAsync(AppSettings settings)
+    internal SettingsMigrationPipeline(IEnumerable<ISettingsMigration> migrations)
+    {
+        _migrations.AddRange(migrations);
+    }
+
+    /// <summary>
+    /// Runs all necessary migrations to bring the settings from their current
+    /// schema version up to <see cref="CurrentSchemaVersion"/>. Runs
+    /// copy-on-write: every step executes on a deserialized copy of the last
+    /// committed state and a failed step is discarded wholesale, so the
+    /// returned graph is either fully migrated through its recorded
+    /// checkpoint or byte-for-byte the input. The caller replaces its
+    /// settings reference with the returned one.
+    /// </summary>
+    public (AppSettings Settings, bool AnyApplied) RunMigrationsOnCopy(AppSettings settings)
     {
         if (settings.SchemaVersion >= CurrentSchemaVersion)
         {
-            return false;
+            return (settings, false);
         }
 
-        bool anyApplied = false;
+        AppSettings working = settings;
         int version = settings.SchemaVersion;
+        bool anyApplied = false;
 
         foreach (var migration in _migrations.OrderBy(m => m.FromVersion))
         {
-            if (migration.FromVersion >= version && migration.FromVersion < CurrentSchemaVersion)
+            if (migration.FromVersion != version)
             {
-                try
-                {
-                    await migration.MigrateAsync(settings);
-                    version = migration.FromVersion + 1;
-                    anyApplied = true;
-                    App.Log($"[SettingsMigration] Applied migration from version {migration.FromVersion} to {version}");
-                }
-                catch (Exception ex)
-                {
-                    App.Log($"[SettingsMigration] Migration from {migration.FromVersion} failed: {ex.Message}");
-                }
+                continue;
             }
+
+            if (migration.FromVersion >= CurrentSchemaVersion)
+            {
+                break;
+            }
+
+            byte[]? snapshot = TrySerializeSettings(working);
+            if (snapshot is null)
+            {
+                App.Log(
+                    $"[SettingsMigration] Migration from version {migration.FromVersion} skipped: " +
+                    "the pre-step settings snapshot could not be taken.");
+                break;
+            }
+
+            if (TryDeserializeSettings(snapshot) is not { } stepCopy)
+            {
+                App.Log(
+                    $"[SettingsMigration] Migration from version {migration.FromVersion} skipped: " +
+                    "the pre-step settings snapshot could not be read back.");
+                break;
+            }
+
+            try
+            {
+                migration.Migrate(stepCopy);
+            }
+            catch (Exception ex)
+            {
+                // A failed step must stop the chain and leave the graph
+                // untouched: every later migration assumes the schema the
+                // failed step was supposed to produce, and the discarded copy
+                // carries no half-applied mutations.
+                App.Log(
+                    $"[SettingsMigration] Migration from version {migration.FromVersion} failed: {ex.Message}; " +
+                    $"state untouched, stopping at schema version {version} (will retry on next launch)");
+                break;
+            }
+
+            working = stepCopy;
+            version = migration.FromVersion + 1;
+            anyApplied = true;
+            App.Log($"[SettingsMigration] Applied migration from version {migration.FromVersion} to {version}");
         }
 
-        settings.SchemaVersion = CurrentSchemaVersion;
-        return anyApplied;
+        // Record the checkpoint the chain actually reached. A partial run
+        // keeps the last successful version so the failed step retries next
+        // launch; only a full pass reaches CurrentSchemaVersion.
+        working.SchemaVersion = version;
+        return (working, anyApplied);
+    }
+
+    private static byte[]? TrySerializeSettings(AppSettings settings)
+    {
+        try
+        {
+            return JsonSerializer.SerializeToUtf8Bytes(
+                settings,
+                SettingsJsonContext.Default.AppSettings);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[SettingsMigration] Settings snapshot failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static AppSettings? TryDeserializeSettings(byte[] snapshot)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize(
+                snapshot,
+                SettingsJsonContext.Default.AppSettings);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[SettingsMigration] Settings snapshot read-back failed: {ex.Message}");
+            return null;
+        }
     }
 }
 

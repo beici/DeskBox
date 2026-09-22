@@ -1,4 +1,5 @@
 using DeskBox.Helpers;
+using DeskBox.Platform;
 using DeskBox.Services;
 using DeskBox.ViewModels;
 using Microsoft.UI.Xaml;
@@ -199,7 +200,7 @@ public sealed partial class SettingsWindow
             App.Log($"[DataBackup] Restore picker failed: {ex}");
             await ShowInfoDialogAsync(
                 _localizationService.T("Settings.DataBackup.RestoreFailedTitle"),
-                _localizationService.Format("Settings.DataBackup.RestoreFailedBody", ex.Message));
+                _localizationService.Format("Settings.DataBackup.RestoreFailedBody", FormatBackupError(ex)));
             return;
         }
 
@@ -228,6 +229,11 @@ public sealed partial class SettingsWindow
             string integrityWarning = preparation.HasIntegrityManifest
                 ? string.Empty
                 : $"\n\n{_localizationService.T("Settings.DataBackup.LegacyIntegrityWarning")}";
+            string newerVersionWarning = preparation.IsFromNewerAppVersion
+                ? $"\n\n{_localizationService.Format(
+                    "Settings.DataBackup.RestoreNewerVersionWarning",
+                    preparation.AppVersion)}"
+                : string.Empty;
             var dialog = new ContentDialog
             {
                 XamlRoot = SettingsRoot.XamlRoot,
@@ -243,7 +249,7 @@ public sealed partial class SettingsWindow
                         preparation.AppVersion,
                         preparation.FileCount,
                         ViewModel.FormatBytes(preparation.TotalUncompressedBytes),
-                        integrityWarning),
+                        integrityWarning + newerVersionWarning),
                     TextWrapping = TextWrapping.Wrap
                 }
             };
@@ -278,7 +284,7 @@ public sealed partial class SettingsWindow
             }
             await ShowInfoDialogAsync(
                 _localizationService.T("Settings.DataBackup.RestoreFailedTitle"),
-                _localizationService.Format("Settings.DataBackup.RestoreFailedBody", ex.Message));
+                _localizationService.Format("Settings.DataBackup.RestoreFailedBody", FormatBackupError(ex)));
         }
         finally
         {

@@ -124,7 +124,11 @@ public sealed class AotStage4D4AContractTests
         Assert.Contains("deskbox_explorer_shell_launch_v1", buildScript, StringComparison.Ordinal);
         Assert.Contains("Rust native Stage 5B-4C1B2B capability mismatch: expected 511", buildScript, StringComparison.Ordinal);
 
+<<<<<<< HEAD
         Assert.Contains("$auditProfileVersion = 61", auditScript, StringComparison.Ordinal);
+=======
+        Assert.Contains("$auditProfileVersion = 59", auditScript, StringComparison.Ordinal);
+>>>>>>> upstream/main
         Assert.Contains("schemaVersion = 55", auditScript, StringComparison.Ordinal);
         Assert.Contains("stage4D4AWarningMessages", auditScript, StringComparison.Ordinal);
         Assert.Contains("ExplorerShellLaunchService.cs", auditScript, StringComparison.Ordinal);

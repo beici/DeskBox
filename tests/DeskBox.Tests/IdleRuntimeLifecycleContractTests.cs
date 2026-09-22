@@ -51,8 +51,8 @@ public sealed class IdleRuntimeLifecycleContractTests
             "private void StartTodoReminderService()");
         string manager = Read("src/DeskBox/Services/WidgetManager.FeatureWidgets.cs");
 
-        Assert.Contains("RefreshQuickCaptureClipboardService();", launch, StringComparison.Ordinal);
-        Assert.Contains("RefreshTodoReminderService();", launch, StringComparison.Ordinal);
+        Assert.Contains("() => RefreshQuickCaptureClipboardService()", launch, StringComparison.Ordinal);
+        Assert.Contains("() => RefreshTodoReminderService()", launch, StringComparison.Ordinal);
         Assert.DoesNotContain("new QuickCaptureClipboardService", launch, StringComparison.Ordinal);
         Assert.DoesNotContain("StartTodoReminderService();", launch, StringComparison.Ordinal);
 

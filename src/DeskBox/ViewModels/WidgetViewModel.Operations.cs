@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DeskBox.Helpers;
@@ -72,6 +73,27 @@ public partial class WidgetViewModel
 
         if (normalizedPaths.Count == 0)
         {
+            LastImportSkippedUndisplayableCount = 0;
+            return [];
+        }
+
+        // Entries the widget item list can never represent (hidden files)
+        // must not be moved into managed storage: the folder would hold an
+        // invisible file no tile can show. The probe does filesystem I/O, so
+        // partition off the dispatcher thread.
+        (List<string> displayablePaths, int skippedUndisplayableCount) =
+            await Task.Run(() => PartitionDisplayableImportPaths(normalizedPaths));
+        LastImportSkippedUndisplayableCount = skippedUndisplayableCount;
+        if (skippedUndisplayableCount > 0)
+        {
+            App.Log(
+                $"[Import] Refused undisplayable entries widget={Config.Id} " +
+                $"skipped={skippedUndisplayableCount} " +
+                $"requested={normalizedPaths.Count}");
+        }
+
+        if (displayablePaths.Count == 0)
+        {
             return [];
         }
 
@@ -89,15 +111,15 @@ public partial class WidgetViewModel
 
         string destinationFolderPath = CurrentFolderPath!;
         bool shouldMove = moveWhenMapped ?? ShouldMoveManagedItems(
-            normalizedPaths,
+            displayablePaths,
             destinationFolderPath);
-        OrganizationHistoryEntry historyEntry;
+        OrganizerOperationResult operation;
         try
         {
-            historyEntry = await _organizerService.OrganizeDropAsync(
+            operation = await _organizerService.OrganizeDropAsync(
                 Config,
                 Name,
-                normalizedPaths,
+                displayablePaths,
                 shouldMove,
                 useShellProgress,
                 ownerWindowHandle,
@@ -118,8 +140,11 @@ public partial class WidgetViewModel
             throw;
         }
 
+        // CompletedItems (not the persisted History entry) carries this
+        // run's receipts: oversized batches are compacted to a summary
+        // before the entry is returned.
         await ApplyImportedTransferResultsAsync(
-            historyEntry.Items.Select(item => new FileService.FileTransferResult(
+            operation.CompletedItems.Select(item => new FileService.FileTransferResult(
                 item.SourcePath,
                 item.DestinationPath)),
             shouldMove,
@@ -128,10 +153,38 @@ public partial class WidgetViewModel
             activateManualSortOnSuccess,
             preferredStackAnchor);
 
-        return historyEntry.Items
+        return operation.CompletedItems
             .Select(item => Path.GetFullPath(item.SourcePath))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    /// <summary>
+    /// Number of paths the most recent <see cref="ImportPathsAsync"/> call
+    /// refused because the widget item list can never display them. Import
+    /// surfaces read this to explain a short count instead of reporting
+    /// success for files that were never transferred.
+    /// </summary>
+    internal int LastImportSkippedUndisplayableCount { get; private set; }
+
+    private static (List<string> DisplayablePaths, int SkippedUndisplayableCount)
+        PartitionDisplayableImportPaths(IReadOnlyList<string> paths)
+    {
+        var displayablePaths = new List<string>(paths.Count);
+        int skippedCount = 0;
+        foreach (string path in paths)
+        {
+            if (FileService.IsFilteredFromWidgetDisplay(path))
+            {
+                skippedCount++;
+            }
+            else
+            {
+                displayablePaths.Add(path);
+            }
+        }
+
+        return (displayablePaths, skippedCount);
     }
 
     private async Task ApplyImportedTransferResultsAsync(
@@ -152,59 +205,89 @@ public partial class WidgetViewModel
             .Select(group => group.Last())
             .ToArray();
 
-        if (shouldMove)
-        {
-            foreach (string sourcePath in materialized.Select(
-                         result => result.SourcePath))
-            {
-                if (Path.GetDirectoryName(sourcePath)?.Equals(
-                        destinationFolderPath,
-                        StringComparison.OrdinalIgnoreCase) == true)
-                {
-                    RemoveItemByPath(sourcePath);
-                }
-            }
-        }
-
         WidgetSortMode? originalSortMode = null;
         bool originalSortDescending = Config.SortDescending;
-        if (activateManualSortOnSuccess &&
-            (preferredManualIndex.HasValue ||
-             preferredStackAnchor.HasValue) &&
-            Config.SortMode != WidgetSortMode.Manual)
-        {
-            originalSortMode = Config.SortMode;
-            Config.SortMode = WidgetSortMode.Manual;
-            Config.SortDescending = false;
-            NormalizeSortOrder();
-            OnPropertyChanged(nameof(SortModeLabel));
-        }
-
         bool insertedAny = false;
         var importedDestinationPaths = new List<string>();
         int nextManualIndex = preferredManualIndex ?? -1;
-        foreach (string destinationPath in materialized.Select(
-                     result => result.DestinationPath))
+
+        // One scope for the whole batch: removals, the manual-mode switch and
+        // every per-file upsert defer normalization, persistence, hydration
+        // and the render/stack rebuild queues to the single finalization at
+        // scope exit. The stack-anchor insertion and sort-mode commit below
+        // deliberately run after that finalization so they observe the
+        // normalized, settled item list.
+        IDisposable batchScope = EnterItemMutationScope();
+        var upsertStopwatch = Stopwatch.StartNew();
+        try
         {
-            if (!File.Exists(destinationPath) &&
-                !Directory.Exists(destinationPath))
+            if (shouldMove)
             {
-                continue;
+                foreach (string sourcePath in materialized.Select(
+                             result => result.SourcePath))
+                {
+                    if (Path.GetDirectoryName(sourcePath)?.Equals(
+                            destinationFolderPath,
+                            StringComparison.OrdinalIgnoreCase) == true)
+                    {
+                        RemoveItemByPath(sourcePath);
+                    }
+                }
             }
 
-            RecordFileAddedAt(destinationPath, DateTimeOffset.Now);
-            bool inserted = await UpsertFolderItemAsync(
-                destinationPath,
-                nextManualIndex >= 0 ? nextManualIndex : null);
-            if (inserted && nextManualIndex >= 0)
+            if (activateManualSortOnSuccess &&
+                (preferredManualIndex.HasValue ||
+                 preferredStackAnchor.HasValue) &&
+                Config.SortMode != WidgetSortMode.Manual)
             {
-                nextManualIndex++;
+                originalSortMode = Config.SortMode;
+                Config.SortMode = WidgetSortMode.Manual;
+                Config.SortDescending = false;
+                NormalizeSortOrder();
+                OnPropertyChanged(nameof(SortModeLabel));
             }
 
-            insertedAny |= inserted;
-            if (inserted)
+            foreach (string destinationPath in materialized.Select(
+                         result => result.DestinationPath))
             {
-                importedDestinationPaths.Add(destinationPath);
+                if (!File.Exists(destinationPath) &&
+                    !Directory.Exists(destinationPath))
+                {
+                    continue;
+                }
+
+                RecordFileAddedAt(destinationPath, DateTimeOffset.Now);
+                bool inserted = await UpsertFolderItemAsync(
+                    destinationPath,
+                    nextManualIndex >= 0 ? nextManualIndex : null);
+                if (inserted && nextManualIndex >= 0)
+                {
+                    nextManualIndex++;
+                }
+
+                insertedAny |= inserted;
+                if (inserted)
+                {
+                    importedDestinationPaths.Add(destinationPath);
+                }
+            }
+        }
+        finally
+        {
+            upsertStopwatch.Stop();
+            var finalizeStopwatch = Stopwatch.StartNew();
+            batchScope.Dispose();
+            finalizeStopwatch.Stop();
+            if (materialized.Length > 0)
+            {
+                // upsertLoopMs and finalizeSyncMs together bound the
+                // post-processing this widget runs on the UI thread; neither
+                // alone is the before/after number.
+                App.Log(
+                    $"[OrganizerPerf] importBatch attempted={materialized.Length} " +
+                    $"inserted={importedDestinationPaths.Count} " +
+                    $"upsertLoopMs={upsertStopwatch.ElapsedMilliseconds} " +
+                    $"finalizeSyncMs={finalizeStopwatch.ElapsedMilliseconds}");
             }
         }
 
@@ -273,19 +356,22 @@ public partial class WidgetViewModel
         int insertedCount = 0;
         var importedDestinationPaths = new List<string>();
         int nextManualIndex = Math.Max(0, preferredManualIndex);
-        foreach (string path in paths)
+        using (EnterItemMutationScope())
         {
-            if (!File.Exists(path) && !Directory.Exists(path))
+            foreach (string path in paths)
             {
-                continue;
-            }
+                if (!File.Exists(path) && !Directory.Exists(path))
+                {
+                    continue;
+                }
 
-            RecordFileAddedAt(path, DateTimeOffset.Now);
-            if (await UpsertFolderItemAsync(path, nextManualIndex))
-            {
-                insertedCount++;
-                nextManualIndex++;
-                importedDestinationPaths.Add(path);
+                RecordFileAddedAt(path, DateTimeOffset.Now);
+                if (await UpsertFolderItemAsync(path, nextManualIndex))
+                {
+                    insertedCount++;
+                    nextManualIndex++;
+                    importedDestinationPaths.Add(path);
+                }
             }
         }
 
@@ -407,13 +493,13 @@ public partial class WidgetViewModel
             return 0;
         }
 
-        var historyEntry = await _organizerService.MoveItemBackToDesktopAsync(
+        var operation = await _organizerService.MoveItemBackToDesktopAsync(
             Config,
             Name,
             item,
             useShellProgress,
             ownerWindowHandle);
-        if (historyEntry.Items.Any(entry => string.Equals(entry.SourcePath, item.Path, StringComparison.OrdinalIgnoreCase)))
+        if (operation.CompletedItems.Any(entry => string.Equals(entry.SourcePath, item.Path, StringComparison.OrdinalIgnoreCase)))
         {
             RemoveItemByPath(item.Path);
             RemoveStackMemberOverridePaths([item.Path]);
@@ -442,14 +528,17 @@ public partial class WidgetViewModel
             return 0;
         }
 
-        var historyEntry = await _organizerService.MoveItemsBackToDesktopAsync(
+        var operation = await _organizerService.MoveItemsBackToDesktopAsync(
             Config,
             Name,
             targets.Select(item => item.Path),
             useShellProgress,
             ownerWindowHandle);
 
-        var movedSourcePaths = historyEntry.Items
+        // CompletedItems (not the persisted History entry) carries this
+        // run's receipts: oversized batches are compacted to a summary
+        // before the entry is returned.
+        var movedSourcePaths = operation.CompletedItems
             .Select(item => item.SourcePath)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -525,7 +614,18 @@ public partial class WidgetViewModel
             return false;
         }
 
+        var gateStopwatch = System.Diagnostics.Stopwatch.StartNew();
         await _folderRefreshGate.WaitAsync(cancellationToken);
+        gateStopwatch.Stop();
+        if (gateStopwatch.ElapsedMilliseconds > 300)
+        {
+            // A long gate wait means another load (usually a watcher-triggered
+            // full reload) still owned the folder while the user navigated.
+            App.Log(
+                $"[FolderLoad] Refresh gate waitMs={gateStopwatch.ElapsedMilliseconds} " +
+                $"path='{expectedFolderPath}'");
+        }
+
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -636,12 +736,22 @@ public partial class WidgetViewModel
             return Task.CompletedTask;
         }
 
-        foreach (var path in normalizedPaths)
+        // The mirror of the import batch: an external drag-out of 2000 files
+        // used to pay the per-removal derived work 2000 times - most
+        // visibly one UpdateWidget/SaveDebounced reschedule per departing
+        // item through the AddedAt persistence (convicted by allocation
+        // tracing in the 2026-09-17 memory investigation). The mutation
+        // scope folds them into one end-of-batch finalization; each real
+        // departure still runs RemoveItemByPath itself.
+        using (EnterItemMutationScope())
         {
-            RemoveItemByPath(path);
-        }
+            foreach (var path in normalizedPaths)
+            {
+                RemoveItemByPath(path);
+            }
 
-        RemoveStackMemberOverridePaths(normalizedPaths);
+            RemoveStackMemberOverridePaths(normalizedPaths);
+        }
 
         return Task.CompletedTask;
     }

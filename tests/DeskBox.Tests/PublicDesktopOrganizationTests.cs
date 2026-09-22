@@ -70,7 +70,7 @@ public sealed class PublicDesktopOrganizationTests : IDisposable
         var final = await transaction.ExecuteAsync(retry, null, ownerWindowHandle: new IntPtr(1));
         Assert.Equal(plan.Id, final.History.Id);
         Assert.Equal(3, final.History.Items.Count);
-        Assert.Single(settings.Settings.RecentOrganizationHistory);
+        Assert.Single(settings.OrganizationHistory.Entries);
         Assert.Single(settings.Settings.Widgets);
         Assert.Empty(final.RetainedItems);
         Assert.Equal([pending.SourcePath], transfer.Batches.Last().Sources);
@@ -120,12 +120,16 @@ public sealed class PublicDesktopOrganizationTests : IDisposable
             string dest = Path.Combine(Storage, Path.GetFileName(source));
             Directory.CreateDirectory(Storage);
             File.Move(source, dest);
-            journal.Items.Add(new DesktopOrganizationRecoveryItem
+            var recoveryItem = new DesktopOrganizationRecoveryItem
             {
                 SourcePath = source, DestinationPath = dest, Completed = true,
                 SourceScope = source == shared ? DesktopOrganizationSourceScope.Public : DesktopOrganizationSourceScope.Personal,
                 Size = new FileInfo(dest).Length, LastWriteTimeUtc = File.GetLastWriteTimeUtc(dest)
-            });
+            };
+            // A real interrupted transaction records the destination object
+            // identity alongside the receipt.
+            DesktopOrganizationTransaction.RecordDestinationIdentity(recoveryItem, dest);
+            journal.Items.Add(recoveryItem);
         }
         await Recovery.SaveAsync(journal);
         var transfer = new FakeTransfer();
@@ -217,7 +221,7 @@ public sealed class PublicDesktopOrganizationTests : IDisposable
         await Assert.ThrowsAsync<DesktopOrganizationIncompleteUndoException>(() => transaction.UndoAsync(result.History.Id, new IntPtr(1)));
         var reloaded = new SettingsService(settingsPath);
         await reloaded.LoadAsync();
-        var history = Assert.Single(reloaded.Settings.RecentOrganizationHistory);
+        var history = Assert.Single(reloaded.OrganizationHistory.Entries);
         Assert.True(history.UndoStarted);
         Assert.Single(history.Items.Where(item => item.IsRestored));
         Assert.Equal(DesktopOrganizationSourceScope.Public, history.Items.Single(item => !item.IsRestored).SourceScope);

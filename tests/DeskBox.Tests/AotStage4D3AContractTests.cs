@@ -50,7 +50,11 @@ public sealed class AotStage4D3AContractTests
     {
         string script = ReadRepositoryFile("scripts/publish-aot-audit.ps1");
 
+<<<<<<< HEAD
         Assert.Contains("$auditProfileVersion = 61", script, StringComparison.Ordinal);
+=======
+        Assert.Contains("$auditProfileVersion = 59", script, StringComparison.Ordinal);
+>>>>>>> upstream/main
         Assert.Contains("schemaVersion = 55", script, StringComparison.Ordinal);
         Assert.Contains("stage4D3ALegacyRcwPatterns", script, StringComparison.Ordinal);
         Assert.Contains("stage4D3ALegacyRcwSourceMatches", script, StringComparison.Ordinal);

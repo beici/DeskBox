@@ -121,6 +121,9 @@ public sealed class SettingsCopyAndHierarchyTests
         string appSettings = File.ReadAllText(Path.Combine(
             root,
             "src/DeskBox/Models/AppSettings.cs"));
+        string fileWidgetSettings = File.ReadAllText(Path.Combine(
+            root,
+            "src/DeskBox/Models/FileWidgetSettingsSlice.cs"));
         string routes = File.ReadAllText(Path.Combine(
             root,
             "src/DeskBox/Views/SettingsWindow.xaml.cs"));
@@ -146,7 +149,7 @@ public sealed class SettingsCopyAndHierarchyTests
             StringComparison.Ordinal);
         Assert.Contains(
             "public bool FileStacksEnabled { get; set; } = true;",
-            appSettings,
+            fileWidgetSettings,
             StringComparison.Ordinal);
         Assert.DoesNotContain(
             "public bool WidgetCapsuleModeEnabled",
@@ -163,7 +166,7 @@ public sealed class SettingsCopyAndHierarchyTests
             StringComparison.Ordinal);
         Assert.Contains(
             "public bool FileItemSystemContextMenuEnabled { get; set; }",
-            appSettings,
+            fileWidgetSettings,
             StringComparison.Ordinal);
 
         Assert.Contains("HoverButtonActionsSummaryText", windowXaml, StringComparison.Ordinal);
@@ -375,7 +378,7 @@ public sealed class SettingsCopyAndHierarchyTests
             "x:Name=\"MaintenanceSection\"",
             "x:Name=\"BackupRestoreSettingsSection\"");
         Assert.Equal(
-            3,
+            4,
             CountOccurrences(
                 maintenance,
                 "Style=\"{StaticResource SettingCardIdentityGridStyle}\""));
@@ -694,7 +697,7 @@ public sealed class SettingsCopyAndHierarchyTests
     }
 
     [Fact]
-    public void ManagedStorageDesktopShortcutUsesActualStatusAndExplicitActions()
+    public void ManagedStorageDesktopShortcutToggleMirrorsFileSystemState()
     {
         string root = FindRepositoryRoot();
         string windowXaml = File.ReadAllText(Path.Combine(
@@ -705,18 +708,19 @@ public sealed class SettingsCopyAndHierarchyTests
             "src/DeskBox/Views/SettingsWindow.StorageAndUpdates.cs"));
 
         Assert.Contains(
-            "x:Name=\"ManagedStorageDesktopShortcutStatusText\"",
+            "x:Name=\"ManagedStorageDesktopShortcutToggle\"",
             windowXaml,
             StringComparison.Ordinal);
         Assert.Contains(
-            "Click=\"ManagedStorageDesktopShortcutActionButton_Click\"",
+            "Toggled=\"ManagedStorageDesktopShortcutToggle_Toggled\"",
             windowXaml,
             StringComparison.Ordinal);
         Assert.DoesNotContain(
             "IsOn=\"{Binding ManagedStorageDesktopShortcutEnabled",
             windowXaml,
             StringComparison.Ordinal);
-        Assert.Contains("shortcutService.HasShortcut()", storageCode, StringComparison.Ordinal);
+        Assert.Contains("_isSynchronizingManagedStorageDesktopShortcutToggle", storageCode, StringComparison.Ordinal);
+        Assert.Contains("ManagedStorageDesktopShortcutService.HasShortcut()", storageCode, StringComparison.Ordinal);
         Assert.Contains("shortcutService.CreateAsync()", storageCode, StringComparison.Ordinal);
         Assert.Contains("shortcutService.RemoveAsync()", storageCode, StringComparison.Ordinal);
     }

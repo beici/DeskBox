@@ -44,19 +44,24 @@ public sealed partial class DesktopOrganizationTransaction
         try
         {
             if (HasPendingRecovery)
-                throw new InvalidOperationException("A pending desktop operation must be recovered first.");
+                throw new DesktopOrganizationPendingRecoveryException();
             ValidatePlan(plan);
             ValidateAvailableSpace(plan);
 
             var settings = _settingsService.Settings;
+            var historyEntries = _settingsService.OrganizationHistory.Entries;
             var originalWidgets = settings.Widgets.ToList();
             var originalRules = settings.DesktopOrganizationRules.ToList();
-            var originalHistory = settings.RecentOrganizationHistory.ToList();
+            var originalHistory = historyEntries.ToList();
             var createdDirectories = new List<string>();
-            var completedMoves = new List<FileService.FileTransferResult>();
             var retainedItems = new List<DesktopOrganizationRetainedItem>();
             var createdWidgets = CreateCandidateWidgets(plan, settings);
             var journal = BuildJournal(plan);
+            // Flips exactly once the durable commit lands and the journal is
+            // cleared; past that point the catch below must never roll the
+            // in-memory settings back — the physical moves are committed and
+            // no journal remains to reconcile them.
+            bool committed = false;
 
             try
             {
@@ -107,7 +112,7 @@ public sealed partial class DesktopOrganizationTransaction
                     if (item.Completed) return;
                     item.DestinationPath = result.DestinationPath;
                     item.Completed = true;
-                    completedMoves.Add(result);
+                    RecordDestinationIdentity(item);
                     _recoveryStore.Save(journal);
                 }
 
@@ -186,51 +191,104 @@ public sealed partial class DesktopOrganizationTransaction
                     journal);
                 if (history.Items.Count > 0)
                 {
-                    var previous = settings.RecentOrganizationHistory.FirstOrDefault(entry => entry.Id == history.Id);
+                    var previous = historyEntries.FirstOrDefault(entry => entry.Id == history.Id);
                     if (previous is not null)
                     {
-                        history.Items.InsertRange(0, previous.Items);
+                        OrganizationHistoryPolicy.MergeRetryHistory(history, previous);
                         foreach (var target in previous.Targets)
                         {
                             history.Targets.RemoveAll(candidate => candidate.WidgetId == target.WidgetId);
                             history.Targets.Add(target);
                         }
-                        settings.RecentOrganizationHistory.Remove(previous);
+                        historyEntries.Remove(previous);
                     }
-                    settings.RecentOrganizationHistory.Insert(0, history);
-                    if (settings.RecentOrganizationHistory.Count > SettingsService.MaxRecentOrganizationHistoryCount)
-                    {
-                        settings.RecentOrganizationHistory.RemoveRange(
-                            SettingsService.MaxRecentOrganizationHistoryCount,
-                            settings.RecentOrganizationHistory.Count - SettingsService.MaxRecentOrganizationHistoryCount);
-                    }
+                    historyEntries.Insert(0, history);
+                    // The entry cap is enforced by the retention policy in
+                    // the compaction below (single source), which also knows
+                    // about active undos and journal-protected entries.
                 }
 
                 if (history.Items.Count == 0)
-                    history = settings.RecentOrganizationHistory.FirstOrDefault(entry => entry.Id == plan.Id) ?? history;
-                await _settingsService.SaveAsync(notifySubscribers: false);
+                    history = historyEntries.FirstOrDefault(entry => entry.Id == plan.Id) ?? history;
+
+                // The result page renders this run's completed receipts; the
+                // persisted entry may be compacted to a summary right after
+                // the journal is cleared below.
+                var completedItems = history.Items.ToList();
+
+                // Saving is the commit point: full receipts must be on disk
+                // while the recovery journal still exists. Compacting before
+                // this save would let a crash between save and journal clear
+                // make RecoverPendingAsync treat committed moves as pending
+                // and restore them back to the desktop. Settings land FIRST —
+                // widget/rule state is the dependent half; the history receipt
+                // drops LAST as the linearization point, so a durable receipt
+                // proves both halves committed. A crash with settings durable
+                // but no receipt leaves the journal effective: startup
+                // recovery restores the files and RemoveUncommittedWidgets
+                // reverts the settings half — a coherent rollback, never
+                // moved files orphaned without their widget. SaveChecked is
+                // load-bearing on both halves: a silent save failure would
+                // clear the journal with no durable commit anywhere.
+                if (!await _settingsService.SaveCheckedAsync(notifySubscribers: false) ||
+                    !await _settingsService.OrganizationHistory.SaveCheckedAsync())
+                {
+                    throw new IOException(
+                        "Persisting the desktop organization commit failed; the recovery journal is kept for the next launch.");
+                }
+
                 _recoveryStore.Clear();
+                committed = true;
+
+                // Post-commit maintenance: compaction and directory cleanup
+                // are best effort. A failure here must surface to the caller
+                // but never rolls back — the transaction is durable and the
+                // journal is gone; at worst a larger settings file survives
+                // for the next compaction pass.
+                if (OrganizationHistoryPolicy.ApplyRetentionPolicy(historyEntries))
+                {
+                    await _settingsService.OrganizationHistory.SaveCheckedAsync();
+                    await _settingsService.SaveAsync(notifySubscribers: false);
+                }
+
                 RemoveEmptyCreatedDirectories(createdDirectories);
 
                 return new DesktopOrganizationExecutionResult
                 {
                     History = history,
+                    CompletedItems = completedItems,
                     CreatedWidgets = createdWidgets,
                     RetainedItems = retainedItems
                 };
             }
             catch
             {
+                if (committed)
+                {
+                    // The durable commit (settings save + journal clear) is
+                    // done. Restoring the original in-memory graphs here
+                    // would desynchronize settings from the already-moved
+                    // files with no journal left to reconcile them.
+                    throw;
+                }
+
                 settings.Widgets = originalWidgets;
                 settings.DesktopOrganizationRules = originalRules;
-                settings.RecentOrganizationHistory = originalHistory;
-                bool rolledBack = await RollBackMovesAsync(completedMoves);
+                _settingsService.OrganizationHistory.Entries = originalHistory;
+                // Completed physical moves are never reversed here. The
+                // journal keeps every recorded receipt, so the next launch's
+                // RecoverPendingAsync — the same path that handles a crash —
+                // restores what still matches its snapshot. An immediate
+                // reverse move would relocate whatever happens to sit at the
+                // destination now, with no content verification at all.
                 RemoveEmptyCreatedDirectories(createdDirectories);
+                // Checked-and-ignored: a receipt save failure inside the
+                // rollback path must not replace the original exception. The
+                // history rewrite lands FIRST on purpose: it removes any
+                // durable receipt before the settings revert — a crash here
+                // must never leave commit evidence without matching settings.
+                await _settingsService.OrganizationHistory.SaveCheckedAsync();
                 await _settingsService.SaveAsync(notifySubscribers: false);
-                if (rolledBack)
-                {
-                    _recoveryStore.Clear();
-                }
                 throw;
             }
         }
@@ -302,31 +360,58 @@ public sealed partial class DesktopOrganizationTransaction
         }
     }
 
-    private static void ValidateAvailableSpace(DesktopOrganizationPlan plan)
+    internal const long FreeSpaceSafetyMarginBytes = 16L * 1024 * 1024;
+
+    internal static void ValidateAvailableSpace(
+        DesktopOrganizationPlan plan,
+        Func<string, long>? availableFreeBytesProvider = null)
     {
-        foreach (var driveGroup in plan.Targets
+        foreach (var requirement in ComputeRequiredSpaceByDrive(plan))
+        {
+            long availableFreeBytes = availableFreeBytesProvider is not null
+                ? availableFreeBytesProvider(requirement.Key)
+                : new DriveInfo(requirement.Key).AvailableFreeSpace;
+            if (availableFreeBytes < requirement.Value + FreeSpaceSafetyMarginBytes)
+            {
+                throw new DesktopOrganizationInsufficientSpaceException(requirement.Key);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A same-volume move is a metadata rename and consumes no additional
+    /// space; only items crossing volumes are charged against the target
+    /// drive. Directory sizes are not recursed (existing behavior).
+    /// </summary>
+    internal static IReadOnlyDictionary<string, long> ComputeRequiredSpaceByDrive(
+        DesktopOrganizationPlan plan)
+    {
+        var requiredByDrive = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in plan.Targets
                      .SelectMany(target => target.Items.Select(item => new
                      {
                          Target = target.TargetDirectoryPath,
-                         item.Size
-                     }))
-                     .GroupBy(item => Path.GetPathRoot(Path.GetFullPath(item.Target)),
-                         StringComparer.OrdinalIgnoreCase))
+                         Snapshot = item
+                     })))
         {
-            if (string.IsNullOrWhiteSpace(driveGroup.Key) ||
-                driveGroup.Key.StartsWith(@"\\", StringComparison.Ordinal))
+            string? targetRoot = Path.GetPathRoot(Path.GetFullPath(entry.Target));
+            if (string.IsNullOrWhiteSpace(targetRoot) ||
+                targetRoot.StartsWith(@"\\", StringComparison.Ordinal))
             {
                 continue;
             }
 
-            var drive = new DriveInfo(driveGroup.Key);
-            long required = driveGroup.Sum(item => item.Size);
-            const long safetyMargin = 16L * 1024 * 1024;
-            if (drive.AvailableFreeSpace < required + safetyMargin)
+            string? sourceRoot = Path.GetPathRoot(Path.GetFullPath(entry.Snapshot.SourcePath));
+            if (string.Equals(targetRoot, sourceRoot, StringComparison.OrdinalIgnoreCase))
             {
-                throw new IOException($"There is not enough free space on {drive.Name}.");
+                continue;
             }
+
+            requiredByDrive.TryGetValue(targetRoot, out long current);
+            requiredByDrive[targetRoot] = current + entry.Snapshot.Size;
         }
+
+        return requiredByDrive;
     }
 
     private static void RevalidateSource(DesktopOrganizationFileSnapshot item)
@@ -470,7 +555,11 @@ public sealed partial class DesktopOrganizationTransaction
                 TargetWidgetName = targetsById[item.TargetWidgetId].SuggestedDisplayName,
                 SourceScope = item.SourceScope,
                 Size = item.Size,
-                LastWriteTimeUtc = item.LastWriteTimeUtc
+                LastWriteTimeUtc = item.LastWriteTimeUtc,
+                // The receipt captured at move time travels with the history:
+                // undo must verify against the object that was moved, not
+                // whatever later occupies the destination path.
+                DestinationIdentity = item.DestinationIdentity
                 }).ToList()
         };
     }
@@ -543,35 +632,42 @@ public sealed partial class DesktopOrganizationTransaction
         return code is 32 or 33;
     }
 
-    private static bool EntryExists(string path) =>
-        File.Exists(path) || Directory.Exists(path);
+    /// <summary>
+    /// Captures the object identity at the item's final resting path right
+    /// after a physical move completed (files and directories alike). For a
+    /// forward journal that path is the organization destination; for an undo
+    /// journal it is the restore path. Recovery may only move the item again
+    /// while the object at that path still carries this identity; a failed
+    /// capture leaves it null, which means no automatic authority.
+    /// </summary>
+    private static void RecordDestinationIdentity(DesktopOrganizationRecoveryItem item) =>
+        RecordDestinationIdentity(item, item.DestinationPath);
 
-    private async Task<bool> RollBackMovesAsync(IReadOnlyCollection<FileService.FileTransferResult> completedMoves)
+    internal static void RecordDestinationIdentity(
+        DesktopOrganizationRecoveryItem item,
+        string path)
     {
-        bool succeeded = true;
-        foreach (FileService.FileTransferResult move in completedMoves.Reverse())
+        // Captures only the object identity. The Size/LastWriteTimeUtc
+        // snapshot keeps the values from organization time — they are the
+        // conjunction baseline, so a file whose content changed after the
+        // move (same object id, different size/mtime) still fails the match.
+        if (FileService.TryCaptureSourceIdentity(path) is not { } identity ||
+            identity.FileId is not { } fileId)
         {
-            if (!EntryExists(move.DestinationPath))
-            {
-                continue;
-            }
-
-            try
-            {
-                string restorePath = FileService.GetAvailablePath(move.SourcePath);
-                await _fileService.ExecuteTransferPlanAsync(
-                    [new FileService.FileTransferPlan(move.DestinationPath, restorePath)],
-                    move: true,
-                    useShellProgress: false);
-            }
-            catch
-            {
-                succeeded = false;
-            }
+            item.DestinationIdentity = null;
+            return;
         }
 
-        return succeeded;
+        item.DestinationIdentity = new DesktopOrganizationDestinationIdentity
+        {
+            VolumeSerialNumber = identity.VolumeSerialNumber,
+            FileIdHigh = fileId.High,
+            FileIdLow = fileId.Low,
+        };
     }
+
+    private static bool EntryExists(string path) =>
+        File.Exists(path) || Directory.Exists(path);
 
     private static void RemoveEmptyCreatedDirectories(IEnumerable<string> directories)
     {

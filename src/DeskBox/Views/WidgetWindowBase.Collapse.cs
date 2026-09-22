@@ -4,6 +4,7 @@ using System.Diagnostics;
 using DeskBox.Controls;
 using DeskBox.Helpers;
 using DeskBox.Models;
+using DeskBox.Platform;
 using DeskBox.Services;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -49,7 +50,6 @@ public abstract partial class WidgetWindowBase
     private const int CompactHoverRecoveryProbeMs = 120;
     private const int CompactDragSessionRecoveryProbeMs = 120;
     private const int CompactLayerRestoreFallbackMs = 120;
-    private const int CompactExpansionBlockedFeedbackCooldownMs = 2000;
     private static readonly int[] CompactBoundsSettleDelaysMs = [80, 320, 900];
     private static readonly SemaphoreSlim CompactExpansionWarmupGate = new(1, 1);
     private static readonly List<WeakReference<WidgetWindowBase>> CompactHoverRecoveryTargets = [];
@@ -118,6 +118,7 @@ public abstract partial class WidgetWindowBase
     private bool _isPointerOverCompactActions;
     private bool _isPointerOverCompactMoveHandle;
     private bool _suppressSmartExpansionUntilPointerExit;
+    private bool _suppressHoverExpansionAfterDragUntilPointerExit;
     private bool _isPointerOverWidget;
     private bool _isPointerOverCompactExpansionZone;
     private string _compactMoveHintText = string.Empty;
@@ -141,8 +142,6 @@ public abstract partial class WidgetWindowBase
     private long _collapseAnimationLastTickTimestamp;
     private readonly WidgetAnimationFramePacingPolicy _collapseAnimationPacing = new();
     private RectInt32 _collapseAnimationLastCommittedBounds;
-    private long _lastCompactExpansionBlockedFeedbackTimestamp;
-
     // Clamped-delta geometry timeline. See
     // WidgetCompactTransitionProgressPolicy: raw elapsed time turned any UI
     // thread stall into a jump, so progress is accumulated from capped frame
@@ -538,6 +537,7 @@ public abstract partial class WidgetWindowBase
     }
 
     /// <summary>
+<<<<<<< HEAD
     /// Refreshes the persisted capsule placement after an expanded host was
     /// moved by a non-interactive path (margin entry — single widget, batch,
     /// and dialog-cancel restore all route here). Interactive drag/resize
@@ -619,13 +619,40 @@ public abstract partial class WidgetWindowBase
             anchor);
         _compactExpansionAnchor = anchor;
         CaptureCompactPlacement(fresh, persist);
+=======
+    /// Per-widget expansion direction override. Null restores "follow global".
+    /// Direction is a transient expansion constraint: it takes effect on the
+    /// next expansion and never moves the capsule or an already open panel.
+    /// </summary>
+    protected void SetCompactExpansionDirectionOverride(string? direction)
+    {
+        WidgetCompactExpansionDirectionPolicy.SetOverride(Config, direction);
+        SettingsService.UpdateWidget(Config, notifySubscribers: false);
+        SettingsService.SaveDebounced(notifySubscribers: false);
+        ApplyCompactExpansionDirectionChange();
+    }
+
+    private void ApplyCompactExpansionDirectionChange()
+    {
+        _compactExpansionAnchor = null;
+        _observedCompactExpansionDirection = EffectiveCompactExpansionDirection;
+        CancelPendingCompactExpansion();
+        InvalidateCompactExpansionReadiness();
+        CancelCompactExpansionWarmup();
+        if (_targetCollapsed)
+        {
+            QueueCompactExpansionWarmup();
+        }
+>>>>>>> upstream/main
     }
 
     /// <summary>
     /// Creates the initial compact placement when a widget enters compact
-    /// behavior for the first time. Once a placement exists it belongs to the
-    /// user and must never be re-derived merely because the expansion
-    /// direction, tray visibility, or collapse state changed.
+    /// behavior for the first time. Existing placements are preserved here;
+    /// entering compact behavior from always-expanded re-derives through
+    /// <see cref="DeriveCompactPlacementFromExpandedBounds"/> instead so the
+    /// capsule follows the window's current region rather than a dormant,
+    /// possibly stale remembered spot.
     /// </summary>
     private void EnsureCompactPlacementFromExpandedBounds(bool persist)
     {
@@ -637,12 +664,24 @@ public abstract partial class WidgetWindowBase
             return;
         }
 
+<<<<<<< HEAD
         // Same peek guard as RefreshCompactPlacementFromExpandedBounds: a hover
         // peek must not seed the one-time placement from its temporary panel.
         if (RestsCollapsed && CurrentCompactViewState == WidgetCompactViewState.Peek)
         {
             App.LogVerbose(
                 $"[Compact] Peek expansion does not seed a placement id={Config.Id} hwnd=0x{HWnd.ToInt64():X}");
+=======
+        DeriveCompactPlacementFromExpandedBounds(persist);
+    }
+
+    private void DeriveCompactPlacementFromExpandedBounds(bool persist)
+    {
+        if (_targetCollapsed ||
+            !UsesCompactExpansionGeometry() ||
+            IsClosing)
+        {
+>>>>>>> upstream/main
             return;
         }
 
@@ -654,7 +693,7 @@ public abstract partial class WidgetWindowBase
             WidgetCompactExpansionAnchor.LeftTop;
         WidgetCompactExpansionAnchor anchor =
             WidgetCompactExpansionDirectionPolicy.Apply(
-                SettingsService.Settings.WidgetCompactExpansionDirection,
+                EffectiveCompactExpansionDirection,
                 [sourceAnchor])[0];
         PointInt32 pivot = WidgetCompactExpansionCalculator.GetPivot(expanded, anchor);
         RectInt32 fresh = WidgetCompactExpansionCalculator.CreateBoundsFromPivot(
@@ -934,14 +973,6 @@ public abstract partial class WidgetWindowBase
             return;
         }
 
-        // Do not spend background UI/layout work warming a target that a fixed
-        // direction can never use from the current capsule position. A later
-        // explicit capsule move invalidates this decision and re-arms warmup.
-        if (IsCompactExpansionBlockedByFixedDirection())
-        {
-            return;
-        }
-
         if (_compactExpansionWarmupCancellation is not null)
         {
             if (!_compactExpansionWarmupCancellation.IsCancellationRequested &&
@@ -1175,6 +1206,10 @@ public abstract partial class WidgetWindowBase
             IsClosing ||
             _isCollapseAnimationRendering ||
             _isShellTransitionActive ||
+            // Any capsule's bounds transition owns the shared frame clock; a
+            // warm-up layout here would stall its callbacks. This slice runs
+            // on the UI thread, so reading coordinator state is safe.
+            WidgetCompactAnimationCoordinator.HasActiveAnimations ||
             _isCompactExpansionWarmupRunning ||
             !RootElement.IsLoaded ||
             !IsCompactExpansionWarmupContentReady)
@@ -1186,6 +1221,7 @@ public abstract partial class WidgetWindowBase
                 $"shellCollapsed={WidgetShellControl.IsCollapsed} " +
                 $"closing={IsClosing} animation={_isCollapseAnimationRendering} " +
                 $"shellTransition={_isShellTransitionActive} " +
+                $"anyAnimation={WidgetCompactAnimationCoordinator.HasActiveAnimations} " +
                 $"running={_isCompactExpansionWarmupRunning} " +
                 $"rootLoaded={RootElement.IsLoaded} " +
                 $"contentReady={IsCompactExpansionWarmupContentReady} " +
@@ -1793,6 +1829,7 @@ public abstract partial class WidgetWindowBase
             !_isPointerOverCompactActions)
         {
             _suppressSmartExpansionUntilPointerExit = false;
+            _suppressHoverExpansionAfterDragUntilPointerExit = false;
             return;
         }
 
@@ -1801,6 +1838,7 @@ public abstract partial class WidgetWindowBase
         _isPointerOverCompactMoveHandle = false;
         _isPointerOverCompactActions = false;
         _suppressSmartExpansionUntilPointerExit = false;
+        _suppressHoverExpansionAfterDragUntilPointerExit = false;
         CancelTimer(ref _collapseHoverTimer);
         UpdateCompactViewState();
     }
@@ -1813,6 +1851,7 @@ public abstract partial class WidgetWindowBase
         _isPointerOverCompactMoveHandle = false;
         _isPointerOverCompactActions = false;
         _suppressSmartExpansionUntilPointerExit = false;
+        _suppressHoverExpansionAfterDragUntilPointerExit = false;
         CancelTimer(ref _collapseHoverTimer);
         CancelTimer(ref _collapseLeaveTimer);
         UpdateCompactViewState();
@@ -1898,23 +1937,14 @@ public abstract partial class WidgetWindowBase
             return;
         }
 
-        string compactExpansionDirection =
-            SettingsService.NormalizeWidgetCompactExpansionDirection(
-                SettingsService.Settings.WidgetCompactExpansionDirection);
+        string compactExpansionDirection = EffectiveCompactExpansionDirection;
         bool compactExpansionDirectionChanged = !string.Equals(
             _observedCompactExpansionDirection,
             compactExpansionDirection,
             StringComparison.Ordinal);
         if (compactExpansionDirectionChanged)
         {
-            // Direction is a transient expansion constraint. It must not
-            // rewrite the persisted compact placement or move an already open
-            // window; the new direction takes effect on the next expansion.
-            _compactExpansionAnchor = null;
-            _observedCompactExpansionDirection = compactExpansionDirection;
-            CancelPendingCompactExpansion();
-            InvalidateCompactExpansionReadiness();
-            CancelCompactExpansionWarmup();
+            ApplyCompactExpansionDirectionChange();
         }
 
         if (_observedCompactWidth != Config.CompactWidth ||
@@ -1961,9 +1991,11 @@ public abstract partial class WidgetWindowBase
             behavior is WidgetCollapseBehavior.Click or WidgetCollapseBehavior.Smart;
         if (enteredCompactBehavior && !_targetCollapsed)
         {
-            // Capture an initial placement only when compact mode has no
-            // placement yet. Existing placement is the user's source of truth.
-            EnsureCompactPlacementFromExpandedBounds(persist: true);
+            // Entering capsule mode from always-expanded collapses in place:
+            // the current window region is the user's source of truth, so any
+            // dormant remembered capsule spot is re-derived rather than
+            // resurrected and teleporting the widget across the screen.
+            DeriveCompactPlacementFromExpandedBounds(persist: true);
         }
 
         ApplyCollapseBehaviorVisuals();
@@ -2051,6 +2083,7 @@ public abstract partial class WidgetWindowBase
             _lastEffectiveCollapseBehavior = behavior;
             _isSmartPinnedOpen = false;
             _suppressSmartExpansionUntilPointerExit = false;
+            _suppressHoverExpansionAfterDragUntilPointerExit = false;
         }
         bool canCollapse = behavior != WidgetCollapseBehavior.Expanded;
         bool usesCapsuleBar = SettingsService.NormalizeWidgetCapsuleArrangementMode(
@@ -2074,6 +2107,7 @@ public abstract partial class WidgetWindowBase
         CancelTimer(ref _collapseHoverTimer);
         CancelTimer(ref _collapseLeaveTimer);
         _suppressSmartExpansionUntilPointerExit = false;
+        _suppressHoverExpansionAfterDragUntilPointerExit = false;
         WidgetCollapseBehavior behavior = EffectiveCollapseBehavior;
         if (behavior == WidgetCollapseBehavior.Smart)
         {
@@ -2090,6 +2124,7 @@ public abstract partial class WidgetWindowBase
         CancelTimer(ref _collapseHoverTimer);
         CancelTimer(ref _collapseLeaveTimer);
         _suppressSmartExpansionUntilPointerExit = false;
+        _suppressHoverExpansionAfterDragUntilPointerExit = false;
         _isSmartPinnedOpen = false;
         SetCollapsedState(
             false,
@@ -2227,6 +2262,9 @@ public abstract partial class WidgetWindowBase
         _isPointerOverCompactMoveHandle = false;
         _isPointerOverCompactActions = false;
         CancelTimer(ref _collapseLeaveTimer);
+        // Hover intent precedes every expansion; start paying the shared
+        // animation clock's cold-start cost here instead of on frame one.
+        WidgetCompactAnimationCoordinator.PreArmFrameClock(HWnd);
         QueueCompactExpansionWarmup(urgent: true);
         TryScheduleCompactHoverExpansion();
     }
@@ -2250,6 +2288,7 @@ public abstract partial class WidgetWindowBase
         _isPointerOverCompactMoveHandle = false;
         _isPointerOverCompactActions = false;
         _suppressSmartExpansionUntilPointerExit = false;
+        _suppressHoverExpansionAfterDragUntilPointerExit = false;
         CancelTimer(ref _collapseHoverTimer);
         if (_targetCollapsed)
         {
@@ -2359,6 +2398,11 @@ public abstract partial class WidgetWindowBase
         _collapseHoverTimerAllowsInteractionRegionDwell =
             scheduledForInteractionRegion;
         _compactState = WidgetCompactState.ExpandPending;
+        WidgetCompactAnimationCoordinator.PreArmFrameClock(HWnd);
+        // The hover dwell is otherwise dead time. Starting the pointer-
+        // promoted warm-up now lets a cold capsule finish its expanded
+        // layout inside the dwell instead of inside the readiness deadline.
+        QueueCompactExpansionWarmup(urgent: true);
         ScheduleTimer(
             ref _collapseHoverTimer,
             effectiveDelay,
@@ -2648,6 +2692,11 @@ public abstract partial class WidgetWindowBase
         return EffectiveCollapseBehavior != WidgetCollapseBehavior.Expanded;
     }
 
+    private string EffectiveCompactExpansionDirection =>
+        WidgetCompactExpansionDirectionPolicy.ResolveEffective(
+            Config,
+            SettingsService.Settings.WidgetCompactExpansionDirection);
+
     private WidgetCompactExpansionLayout ResolveCompactExpansionLayout(
         RectInt32 compactBounds,
         SizeInt32? requestedSize = null,
@@ -2666,11 +2715,11 @@ public abstract partial class WidgetWindowBase
                 : ResolveCompactExpansionAnchorOrder(compactBounds, workArea);
         IReadOnlyList<WidgetCompactExpansionAnchor> anchors =
             WidgetCompactExpansionDirectionPolicy.Apply(
-                SettingsService.Settings.WidgetCompactExpansionDirection,
+                EffectiveCompactExpansionDirection,
                 automaticAnchors);
         bool strictFixedDirection = requireFullSize &&
             WidgetCompactExpansionDirectionPolicy.RequiresFullSize(
-                SettingsService.Settings.WidgetCompactExpansionDirection);
+                EffectiveCompactExpansionDirection);
         return WidgetCompactExpansionCalculator.Resolve(
             compactBounds,
             physicalSize,
@@ -2679,23 +2728,27 @@ public abstract partial class WidgetWindowBase
             strictFixedDirection);
     }
 
-    private bool IsCompactExpansionBlockedByFixedDirection()
+    /// <summary>
+    /// Resolves the layout an expansion request should use. A fixed direction
+    /// keeps its direction and only adapts the expanded size to the space
+    /// actually available; automatic direction may still pick another anchor.
+    /// The result can always expand, so an expansion request never hard-fails
+    /// for lack of room.
+    /// </summary>
+    private WidgetCompactExpansionLayout ResolveRequestedCompactExpansion(
+        RectInt32 compactBounds)
     {
-        if (!UsesCompactExpansionGeometry() ||
-            !WidgetCompactExpansionDirectionPolicy.RequiresFullSize(
-                SettingsService.Settings.WidgetCompactExpansionDirection))
-        {
-            return false;
-        }
-
-        RectInt32 compact = GetStableCompactBounds(GetCurrentWindowBounds());
-        return !ResolveCompactExpansionLayout(compact, requireFullSize: true).CanExpand;
+        WidgetCompactExpansionLayout strict = ResolveCompactExpansionLayout(
+            compactBounds,
+            requireFullSize: true);
+        return strict.CanExpand
+            ? strict
+            : ResolveCompactExpansionLayout(compactBounds);
     }
 
     private void LogCompactExpansionBlocked(
         RectInt32 compactBounds,
-        WidgetCompactExpansionLayout layout,
-        bool showFeedback)
+        WidgetCompactExpansionLayout layout)
     {
         RectInt32 workArea = ResolveCompactWorkArea(compactBounds);
         PointInt32 pivot = layout.Pivot;
@@ -2710,46 +2763,14 @@ public abstract partial class WidgetWindowBase
             WidgetCompactExpansionAnchor.RightBottom
                 ? pivot.X - workArea.X
                 : workArea.X + workArea.Width - pivot.X;
-        string direction = SettingsService.NormalizeWidgetCompactExpansionDirection(
-            SettingsService.Settings.WidgetCompactExpansionDirection);
-        string diagnostic =
+        string direction = EffectiveCompactExpansionDirection;
+        App.LogVerbose(
             $"[Compact] Expansion blocked by fixed direction " +
             $"kind={Config.WidgetKind} id={Config.Id} " +
             $"direction={direction} compact=({compactBounds.X},{compactBounds.Y},{compactBounds.Width},{compactBounds.Height}) " +
             $"requested=({layout.RequestedSize.Width},{layout.RequestedSize.Height}) " +
             $"available=({availableWidth},{availableHeight}) " +
-            $"anchor={layout.Anchor}";
-
-        if (!showFeedback ||
-            !DispatcherQueue.HasThreadAccess ||
-            !ShouldShowCompactExpansionBlockedFeedback())
-        {
-            App.LogVerbose(diagnostic);
-            return;
-        }
-
-        // Explicit failed attempts are rare and belong in ordinary support
-        // diagnostics; the same cooldown that protects the UI also limits log
-        // volume for repeated clicks.
-        App.Log(diagnostic);
-        WidgetShellControl.ShowFeedback(new WidgetFeedbackRequest(
-            App.Current.LocalizationService.T("Widget.Compact.ExpansionSpaceInsufficient"),
-            WidgetFeedbackSeverity.Warning,
-            DeduplicationKey: "compact-expansion-space"));
-    }
-
-    private bool ShouldShowCompactExpansionBlockedFeedback()
-    {
-        long now = Stopwatch.GetTimestamp();
-        long cooldown = (long)(Stopwatch.Frequency *
-            (CompactExpansionBlockedFeedbackCooldownMs / 1000d));
-        if (now - _lastCompactExpansionBlockedFeedbackTimestamp < cooldown)
-        {
-            return false;
-        }
-
-        _lastCompactExpansionBlockedFeedbackTimestamp = now;
-        return true;
+            $"anchor={layout.Anchor}");
     }
 
     private RectInt32 ResolveCompactWorkArea(RectInt32 compactBounds)
@@ -2869,14 +2890,8 @@ public abstract partial class WidgetWindowBase
                 RectInt32 expandedCurrent = GetCurrentWindowBounds();
                 RectInt32 compact = GetStableCompactBounds(expandedCurrent);
                 EnsureCompactPlacement(compact);
-                WidgetCompactExpansionLayout layout = ResolveCompactExpansionLayout(
-                    compact,
-                    requireFullSize: true);
-                if (!layout.CanExpand)
-                {
-                    LogCompactExpansionBlocked(compact, layout, showFeedback: false);
-                    return;
-                }
+                WidgetCompactExpansionLayout layout =
+                    ResolveRequestedCompactExpansion(compact);
                 _compactExpansionAnchor = layout.Anchor;
                 MoveWindowWithoutPersisting(layout.ExpandedBounds);
             }
@@ -3019,24 +3034,8 @@ public abstract partial class WidgetWindowBase
 
             RectInt32 compact = GetStableCompactBounds(GetCurrentWindowBounds());
             WidgetCompactExpansionLayout readinessLayout =
-                ResolveCompactExpansionLayout(compact, requireFullSize: true);
+                ResolveRequestedCompactExpansion(compact);
             preparedExpansionLayout = readinessLayout;
-            if (!readinessLayout.CanExpand)
-            {
-                CancelPendingCompactExpansion();
-                _compactState = WidgetCompactState.Collapsed;
-                _isSmartPinnedOpen = false;
-                _dragExpandedFromCollapsed = false;
-                if (UsesSmartCollapseBehavior())
-                {
-                    _suppressSmartExpansionUntilPointerExit = true;
-                }
-                UpdateCompactViewState();
-                LogCompactExpansionBlocked(compact, readinessLayout, showFeedback: true);
-                return;
-            }
-
-            WidgetShellControl.ClearFeedback("compact-expansion-space");
         }
 
         bool restoresPersistedExpandedPlacement =
@@ -3186,7 +3185,7 @@ public abstract partial class WidgetWindowBase
                 // may move as it shrinks, but still lands on the unchanged
                 // user-owned capsule bounds.
                 _compactExpansionAnchor = null;
-                LogCompactExpansionBlocked(to, layout, showFeedback: false);
+                LogCompactExpansionBlocked(to, layout);
             }
         }
         else
@@ -3201,6 +3200,7 @@ public abstract partial class WidgetWindowBase
                 RectInt32 compactBounds = GetStableCompactBounds(from);
                 long expandLayoutStarted = Stopwatch.GetTimestamp();
                 WidgetCompactExpansionLayout layout = preparedExpansionLayout ??
+<<<<<<< HEAD
                     ResolveCompactExpansionLayout(
                         compactBounds,
                         requireFullSize: true);
@@ -3240,6 +3240,9 @@ public abstract partial class WidgetWindowBase
                     LogCompactExpansionBlocked(compactBounds, layout, showFeedback: true);
                     return;
                 }
+=======
+                    ResolveRequestedCompactExpansion(compactBounds);
+>>>>>>> upstream/main
                 _compactExpansionAnchor = layout.Anchor;
                 transitionAnchor = layout.Anchor;
                 transitionPivot = layout.Pivot;
@@ -3297,13 +3300,42 @@ public abstract partial class WidgetWindowBase
         ScheduleTimer(
             ref _compactExpansionReadinessDeadlineTimer,
             WidgetCompactExpansionReadinessPolicy.DefaultDeadlineMilliseconds,
-            () =>
-            {
-                if (_pendingCompactExpansion?.Generation == generation)
+            () => HandlePendingCompactExpansionDeadline(generation));
+    }
+
+    private void HandlePendingCompactExpansionDeadline(long generation)
+    {
+        if (_pendingCompactExpansion?.Generation != generation)
+        {
+            return;
+        }
+
+        // The capsule has not moved yet. A warm-up that is alive and allowed
+        // to run is worth one bounded extra hold; a live-layout fallback runs
+        // the first expanded layout inside the animation's opening frames.
+        int extensionMs = WidgetCompactExpansionReadinessPolicy
+            .ResolveDeadlineExtensionMilliseconds(
+                warmupActive: _compactExpansionWarmupCancellation is not null,
+                warmupCanRunNow: CanRunCompactExpansionWarmup(urgent: true));
+        if (extensionMs > 0)
+        {
+            PerformanceLogger.Mark(
+                "CompactExpansionDeadlineExtended",
+                $"extensionMs={extensionMs} kind={Config.WidgetKind} id={Config.Id}");
+            ScheduleTimer(
+                ref _compactExpansionReadinessDeadlineTimer,
+                extensionMs,
+                () =>
                 {
-                    ResumePendingCompactExpansion(deadlineElapsed: true);
-                }
-            });
+                    if (_pendingCompactExpansion?.Generation == generation)
+                    {
+                        ResumePendingCompactExpansion(deadlineElapsed: true);
+                    }
+                });
+            return;
+        }
+
+        ResumePendingCompactExpansion(deadlineElapsed: true);
     }
 
     private void ResumePendingCompactExpansion(bool deadlineElapsed)
@@ -3405,7 +3437,11 @@ public abstract partial class WidgetWindowBase
         _collapseAnimationFrom = from;
         _collapseAnimationTo = to;
         _collapseAnimationDurationMs = durationMs;
+<<<<<<< HEAD
         long responsiveLayoutDone = Stopwatch.GetTimestamp();
+=======
+        long transitionPrepStarted = Stopwatch.GetTimestamp();
+>>>>>>> upstream/main
         int refreshRateHz = Win32Helper.GetDisplayRefreshRateForWindow(HWnd);
         int frameRateCap = WidgetCompactFrameSkipPolicy.NormalizeFrameRate(
             SettingsService.Settings.WidgetAnimationFrameRate);
@@ -3461,6 +3497,7 @@ public abstract partial class WidgetWindowBase
                 mediaCornerMode,
                 cornerPreference),
             _collapseAnimationVisualProfile);
+<<<<<<< HEAD
 
         // The clock starts here, not before the setup above. PrepareCompactTransition
         // is what starts the Composition opacity/scale animations, and those run on
@@ -3495,6 +3532,16 @@ public abstract partial class WidgetWindowBase
                 $"prepareMs={Stopwatch.GetElapsedTime(borderVisualsDone, _collapseAnimationStarted).TotalMilliseconds:F1}");
         }
 
+=======
+        // Anchor the animation clock after preparation: the refresh-rate
+        // query, border visuals, and composition animation starts above used
+        // to consume the opening progress, skipping the first eased frames.
+        _collapseAnimationStarted = Stopwatch.GetTimestamp();
+        PerformanceLogger.Mark(
+            "CompactBoundsTransitionPrep",
+            $"prepMs={Stopwatch.GetElapsedTime(transitionPrepStarted, _collapseAnimationStarted).TotalMilliseconds:F1} " +
+            $"durationMs={durationMs} kind={Config.WidgetKind} id={Config.Id}");
+>>>>>>> upstream/main
         _compactAnimationFrameTracker = new WidgetCompactAnimationFrameTracker(
             _collapseAnimationStarted,
             refreshRateHz);
@@ -3502,6 +3549,7 @@ public abstract partial class WidgetWindowBase
         _collapseAnimationFrameRegistration?.Dispose();
         _collapseAnimationFrameRegistration =
             WidgetCompactAnimationCoordinator.RegisterBoundsTransition(CollapseAnimationRendering, HWnd);
+        OnCompactBoundsTransitionActiveChanged(true);
         SimplifyBackdropForInteraction();
         ScheduleTimer(
             ref _collapseAnimationWatchdogTimer,
@@ -3528,6 +3576,16 @@ public abstract partial class WidgetWindowBase
             Stopwatch.GetTimestamp(),
             generation,
             () => FinishBoundsTransition(collapsed, generation, "watchdog-recovered"));
+    }
+
+    /// <summary>
+    /// Announces that a compact bounds-transition animation now owns (or has
+    /// released) the UI thread's frame budget. Contents that push incremental
+    /// visual updates — icon hydration batches above all — can hold them until
+    /// the transition releases. Instant transitions never announce activation.
+    /// </summary>
+    protected virtual void OnCompactBoundsTransitionActiveChanged(bool isActive)
+    {
     }
 
     private void CollapseAnimationRendering()
@@ -4059,23 +4117,25 @@ public abstract partial class WidgetWindowBase
             shiftedCompact = ClampBoundsIntoWorkArea(shiftedCompact, workArea);
             CaptureCompactPlacement(shiftedCompact, persist: false);
         }
+        // The drop position is authoritative: never pull the panel back onto
+        // a capsule anchor corner. Re-resolve the anchor from the capsule's
+        // new position only as bookkeeping for the next collapse/expand cycle;
+        // a stale pre-drag direction must not survive into it.
         WidgetCompactExpansionLayout layout = ResolveCompactExpansionLayout(
             shiftedCompact,
             new SizeInt32(finalBounds.Width, finalBounds.Height),
-            freezeResolvedAnchor: _compactExpansionAnchor is not null,
             requireFullSize: true);
-        if (!layout.CanExpand)
+        _compactExpansionAnchor = layout.CanExpand ? layout.Anchor : null;
+
+        RectInt32 clamped = ClampBoundsIntoWorkArea(
+            finalBounds,
+            ResolveCompactWorkArea(finalBounds));
+        if (!BoundsEqual(finalBounds, clamped))
         {
-            _compactExpansionAnchor = null;
-            LogCompactExpansionBlocked(shiftedCompact, layout, showFeedback: false);
-            return finalBounds;
+            MoveWindowWithoutPersisting(clamped);
         }
-        _compactExpansionAnchor = layout.Anchor;
-        if (!BoundsEqual(finalBounds, layout.ExpandedBounds))
-        {
-            MoveWindowWithoutPersisting(layout.ExpandedBounds);
-        }
-        return layout.ExpandedBounds;
+
+        return clamped;
     }
 
     private void ReanchorExpandedToCompact(RectInt32 compactBounds, bool preserveAnchor)
@@ -4098,7 +4158,7 @@ public abstract partial class WidgetWindowBase
         if (!layout.CanExpand)
         {
             _compactExpansionAnchor = null;
-            LogCompactExpansionBlocked(compactBounds, layout, showFeedback: false);
+            LogCompactExpansionBlocked(compactBounds, layout);
             return;
         }
         _compactExpansionAnchor = layout.Anchor;
@@ -4207,7 +4267,7 @@ public abstract partial class WidgetWindowBase
             // A fixed direction is a hard user constraint. During restore keep
             // the persisted expanded bounds rather than restoring a tiny,
             // work-area-clamped rectangle.
-            LogCompactExpansionBlocked(compact, layout, showFeedback: false);
+            LogCompactExpansionBlocked(compact, layout);
             return ExpandContentBoundsToHost(contentBounds);
         }
         _compactExpansionAnchor = layout.Anchor;
@@ -4317,9 +4377,7 @@ public abstract partial class WidgetWindowBase
     {
         _observedCompactWidth = Config.CompactWidth;
         _observedCompactPlacement = Config.CompactPlacement;
-        _observedCompactExpansionDirection =
-            SettingsService.NormalizeWidgetCompactExpansionDirection(
-                SettingsService.Settings.WidgetCompactExpansionDirection);
+        _observedCompactExpansionDirection = EffectiveCompactExpansionDirection;
     }
 
     private RectInt32 GetCurrentWindowBounds()
@@ -4415,6 +4473,7 @@ public abstract partial class WidgetWindowBase
             return;
         }
 
+        OnCompactBoundsTransitionActiveChanged(false);
         _isCollapseAnimationRendering = false;
         _collapseAnimationFrameRegistration?.Dispose();
         _collapseAnimationFrameRegistration = null;
@@ -4782,7 +4841,8 @@ public abstract partial class WidgetWindowBase
             IsDragging: IsDragging,
             IsResizing: IsResizing,
             HasBlockingSurface: HasBlockingFlyoutOpen(),
-            SuppressHoverExpansion: _suppressSmartExpansionUntilPointerExit);
+            SuppressHoverExpansion: _suppressSmartExpansionUntilPointerExit ||
+                _suppressHoverExpansionAfterDragUntilPointerExit);
     }
 
     private void UpdateCompactViewState()

@@ -15,12 +15,7 @@ if ($Platform -ne "x64") {
 }
 
 $auditStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-# Changing any pattern, count, ceiling or contract in this script requires:
-# bump $auditProfileVersion, sync $RequiredAuditProfileVersion in
-# scripts/start-aot-preview.ps1 and the lowercase requiredAuditProfileVersion
-# chain in the run-aot-*-smoke.ps1 runners, and update every contract test
-# pinning "= <previous version>" (grep: auditProfileVersion).
-$auditProfileVersion = 61
+$auditProfileVersion = 59
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $project = Join-Path $repoRoot "src\DeskBox\DeskBox.csproj"
@@ -285,16 +280,7 @@ try {
     [Environment]::SetEnvironmentVariable("DOTNET_CLI_UI_LANGUAGE", "en-US", "Process")
     [Environment]::SetEnvironmentVariable("DOTNET_NOLOGO", "1", "Process")
 
-    # Discover every project directly under src/ so newly added assemblies
-    # (pluginization Step 1+) are restored automatically instead of requiring
-    # manual edits to a hardcoded project array.
-    $restoreProjects = @(
-        Get-ChildItem -Path (Join-Path $repoRoot "src") -Directory |
-            ForEach-Object { Get-ChildItem -Path $_.FullName -Filter "*.csproj" -File } |
-            Sort-Object Name |
-            ForEach-Object { $_.FullName })
-
-    foreach ($restoreProject in $restoreProjects) {
+    foreach ($restoreProject in @($project, $updaterProject)) {
         $restoreArguments = @(
             "restore",
             $restoreProject,
@@ -436,7 +422,6 @@ $forbiddenFiles = @(
     "DeskBox.dll",
     "DeskBox.deps.json",
     "DeskBox.runtimeconfig.json",
-    "DeskBox.Abstractions.dll",
     "DeskBox.Updater.dll",
     "DeskBox.Updater.deps.json",
     "DeskBox.Updater.runtimeconfig.json"
@@ -634,7 +619,8 @@ $stage4D3AUnexpectedDropTargetWarningMessages = @(
 )
 $stage4D3BSourceFiles = @(
     "src\DeskBox\Helpers\NativeDropTarget.cs",
-    "src\DeskBox\Helpers\NativeDropTargetComInterop.cs"
+    "src\DeskBox\Helpers\NativeDropTargetComInterop.cs",
+    "src\DeskBox\Platform\Ole32NativeMethods.cs"
 )
 $stage4D3BLegacyRegistrationPatterns = @(
     "[ComImport",
@@ -674,15 +660,21 @@ $stage4D3BRequiredGeneratedComPatterns = @(
     "ComInterfaceMarshaller<INativeDropTarget>.ConvertToUnmanaged",
     "ComInterfaceMarshaller<INativeDropTarget>.Free"
 )
-$stage4D3BInteropSourcePath = Join-Path $repoRoot (
-    "src\DeskBox\Helpers\NativeDropTargetComInterop.cs")
-$stage4D3BInteropSource = if (
-    Test-Path -LiteralPath $stage4D3BInteropSourcePath -PathType Leaf) {
-    Get-Content -LiteralPath $stage4D3BInteropSourcePath -Raw
-}
-else {
-    ""
-}
+$stage4D3BInteropSourcePaths = @(
+    "src\DeskBox\Helpers\NativeDropTargetComInterop.cs",
+    # The ole32 RegisterDragDrop/RevokeDragDrop LibraryImport pair moved to the
+    # Platform surface during the P/Invoke consolidation; the contract is about
+    # the generated-COM surface as a whole, not a single file.
+    "src\DeskBox\Platform\Ole32NativeMethods.cs"
+)
+$stage4D3BInteropSource = (
+    $stage4D3BInteropSourcePaths | ForEach-Object {
+        $fullPath = Join-Path $repoRoot $_
+        if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
+            Get-Content -LiteralPath $fullPath -Raw
+        }
+    }
+) -join "`n"
 $stage4D3BMissingGeneratedComPatterns = @(
     $stage4D3BRequiredGeneratedComPatterns |
         Where-Object {
@@ -1034,7 +1026,7 @@ $stage4E1SourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage4E1MaximumWmc1510Count = 870
+$stage4E1MaximumWmc1510Count = 866
 $stage4E1ActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -1205,7 +1197,7 @@ $stage4E2SourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage4E2MaximumWmc1510Count = 870
+$stage4E2MaximumWmc1510Count = 866
 $stage4E2ActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -1461,7 +1453,7 @@ $stage4E3SourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage4E3MaximumWmc1510Count = 870
+$stage4E3MaximumWmc1510Count = 866
 $stage4E3ActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -1472,7 +1464,10 @@ $stage4E4SourceFiles = @(
     "src\DeskBox\ViewModels\SettingsViewModel.FileStackOptions.cs",
     "src\DeskBox\ViewModels\SettingsViewModel.FeatureOptions.cs",
     "src\DeskBox\ViewModels\SettingsViewModel.SelectionOptions.cs",
-    "src\DeskBox\Controls\SettingsComboBox.cs"
+    "src\DeskBox\Controls\SettingsComboBox.cs",
+    # Deferred-section host: AppearanceDetail is materialized lazily, so its
+    # typed ViewModel bridge lives here instead of SettingsWindow.xaml.cs.
+    "src\DeskBox\Views\SettingsWindow.DeferredSections.cs"
 )
 $stage4E4Sources = [ordered]@{}
 foreach ($sourceFile in $stage4E4SourceFiles) {
@@ -1579,15 +1574,8 @@ $stage4E4RequiredViewModelBridgePatterns = @(
         pattern = "SettingsRoot.DataContext = ViewModel;"
     },
     [PSCustomObject]@{
-        sourceFile = $stage4E4SourceFiles[2]
-        # 0a496114 replaced the eager per-section ViewModel assignments with
-        # lazy on-demand section loading; Bindings.Initialize() is the bridge
-        # entry point that follows the root DataContext assignment.
-        pattern = "Bindings.Initialize();"
-    },
-    [PSCustomObject]@{
-        sourceFile = $stage4E4SourceFiles[2]
-        pattern = "Bindings.StopTracking();"
+        sourceFile = $stage4E4SourceFiles[7]
+        pattern = "fileSettings.ViewModel = ViewModel;"
     },
     [PSCustomObject]@{
         sourceFile = $stage4E4SourceFiles[2]
@@ -1611,8 +1599,12 @@ $stage4E4SettingsWindowSource = $stage4E4Sources[$stage4E4SourceFiles[2]]
 $stage4E4RootDataContextIndex = $stage4E4SettingsWindowSource.IndexOf(
     "SettingsRoot.DataContext = ViewModel;",
     [StringComparison]::Ordinal)
-$stage4E4BridgeAssignmentIndex = $stage4E4SettingsWindowSource.IndexOf(
-    "Bindings.Initialize();",
+$stage4E4DeferredSectionsSource = $stage4E4Sources[$stage4E4SourceFiles[7]]
+$stage4E4DeferredDataContextIndex = $stage4E4DeferredSectionsSource.IndexOf(
+    "section.DataContext = ViewModel;",
+    [StringComparison]::Ordinal)
+$stage4E4BridgeAssignmentIndex = $stage4E4DeferredSectionsSource.IndexOf(
+    "fileSettings.ViewModel = ViewModel;",
     [StringComparison]::Ordinal)
 $stage4E4BridgeClearIndex = $stage4E4SettingsWindowSource.IndexOf(
     "AppearanceDetailSection.ViewModel = null;",
@@ -1622,7 +1614,8 @@ $stage4E4ViewModelDisposeIndex = $stage4E4SettingsWindowSource.IndexOf(
     [StringComparison]::Ordinal)
 $stage4E4ViewModelBridgeOrderValid =
     $stage4E4RootDataContextIndex -ge 0 -and
-    $stage4E4BridgeAssignmentIndex -gt $stage4E4RootDataContextIndex -and
+    $stage4E4DeferredDataContextIndex -ge 0 -and
+    $stage4E4BridgeAssignmentIndex -gt $stage4E4DeferredDataContextIndex -and
     $stage4E4BridgeClearIndex -ge 0 -and
     $stage4E4BridgeClearIndex -lt $stage4E4ViewModelDisposeIndex
 $stage4E4UnexpectedManualBridgePatterns = @(
@@ -1704,7 +1697,7 @@ $stage4E4SourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage4E4MaximumWmc1510Count = 870
+$stage4E4MaximumWmc1510Count = 866
 $stage4E4ActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -2042,7 +2035,7 @@ $stage4E5SourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage4E5ExpectedWmc1510Count = 867
+$stage4E5ExpectedWmc1510Count = 866
 $stage4E5ActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -2074,7 +2067,7 @@ $stage5AMissingDataPathPatterns = @(
     }
 )
 $stage5ARequiredLauncherPatterns = @(
-    '$RequiredAuditProfileVersion = 61',
+    '$RequiredAuditProfileVersion = 59',
     '$RequiredSummarySchemaVersion = 55',
     'Test-PathEqualOrInside',
     'Get-DirectoryStateFingerprint',
@@ -2122,7 +2115,7 @@ $stage5ASourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5AExpectedWmc1510Count = 867
+$stage5AExpectedWmc1510Count = 866
 $stage5AActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -2241,7 +2234,7 @@ $stage5B1SourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B1ExpectedWmc1510Count = 867
+$stage5B1ExpectedWmc1510Count = 866
 $stage5B1ActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -2401,7 +2394,7 @@ $stage5B2ASourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B2AExpectedWmc1510Count = 867
+$stage5B2AExpectedWmc1510Count = 866
 $stage5B2AActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -2564,7 +2557,7 @@ $stage5B2BSourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B2BExpectedWmc1510Count = 867
+$stage5B2BExpectedWmc1510Count = 866
 $stage5B2BActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -2722,7 +2715,7 @@ $stage5B3ASourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B3AExpectedWmc1510Count = 867
+$stage5B3AExpectedWmc1510Count = 866
 $stage5B3AActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -2907,7 +2900,7 @@ $stage5B3BSourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B3BExpectedWmc1510Count = 867
+$stage5B3BExpectedWmc1510Count = 866
 $stage5B3BActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -3156,7 +3149,7 @@ $stage5B3CSourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B3CExpectedWmc1510Count = 867
+$stage5B3CExpectedWmc1510Count = 866
 $stage5B3CActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -3426,7 +3419,7 @@ $stage5B4ASourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4AExpectedWmc1510Count = 867
+$stage5B4AExpectedWmc1510Count = 866
 $stage5B4AActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -3452,7 +3445,10 @@ $stage5B4B1SourceFiles = @(
     "src/DeskBox/ViewModels/SettingsViewModel.FeatureOptions.cs",
     "src/DeskBox/ViewModels/SettingsViewModel.SelectionOptions.cs",
     "src/DeskBox/ViewModels/SettingsViewModel.WeatherOptions.cs",
-    "src/DeskBox/Views/SettingsWindow.HotkeyAndAppearance.cs"
+    "src/DeskBox/Views/SettingsWindow.HotkeyAndAppearance.cs",
+    # Deferred-section host owns the lazy typed-ViewModel bridges that used to
+    # live eagerly in SettingsWindow.xaml.cs.
+    "src/DeskBox/Views/SettingsWindow.DeferredSections.cs"
 )
 $stage5B4B1Sources = [ordered]@{}
 foreach ($sourceFile in $stage5B4B1SourceFiles) {
@@ -3526,29 +3522,21 @@ $stage5B4B1RequiredProjectionPatterns = @(
     '[WinRT.GeneratedBindableCustomProperty]',
     'private sealed partial record SettingsBreadcrumbItem',
     'private sealed partial record SettingsSearchResult',
-    'private sealed partial record BackupSnapshotListItem'
+    'private sealed partial record BackupSnapshotListItem',
+    'CapsuleModeSection.ViewModel = null',
+    # The typed bridge is assigned lazily by the deferred-section host.
+    'capsuleSettings.ViewModel = ViewModel'
 )
+$stage5B4B1ProjectionSource =
+    $stage5B4B1Sources[$stage5B4B1SourceFiles[5]] +
+    "`n" +
+    $stage5B4B1Sources[$stage5B4B1SourceFiles[22]]
 $stage5B4B1MissingProjectionPatterns = @(
     foreach ($pattern in $stage5B4B1RequiredProjectionPatterns) {
-        if ($stage5B4B1Sources[$stage5B4B1SourceFiles[5]].IndexOf(
+        if ($stage5B4B1ProjectionSource.IndexOf(
                 $pattern,
                 [StringComparison]::Ordinal) -lt 0) {
-            "$($stage5B4B1SourceFiles[5])::$pattern"
-        }
-    }
-)
-# 0a496114 moved the eager per-section ViewModel assignments into lazy
-# section creation; the capsule section contract now pins the deferred
-# assignment instead of the removed SettingsWindow.xaml.cs eager bridge.
-$stage5B4B1RequiredDeferredSectionPatterns = @(
-    'fileSettings.ViewModel = ViewModel;',
-    'capsuleSettings.ViewModel = ViewModel;'
-)
-$stage5B4B1MissingDeferredSectionPatterns = @(
-    foreach ($pattern in $stage5B4B1RequiredDeferredSectionPatterns) {
-        $deferredSource = Get-Content -LiteralPath (Join-Path $repoRoot "src/DeskBox/Views/SettingsWindow.DeferredSections.cs") -Raw
-        if ($deferredSource.IndexOf($pattern, [StringComparison]::Ordinal) -lt 0) {
-            "src/DeskBox/Views/SettingsWindow.DeferredSections.cs::$pattern"
+            "$pattern"
         }
     }
 )
@@ -3617,7 +3605,7 @@ $stage5B4B1MissingBindableTypePatterns = @(
         }
     }
 )
-$stage5B4B1ExpectedBindableViewModelPropertyCount = 327
+$stage5B4B1ExpectedBindableViewModelPropertyCount = 349
 $stage5B4B1ActualBindableViewModelPropertyCount = [regex]::Matches(
     $stage5B4B1Sources[$stage5B4B1SourceFiles[9]],
     [regex]::Escape('nameof(')).Count
@@ -3725,9 +3713,6 @@ $stage5B4B1MissingFileWidgetProjectionPatterns = @(
 )
 $stage5B4B1RequiredWeatherProjectionPatterns = @(
     [ordered]@{
-        # 0a496114 moved the weather-city suggestion machinery out of the
-        # settings-window smoke partial into the WeatherOptions view model
-        # partial below; the deep-smoke no longer declares these types.
         file = $stage5B4B1SourceFiles[20]
         patterns = @(
             'ObservableCollection<WeatherCitySearchResult> WeatherCitySuggestions',
@@ -3851,7 +3836,7 @@ $stage5B4B1SourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4B1ExpectedWmc1510Count = 867
+$stage5B4B1ExpectedWmc1510Count = 866
 $stage5B4B1ActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -4030,7 +4015,7 @@ $stage5B4B2ASourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4B2AExpectedWmc1510Count = 867
+$stage5B4B2AExpectedWmc1510Count = 866
 $stage5B4B2AActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -4220,7 +4205,7 @@ $stage5B4B2B1SourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4B2B1ExpectedWmc1510Count = 867
+$stage5B4B2B1ExpectedWmc1510Count = 866
 $stage5B4B2B1ActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -4444,7 +4429,7 @@ $stage5B4B2B2ASourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4B2B2AExpectedWmc1510Count = 867
+$stage5B4B2B2AExpectedWmc1510Count = 866
 $stage5B4B2B2AActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -4668,7 +4653,7 @@ $stage5B4B2B2B1SourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4B2B2B1ExpectedWmc1510Count = 867
+$stage5B4B2B2B1ExpectedWmc1510Count = 866
 $stage5B4B2B2B1ActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -4926,7 +4911,7 @@ $stage5B4B2B2B2SourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4B2B2B2ExpectedWmc1510Count = 867
+$stage5B4B2B2B2ExpectedWmc1510Count = 866
 $stage5B4B2B2B2ActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -5171,7 +5156,7 @@ $stage5B4B2C1SourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4B2C1ExpectedWmc1510Count = 867
+$stage5B4B2C1ExpectedWmc1510Count = 866
 $stage5B4B2C1ActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -5361,7 +5346,7 @@ $stage5B4B2C2ASourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4B2C2AExpectedWmc1510Count = 867
+$stage5B4B2C2AExpectedWmc1510Count = 866
 $stage5B4B2C2AActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -5613,7 +5598,7 @@ $stage5B4B2C2BSourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4B2C2BExpectedWmc1510Count = 867
+$stage5B4B2C2BExpectedWmc1510Count = 866
 $stage5B4B2C2BActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -5868,7 +5853,7 @@ $stage5B4C1ASourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4C1AExpectedWmc1510Count = 867
+$stage5B4C1AExpectedWmc1510Count = 866
 $stage5B4C1AActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -6149,7 +6134,7 @@ $stage5B4C1B1SourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4C1B1ExpectedWmc1510Count = 867
+$stage5B4C1B1ExpectedWmc1510Count = 866
 $stage5B4C1B1ActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -6302,7 +6287,7 @@ $stage5B4C1B2ARequiredScenarioPatterns = @(
     'case "VerifyRestore"',
     'case "Postflight"',
     'case "Compensate"',
-    'RecentOrganizationHistory.Clear()',
+    'OrganizationHistory.Entries.Clear()',
     'ShellMoveFilesRestoredByHarness',
     'ShellMoveCompensationCompleted',
     'SHA256.HashData(stream)'
@@ -6399,7 +6384,7 @@ $stage5B4C1B2ASourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4C1B2AExpectedWmc1510Count = 867
+$stage5B4C1B2AExpectedWmc1510Count = 866
 $stage5B4C1B2AActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -6412,7 +6397,7 @@ $stage5B4C1B2BSourceFiles = @(
     "src/DeskBox/Controls/FileItemMenuBuilder.cs",
     "src/DeskBox/Controls/WidgetContents/FileSurfaceContent.SelectionAndMenus.cs",
     "src/DeskBox/Helpers/ShellContextMenuHelper.cs",
-    "src/DeskBox/Helpers/Win32Helper.cs",
+    "src/DeskBox/Platform/Win32Helper.cs",
     "scripts/run-aot-managed-ui-smoke.ps1",
     "scripts/run-aot-file-properties-smoke.ps1",
     "native/deskbox-native/src/lib.rs"
@@ -6639,7 +6624,7 @@ $stage5B4C1B2BSourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4C1B2BExpectedWmc1510Count = 867
+$stage5B4C1B2BExpectedWmc1510Count = 866
 $stage5B4C1B2BActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -6873,7 +6858,7 @@ $stage5B4C1C1SourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4C1C1ExpectedWmc1510Count = 867
+$stage5B4C1C1ExpectedWmc1510Count = 866
 $stage5B4C1C1ActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -7001,8 +6986,10 @@ $stage5B4C1C2ARequiredProbePatterns = @(
     'PrimeAotNativeFolderHighlight(',
     'CaptureAotNativeFolderHighlightState(',
     'GetAotNativeFolderVisualState(',
-    'thickness.Left >= 0.5',
-    'borderBrush.Color.A > 0',
+    # Drop targets render the neutral hover surface now, so the probe keys on
+    # recorded target identity rather than measuring the highlight border.
+    'IsActiveChildDropTarget(border)',
+    '? "DropTarget"',
     'CaptureAotNativeDropProgress()',
     'Canvas.GetZIndex(ImportProgressCard)',
     'background is AcrylicBrush'
@@ -7141,13 +7128,13 @@ $stage5B4C1C2ASourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4C1C2AExpectedWmc1510Count = 867
+$stage5B4C1C2AExpectedWmc1510Count = 866
 $stage5B4C1C2AActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
 $stage5B4C2ASourceFiles = @(
     "src/DeskBox/App.AotHotkeySmoke.cs",
-    "src/DeskBox/Helpers/Win32Helper.AotHotkeySmoke.cs",
+    "src/DeskBox/Platform/Win32Helper.AotHotkeySmoke.cs",
     "src/DeskBox/Services/GlobalHotkeyService.cs",
     "src/DeskBox/Services/SearchHotkeyService.cs",
     "src/DeskBox/Services/ReservedHotkeyHookService.cs",
@@ -7312,7 +7299,7 @@ $stage5B4C2ASourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4C2AExpectedWmc1510Count = 867
+$stage5B4C2AExpectedWmc1510Count = 866
 $stage5B4C2AActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -7484,7 +7471,7 @@ $stage5B4C3ASourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4C3AExpectedWmc1510Count = 867
+$stage5B4C3AExpectedWmc1510Count = 866
 $stage5B4C3AActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -7664,7 +7651,7 @@ $stage5B4C3B1SourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4C3B1ExpectedWmc1510Count = 867
+$stage5B4C3B1ExpectedWmc1510Count = 866
 $stage5B4C3B1ActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -7848,7 +7835,7 @@ $stage5B4C3B2ASourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4C3B2AExpectedWmc1510Count = 867
+$stage5B4C3B2AExpectedWmc1510Count = 866
 $stage5B4C3B2AActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -7966,7 +7953,7 @@ $stage5B4C3B2B1RunnerSource =
 $stage5B4C3B2B1RequiredSmokeScriptPatterns = @(
     'TodoNotificationEnvelopeForwarding',
     'run-aot-todo-notification-forwarding-smoke.ps1',
-    '$requiredAuditProfileVersion = 61',
+    '$requiredAuditProfileVersion = 59',
     '$requiredSummarySchemaVersion = 55',
     '-NoStop',
     '-ExpectExistingInstance',
@@ -8040,7 +8027,7 @@ $stage5B4C3B2B1SourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4C3B2B1ExpectedWmc1510Count = 867
+$stage5B4C3B2B1ExpectedWmc1510Count = 866
 $stage5B4C3B2B1ActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -8136,7 +8123,7 @@ $stage5B4C3B2B2ARunnerSource =
 $stage5B4C3B2B2ARequiredSmokeScriptPatterns = @(
     'TodoNotificationSurfaceRouting',
     'run-aot-todo-notification-surface-smoke.ps1',
-    '$requiredAuditProfileVersion = 61',
+    '$requiredAuditProfileVersion = 59',
     '$requiredSummarySchemaVersion = 55',
     '-AllowEarlyExit',
     '-StartupWaitSeconds 1',
@@ -8201,7 +8188,7 @@ $stage5B4C3B2B2ASourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4C3B2B2AExpectedWmc1510Count = 867
+$stage5B4C3B2B2AExpectedWmc1510Count = 866
 $stage5B4C3B2B2AActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -8306,7 +8293,7 @@ $stage5B4C3B2B2BRunnerSource =
     $stage5B4C3B2B2BSources[$stage5B4C3B2B2BSourceFiles[10]]
 $stage5B4C3B2B2BRequiredSmokeScriptPatterns = @(
     'RealWindowsNotificationUserClick',
-    '$requiredAuditProfileVersion = 61',
+    '$requiredAuditProfileVersion = 59',
     '$requiredSummarySchemaVersion = 55',
     '[switch]$IncludeColdStart',
     '-AllowEarlyExit',
@@ -8382,7 +8369,7 @@ $stage5B4C3B2B2BSourceWarningMessages = @(
         ForEach-Object { $_.Trim() } |
         Sort-Object -Unique
 )
-$stage5B4C3B2B2BExpectedWmc1510Count = 867
+$stage5B4C3B2B2BExpectedWmc1510Count = 866
 $stage5B4C3B2B2BActualWmc1510Count = @(
     $warningMatches | Where-Object { $_ -ieq "WMC1510" }
 ).Count
@@ -9786,7 +9773,6 @@ if ($stage5B4B1MissingRunnerPatterns.Count -gt 0) {
 if ($stage5B4B1MissingSettingsPatterns.Count -gt 0 -or
     $stage5B4B1MissingNavigationPatterns.Count -gt 0 -or
     $stage5B4B1MissingProjectionPatterns.Count -gt 0 -or
-    $stage5B4B1MissingDeferredSectionPatterns.Count -gt 0 -or
     $stage5B4B1MissingInventoryPatterns.Count -gt 0 -or
     $stage5B4B1MissingBindableTypePatterns.Count -gt 0 -or
     $stage5B4B1MissingFileStackXamlPatterns.Count -gt 0 -or

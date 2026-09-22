@@ -58,10 +58,10 @@ public sealed class DesktopShellStartupSafetyTests
             ? -1
             : app.LastIndexOf("if (IsStartupMode)", beginDeferralIndex, StringComparison.Ordinal);
         int restoreIndex = app.IndexOf(
-            "await WidgetManager.RestoreWidgetsAsync();",
+            "await widgetManager.RestoreWidgetsAsync();",
             StringComparison.Ordinal);
         int deferredCompletionIndex = app.IndexOf(
-            "_ = CompleteStartupDesktopLayerInitializationAsync(",
+            "CompleteStartupDesktopLayerInitializationAsync(",
             StringComparison.Ordinal);
 
         Assert.True(beginDeferralIndex >= 0);
@@ -73,5 +73,10 @@ public sealed class DesktopShellStartupSafetyTests
             StringComparison.Ordinal);
         Assert.True(restoreIndex > readinessTaskIndex);
         Assert.True(deferredCompletionIndex > restoreIndex);
+        // The deferred completion is dispatched without blocking startup.
+        Assert.DoesNotContain(
+            "await CompleteStartupDesktopLayerInitializationAsync(",
+            app,
+            StringComparison.Ordinal);
     }
 }

@@ -11,7 +11,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$requiredAuditProfileVersion = 61
+$requiredAuditProfileVersion = 59
 $requiredSummarySchemaVersion = 55
 $scenario = "EnvelopeAndSingleInstance"
 $smokeEnvironmentVariable =

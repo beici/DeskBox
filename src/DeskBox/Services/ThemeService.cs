@@ -1,4 +1,5 @@
 using DeskBox.Helpers;
+using DeskBox.Platform;
 using Microsoft.UI.Xaml;
 using WinRT.Interop;
 using Windows.UI;
@@ -14,10 +15,14 @@ public sealed class ThemeService
     public const string AccentModeCustom = "Custom";
 
     private readonly SettingsService _settingsService;
+<<<<<<< HEAD
     // UI-thread owned: TrackWindow/OnTrackedWindowClosed/ApplyToAllWindows
     // run on the UI thread by the repo-wide convention (all RefreshAppearance
     // callers are UI-thread), so this list is never mutated concurrently.
     private readonly List<Window> _trackedWindows = new();
+=======
+    private readonly WindowTrackingRegistry<Window> _trackedWindows = new();
+>>>>>>> upstream/main
     private readonly Windows.UI.ViewManagement.UISettings _uiSettings = new();
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _appearanceDebounceTimer;
 
@@ -31,7 +36,14 @@ public sealed class ThemeService
 
     private void OnColorValuesChanged(Windows.UI.ViewManagement.UISettings sender, object args)
     {
-        App.UiDispatcherQueue?.TryEnqueue(() =>
+        var dispatcherQueue = App.UiDispatcherQueue;
+        if (dispatcherQueue is null)
+        {
+            App.Log("[Theme] ColorValuesChanged dropped: UI dispatcher unavailable");
+            return;
+        }
+
+        dispatcherQueue.TryEnqueue(() =>
         {
             if (_appearanceDebounceTimer is null)
             {
@@ -55,6 +67,23 @@ public sealed class ThemeService
         "Dark" => ElementTheme.Dark,
         _ => ElementTheme.Default
     };
+
+    /// <summary>
+    /// The theme applied to window roots: the explicit override, or the
+    /// resolved system theme when following it. Themed lookups without an
+    /// element scope (for example a window that owns no tree yet) resolve
+    /// against this instead of the application theme, which tracks the system.
+    /// </summary>
+    public ElementTheme EffectiveTheme
+    {
+        get
+        {
+            var theme = CurrentTheme;
+            return theme == ElementTheme.Default
+                ? (Win32Helper.IsSystemDarkMode() ? ElementTheme.Dark : ElementTheme.Light)
+                : theme;
+        }
+    }
 
     public bool UsesSystemAccentColor =>
         !string.Equals(_settingsService.Settings.AccentColorMode, AccentModeCustom, StringComparison.OrdinalIgnoreCase);
@@ -128,17 +157,22 @@ public sealed class ThemeService
     }
 
     /// <summary>
-    /// Register a window so appearance changes are applied to it.
+    /// Register a window so appearance changes are applied to it. A window
+    /// leaves the registry only when its Closed event actually runs — a
+    /// cancelled close (hide-and-reuse) keeps it tracked.
     /// </summary>
     public void TrackWindow(Window window)
     {
-        if (_trackedWindows.Contains(window))
+        EnsureUiThread(nameof(TrackWindow));
+        if (!_trackedWindows.Track(window))
         {
             ApplyToWindow(window);
             return;
         }
 
-        _trackedWindows.Add(window);
+        App.LogVerbose(
+            $"[Theme] TrackWindow {window.GetType().Name} " +
+            $"tracked={_trackedWindows.TrackedCount}");
         ApplyToWindow(window);
         window.Closed += OnTrackedWindowClosed;
     }
@@ -151,7 +185,10 @@ public sealed class ThemeService
         }
 
         window.Closed -= OnTrackedWindowClosed;
-        _trackedWindows.Remove(window);
+        _trackedWindows.NotifyClosed(window);
+        App.LogVerbose(
+            $"[Theme] UntrackWindow {window.GetType().Name} " +
+            $"tracked={_trackedWindows.TrackedCount}");
     }
 
     /// <summary>
@@ -170,11 +207,7 @@ public sealed class ThemeService
             return;
         }
 
-        var theme = CurrentTheme;
-        if (theme == ElementTheme.Default)
-        {
-            theme = Win32Helper.IsSystemDarkMode() ? ElementTheme.Dark : ElementTheme.Light;
-        }
+        var theme = EffectiveTheme;
 
         rootElement.RequestedTheme = theme;
         AccentResourceScope.Apply(rootElement, GetEffectiveAccentColor());
@@ -185,14 +218,7 @@ public sealed class ThemeService
             return;
         }
 
-        bool isDark = theme switch
-        {
-            ElementTheme.Dark => true,
-            ElementTheme.Light => false,
-            _ => Win32Helper.IsSystemDarkMode()
-        };
-
-        Win32Helper.SetWindowTheme(hWnd, isDark);
+        Win32Helper.SetWindowTheme(hWnd, theme == ElementTheme.Dark);
     }
 
     /// <summary>
@@ -200,7 +226,8 @@ public sealed class ThemeService
     /// </summary>
     public void ApplyToAllWindows()
     {
-        foreach (var window in _trackedWindows)
+        EnsureUiThread(nameof(ApplyToAllWindows));
+        foreach (var window in _trackedWindows.EnumerateAlive())
         {
             ApplyToWindow(window);
         }
@@ -208,6 +235,7 @@ public sealed class ThemeService
 
     public void RefreshAppearance()
     {
+<<<<<<< HEAD
         // ApplyToAllWindows reads window.Content and the broadcast reaches
         // subscribers without dispatch protection, so the refresh must run
         // on the UI thread (DEF-010: startup once pushed it to a thread-pool
@@ -218,11 +246,15 @@ public sealed class ThemeService
             return;
         }
 
+=======
+        App.LogVerbose($"[Theme] RefreshAppearance tracked={_trackedWindows.TrackedCount}");
+>>>>>>> upstream/main
         ApplyToAllWindows();
         RaiseAppearanceChanged();
         App.ScheduleLightMemoryCleanup();
     }
 
+<<<<<<< HEAD
     /// <summary>
     /// DEF-019 (EVT-01): broadcast with per-handler exception isolation,
     /// mirroring LocalizationService.RaiseLanguageChanged. Without the
@@ -249,6 +281,13 @@ public sealed class ThemeService
                     "[ThemeService] AppearanceChanged handler " +
                     $"'{handler.Method.DeclaringType?.Name}.{handler.Method.Name}' threw: {ex.Message}");
             }
+=======
+    private static void EnsureUiThread(string operation)
+    {
+        if (App.UiDispatcherQueue is { HasThreadAccess: false })
+        {
+            App.Log($"[Theme] {operation} invoked off the UI thread");
+>>>>>>> upstream/main
         }
     }
 }

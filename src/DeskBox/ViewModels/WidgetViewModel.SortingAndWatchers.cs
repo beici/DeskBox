@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using DeskBox.Helpers;
 using DeskBox.Models;
+using DeskBox.Platform;
 using DeskBox.Services;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -306,6 +307,19 @@ public partial class WidgetViewModel
 
             if (ShouldUseFullReload(changeBatch, CurrentFolderPath))
             {
+                // A full reload mid-import would re-sync, re-sort and
+                // re-hydrate the whole list, throwing away the batching the
+                // open scope just bought — and a large import reliably trips
+                // the reload threshold (desktop widgets reload on every
+                // batch). Defer one authoritative refresh to the batch
+                // finalization instead of fighting the import for the list.
+                if (_itemMutationBatchDepth > 0)
+                {
+                    _pendingFolderRefreshAfterBatch = true;
+                    MarkItemMutationBatchDirty();
+                    return;
+                }
+
                 await LoadFolderContentsAsync(CurrentFolderPath);
                 return;
             }
@@ -345,6 +359,37 @@ public partial class WidgetViewModel
         finally
         {
             _folderRefreshGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// One authoritative refresh deferred out of an open batch mutation
+    /// scope: the watcher asked for a full reload while an import was
+    /// post-processing. Runs through the folder refresh gate so it cannot
+    /// interleave a scheduled incremental pass.
+    /// </summary>
+    private async Task RunDeferredFolderRefreshAsync()
+    {
+        try
+        {
+            await _folderRefreshGate.WaitAsync();
+            try
+            {
+                if (!_isDisposed && !string.IsNullOrEmpty(CurrentFolderPath))
+                {
+                    await LoadFolderContentsAsync(CurrentFolderPath);
+                }
+            }
+            finally
+            {
+                _folderRefreshGate.Release();
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log(
+                $"[FolderRefresh] Deferred post-batch refresh failed for " +
+                $"'{CurrentFolderPath}': {ex}");
         }
     }
 
@@ -520,7 +565,7 @@ public partial class WidgetViewModel
             _showImageFilesAsIcons,
             resetTransientFailures: true);
 
-        int existingIndex = FindItemIndexByPath(path);
+        int existingIndex = FindItemIndexForManagedMutation(path);
         if (Config.SortMode == WidgetSortMode.Manual && existingIndex >= 0)
         {
             AssignAddedAt(item);
@@ -552,9 +597,8 @@ public partial class WidgetViewModel
                 Items[existingIndex] = item;
             }
 
-            NormalizeSortOrder();
-            PersistManualOrderSnapshotIfChanged();
-            StartItemHydration();
+            TrackManagedItemByPath(path, item);
+            FinishItemUpsert();
             return true;
         }
 
@@ -570,15 +614,33 @@ public partial class WidgetViewModel
             : GetSortedInsertIndex(item);
         item.SortOrder = insertIndex;
         Items.Insert(insertIndex, item);
+        TrackManagedItemByPath(path, item);
+        FinishItemUpsert();
+        return true;
+    }
+
+    /// <summary>
+    /// Per-upsert derived work: sort-order normalization, manual-order
+    /// persistence, metadata hydration. A batch mutation scope defers these
+    /// to its single end-of-batch finalization, so a 2000-file import runs
+    /// them once instead of once per file.
+    /// </summary>
+    private void FinishItemUpsert()
+    {
+        if (_itemMutationBatchDepth > 0)
+        {
+            MarkItemMutationBatchDirty();
+            return;
+        }
+
         NormalizeSortOrder();
         PersistManualOrderSnapshotIfChanged();
         StartItemHydration();
-        return true;
     }
 
     private void RemoveItemByPath(string path, bool persistManualOrder = true)
     {
-        int index = FindItemIndexByPath(path);
+        int index = FindItemIndexForManagedMutation(path);
         if (index < 0)
         {
             return;
@@ -590,7 +652,14 @@ public partial class WidgetViewModel
             _showImageFilesAsIcons,
             resetTransientFailures: true);
         Items.RemoveAt(index);
+        UntrackManagedItemByPath(path);
         RemoveFileAddedAt(path);
+        if (_itemMutationBatchDepth > 0)
+        {
+            MarkItemMutationBatchDirty();
+            return;
+        }
+
         NormalizeSortOrder();
         if (persistManualOrder)
         {
@@ -619,15 +688,44 @@ public partial class WidgetViewModel
             return Items.Count;
         }
 
-        for (int index = 0; index < Items.Count; index++)
+        // Items is kept sorted under the active sort mode, so the linear
+        // first-strictly-greater scan is an upper-bound search: a 2000-file
+        // import pays ~11 comparisons per insert instead of ~1000.
+        return BinarySearchSortedInsertIndex(
+            Items.Count,
+            index => Items[index],
+            candidate,
+            CompareItems);
+    }
+
+    /// <summary>
+    /// Upper-bound insert search shared with behavior tests: the first index
+    /// whose item compares strictly greater than the candidate (equal keys
+    /// land after the equal run), mirroring the linear scan it replaced.
+    /// Requires the sequence to be sorted under the same comparison.
+    /// </summary>
+    internal static int BinarySearchSortedInsertIndex(
+        int count,
+        Func<int, WidgetItem> itemAt,
+        WidgetItem candidate,
+        Comparison<WidgetItem> compare)
+    {
+        int low = 0;
+        int high = count;
+        while (low < high)
         {
-            if (CompareItems(candidate, Items[index]) < 0)
+            int middle = low + ((high - low) / 2);
+            if (compare(candidate, itemAt(middle)) < 0)
             {
-                return index;
+                high = middle;
+            }
+            else
+            {
+                low = middle + 1;
             }
         }
 
-        return Items.Count;
+        return low;
     }
 
     private void NormalizeSortOrder()

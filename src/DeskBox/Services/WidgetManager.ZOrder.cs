@@ -3,6 +3,7 @@
 using DeskBox.Models;
 using DeskBox.Helpers;
 using DeskBox.Controls.WidgetContents;
+using DeskBox.Platform;
 using DeskBox.ViewModels;
 using DeskBox.Views;
 using Microsoft.UI.Dispatching;
@@ -31,7 +32,10 @@ public sealed partial class WidgetManager
     private DateTime _lastQuickRevealDismissUtc = DateTime.MinValue;
     private bool _lastQuickRevealDismissTaskbarOrigin;
     private long _idlePeerOrderGeneration;
+    private int _idleNormalizeAnimationDefers;
     private WidgetTemporaryRaiseLease _temporaryRaiseLease;
+
+    private const int MaxIdleNormalizeAnimationDefers = 15;
 
     // ── 50ms mouse sampler (方案 B) ──
     // Uses the HIGH bit of GetAsyncKeyState (global physical state) instead of
@@ -46,6 +50,195 @@ public sealed partial class WidgetManager
     private readonly QuickRevealDesktopDismissTracker _quickRevealDesktopDismissTracker =
         QuickRevealDesktopDismissTracker.CreateForCurrentSystem();
     private WidgetExpandedLayerLease _expandedWidgetLayerLease;
+
+    // ── Quick-reveal raised-band guests ─────────────────────
+    // A quick-reveal raised session holds the widget group WS_EX_TOPMOST
+    // (system-flyout semantics). DeskBox-owned interactive surfaces (search
+    // popup, settings, desktop organization) join that band above the widgets
+    // while the session lives, then return to normal Z-order rules.
+    // Registration is the authority for whether a window was made topmost
+    // here; releases are generation-guarded against fast dismiss-then-reraise
+    // sequences.
+
+    private sealed record RaisedBandGuestRecord(string Reason, long SessionGeneration);
+
+    private readonly Dictionary<IntPtr, RaisedBandGuestRecord> _raisedBandGuests = new();
+
+    /// <summary>
+    /// App-level provider of candidate auxiliary window handles (search popup,
+    /// settings, desktop organization). Consulted when a quick-reveal raise
+    /// completes so surfaces that were already open before the raise are
+    /// promoted above the widget group too.
+    /// </summary>
+    internal Func<IReadOnlyList<IntPtr>>? AuxiliaryWindowProvider;
+
+    /// <summary>
+    /// Single choke point for bringing a DeskBox-owned auxiliary window to the
+    /// front. During a quick-reveal raised session the window joins the
+    /// topmost band above the widget group and is registered for release;
+    /// otherwise it takes the ordinary TOPMOST→NOTOPMOST pulse.
+    /// </summary>
+    public void BringAuxiliaryWindowToFront(IntPtr windowHandle, string reason)
+    {
+        if (!HasUiThreadAccess())
+        {
+            App.UiDispatcherQueue.TryEnqueue(
+                () => BringAuxiliaryWindowToFront(windowHandle, reason));
+            return;
+        }
+
+        if (windowHandle == IntPtr.Zero || !Win32Helper.IsWindow(windowHandle))
+        {
+            return;
+        }
+
+        if (RaisedBandGuestPolicy.ShouldHoldGuest(
+                WidgetLayerService.UsesQuickRevealMode(),
+                _widgetsRaisedFromTray))
+        {
+            HoldRaisedBandGuest(windowHandle, reason);
+            return;
+        }
+
+        Win32Helper.BringWindowTemporarilyToFront(windowHandle);
+    }
+
+    /// <summary>
+    /// Releases one guest when its own window hides or closes. No-op for
+    /// windows that were never held, so stray calls cannot reorder unrelated
+    /// windows.
+    /// </summary>
+    public void ReleaseRaisedBandGuest(IntPtr windowHandle, string reason)
+    {
+        if (!HasUiThreadAccess())
+        {
+            App.UiDispatcherQueue.TryEnqueue(
+                () => ReleaseRaisedBandGuest(windowHandle, reason));
+            return;
+        }
+
+        if (!_raisedBandGuests.Remove(windowHandle, out RaisedBandGuestRecord? record))
+        {
+            return;
+        }
+
+        ReleaseRaisedBandGuestCore(windowHandle, record, reason);
+    }
+
+    private void HoldRaisedBandGuest(IntPtr windowHandle, string reason)
+    {
+        WidgetLayerService.HoldWindowAboveRaisedWidgets(windowHandle);
+        _raisedBandGuests[windowHandle] =
+            new RaisedBandGuestRecord(reason, _trayRaiseBatchGeneration);
+        App.LogVerbose(
+            $"[RaisedBand] Guest held reason={reason} hwnd=0x{windowHandle.ToInt64():X} " +
+            $"generation={_trayRaiseBatchGeneration} guests={_raisedBandGuests.Count}");
+    }
+
+    /// <summary>
+    /// Promotes already-open auxiliary windows above a freshly raised widget
+    /// group (the reverse open-then-raise order). Hidden or destroyed handles
+    /// are skipped: their own hide paths have already released them.
+    /// </summary>
+    private void HoldVisibleAuxiliaryWindowsAboveRaisedWidgets()
+    {
+        if (AuxiliaryWindowProvider is not { } provider)
+        {
+            return;
+        }
+
+        IReadOnlyList<IntPtr> handles;
+        try
+        {
+            handles = provider() ?? Array.Empty<IntPtr>();
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[RaisedBand] Auxiliary window provider failed: {ex.Message}");
+            return;
+        }
+
+        foreach (IntPtr handle in handles)
+        {
+            if (handle == IntPtr.Zero ||
+                !Win32Helper.IsWindow(handle) ||
+                !Win32Helper.IsWindowVisible(handle))
+            {
+                continue;
+            }
+
+            HoldRaisedBandGuest(handle, "raise-promoted");
+        }
+    }
+
+    private void ReleaseRaisedBandGuestCore(
+        IntPtr windowHandle,
+        RaisedBandGuestRecord record,
+        string reason)
+    {
+        if (!Win32Helper.IsWindow(windowHandle))
+        {
+            App.LogVerbose(
+                $"[RaisedBand] Guest release skipped (destroyed) reason={reason} " +
+                $"hwnd=0x{windowHandle.ToInt64():X}");
+            return;
+        }
+
+        IntPtr foregroundRoot = WidgetLayerService.GetForegroundRoot(
+            Win32Helper.GetForegroundWindow());
+        bool foreignForeground =
+            foregroundRoot != IntPtr.Zero &&
+            Win32Helper.IsWindow(foregroundRoot) &&
+            foregroundRoot != windowHandle &&
+            !App.Current.IsDeskBoxWindow(foregroundRoot);
+        RaisedBandReleasePlacement placement =
+            RaisedBandGuestPolicy.ResolveReleasePlacement(foreignForeground);
+
+        WidgetLayerService.ReleaseRaisedBandWindow(
+            windowHandle,
+            placement,
+            foreignForeground ? foregroundRoot : IntPtr.Zero);
+        App.LogVerbose(
+            $"[RaisedBand] Guest released reason={reason} " +
+            $"heldReason={record.Reason} placement={placement} " +
+            $"hwnd=0x{windowHandle.ToInt64():X} guests={_raisedBandGuests.Count}");
+    }
+
+    /// <summary>
+    /// Ends band membership for every guest of the dismissed session. Runs
+    /// after the hide animations settle so a guest does not sink below widgets
+    /// that are still fading out, and is generation-guarded so a fast
+    /// dismiss-then-reraise cannot demote guests that now belong to the new
+    /// session.
+    /// </summary>
+    private void SweepRaisedBandGuests(string reason, long endedSessionGeneration)
+    {
+        if (_raisedBandGuests.Count == 0)
+        {
+            return;
+        }
+
+        List<IntPtr> staleHandles = _raisedBandGuests
+            .Where(pair => RaisedBandGuestPolicy.ShouldSweepGuest(
+                pair.Value.SessionGeneration,
+                endedSessionGeneration))
+            .Select(pair => pair.Key)
+            .ToList();
+        int released = 0;
+        foreach (IntPtr handle in staleHandles)
+        {
+            if (_raisedBandGuests.Remove(handle, out RaisedBandGuestRecord? record))
+            {
+                ReleaseRaisedBandGuestCore(handle, record, reason);
+                released++;
+            }
+        }
+
+        App.LogVerbose(
+            $"[RaisedBand] Sweep reason={reason} " +
+            $"endedGeneration={endedSessionGeneration} " +
+            $"released={released} remaining={_raisedBandGuests.Count}");
+    }
 
     internal long AcquireExpandedWidgetLayer(IntPtr windowHandle, string reason)
     {
@@ -146,6 +339,14 @@ public sealed partial class WidgetManager
             return;
         }
 
+        // Idle normalization is shadow-protection work only; queueing it while
+        // Windows drop shadows are off can only produce needless reorders.
+        if (Win32Helper.TryGetWindowDropShadowEnabled(out bool shadowEnabledAtQueue) &&
+            !IdleWidgetZOrderPolicy.ShouldNormalizeIdlePeerOrder(shadowEnabledAtQueue))
+        {
+            return;
+        }
+
         long generation = ++_idlePeerOrderGeneration;
         TimeSpan effectiveDelay = delay ?? TimeSpan.FromMilliseconds(120);
         App.UiDispatcherQueue.TryEnqueue(async () =>
@@ -174,10 +375,17 @@ public sealed partial class WidgetManager
         return _temporaryRaiseLease.Generation;
     }
 
+    // A stuck interaction flag would otherwise re-enqueue the deferred
+    // restore forever — every 180 ms of dispatcher work plus a lease that
+    // never settles. Bounded retries give up and leave the lease held, so a
+    // later explicit restore still resolves the elevation.
+    private const int MaxTemporaryRaiseRestoreAttempts = 25;
+
     private void QueueTemporaryRaisedWidgetRestore(
         string reason,
         long generation,
-        TimeSpan delay)
+        TimeSpan delay,
+        int attempt = 0)
     {
         App.UiDispatcherQueue.TryEnqueue(async () =>
         {
@@ -185,7 +393,8 @@ public sealed partial class WidgetManager
             RestoreTemporarilyRaisedWidgetsToDesktopLayerCore(
                 reason,
                 generation,
-                retryWhenBusy: true);
+                retryWhenBusy: true,
+                attempt);
         });
     }
 
@@ -207,7 +416,8 @@ public sealed partial class WidgetManager
     private bool RestoreTemporarilyRaisedWidgetsToDesktopLayerCore(
         string reason,
         long generation,
-        bool retryWhenBusy)
+        bool retryWhenBusy,
+        int attempt = 0)
     {
         if (!WidgetTemporaryRaiseLeasePolicy.OwnsGeneration(
                 _temporaryRaiseLease,
@@ -228,13 +438,22 @@ public sealed partial class WidgetManager
                 $"interaction={_sessionManager.IsInteractionActive} " +
                 $"expanded={_expandedWidgetLayerLease.IsActive}");
             if (retryWhenBusy &&
+                attempt < MaxTemporaryRaiseRestoreAttempts &&
                 !_widgetsRaisedFromTray &&
                 !_expandedWidgetLayerLease.IsActive)
             {
                 QueueTemporaryRaisedWidgetRestore(
                     reason,
                     generation,
-                    TimeSpan.FromMilliseconds(180));
+                    TimeSpan.FromMilliseconds(180),
+                    attempt + 1);
+            }
+            else if (retryWhenBusy)
+            {
+                App.Log(
+                    $"[ZOrder] TemporaryRaise restore gave up after {attempt} retries " +
+                    $"reason={reason} generation={generation} — lease stays held " +
+                    $"for the next explicit restore.");
             }
 
             return false;
@@ -297,22 +516,60 @@ public sealed partial class WidgetManager
 
     private bool NormalizeIdleWidgetZOrder(string reason)
     {
+        // Keep the legacy behavior when the system setting cannot be read:
+        // skipping normalization on a query failure would silently reintroduce
+        // the shadow-overlap artifact this ordering exists to prevent.
+        if (!Win32Helper.TryGetWindowDropShadowEnabled(out bool dropShadowEnabled))
+        {
+            dropShadowEnabled = true;
+        }
+
         if (_widgetsRaisedFromTray ||
             _isTogglingWidgetsDesktopLayer ||
             _sessionManager.IsInteractionActive ||
             _sessionManager.State == WidgetSessionState.Hidden ||
-            HasActiveExpandedWidgetLayerLease())
+            HasActiveExpandedWidgetLayerLease() ||
+            !IdleWidgetZOrderPolicy.ShouldNormalizeIdlePeerOrder(dropShadowEnabled))
         {
+            _idleNormalizeAnimationDefers = 0;
             App.LogVerbose(
                 $"[ZOrder] Idle normalize skipped reason={reason} " +
                 $"raised={_widgetsRaisedFromTray} toggling={_isTogglingWidgetsDesktopLayer} " +
                 $"interaction={_sessionManager.IsInteractionActive} state={_sessionManager.State} " +
-                $"expandedOwner=0x{_expandedWidgetLayerLease.WindowHandle.ToInt64():X}");
+                $"expandedOwner=0x{_expandedWidgetLayerLease.WindowHandle.ToInt64():X} " +
+                $"dropShadow={dropShadowEnabled}");
             return false;
         }
 
-        if (GetLoadedDesktopWindows().Any(window =>
-                window.Visible && window.IsCompactAnimationRendering))
+        List<IDesktopWidgetWindow> candidates = GetLoadedDesktopWindows()
+            .Where(window => window.Visible && !window.IsRaisedAboveDesktopLayer)
+            .ToList();
+
+        // Ordering on transient animation bounds produces a different order
+        // once the windows settle, which replays as a visible second reorder.
+        // Wait for the transitions to finish instead of dropping the request.
+        if (candidates.Any(window => window.IsBoundsTransitionActive))
+        {
+            if (_idleNormalizeAnimationDefers < MaxIdleNormalizeAnimationDefers)
+            {
+                _idleNormalizeAnimationDefers++;
+                App.LogVerbose(
+                    $"[ZOrder] Idle normalize deferred reason={reason} " +
+                    $"defers={_idleNormalizeAnimationDefers}");
+                QueueIdleWidgetZOrderNormalization($"{reason}-animation-deferred");
+            }
+            else
+            {
+                App.LogVerbose(
+                    $"[ZOrder] Idle normalize abandon reason={reason} " +
+                    $"defers={_idleNormalizeAnimationDefers} still-animating");
+                _idleNormalizeAnimationDefers = 0;
+            }
+
+            return false;
+        }
+
+        if (candidates.Any(window => window.IsCompactAnimationRendering))
         {
             // A morph is rendering somewhere on the bar. Re-apply the batch
             // after it settles instead of mid-animation: an EndDeferWindowPos
@@ -324,10 +581,11 @@ public sealed partial class WidgetManager
             return false;
         }
 
+        _idleNormalizeAnimationDefers = 0;
+
+
         IReadOnlyList<IDesktopWidgetWindow> ordered =
-            GetWindowsInIdleHighestFirstOrder(
-                GetLoadedDesktopWindows().Where(window =>
-                    window.Visible && !window.IsRaisedAboveDesktopLayer));
+            GetWindowsInIdleHighestFirstOrder(candidates);
         // Normalization is deliberately peer-only. The current highest widget
         // supplies the global boundary, so a group restored directly behind an
         // activated application is not subsequently flattened to HWND_BOTTOM.

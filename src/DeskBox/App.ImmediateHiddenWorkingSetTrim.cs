@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using DeskBox.Helpers;
+using DeskBox.Platform;
 using DeskBox.Services;
 using Microsoft.UI.Dispatching;
 
@@ -7,6 +8,13 @@ namespace DeskBox;
 
 public partial class App
 {
+    // A quick hide/show round trip (hotkey toggles) must not pay the
+    // back-fault cost of a trim the user is about to undo. The grace window
+    // also collapses consecutive hide/show cycles into at most one trim.
+    // Any visible transition during the window cancels the pending request,
+    // so only a genuinely hidden session trims.
+    private const int ImmediateHiddenWorkingSetTrimGracePeriodMs = 3000;
+
     private readonly HiddenWorkingSetTrimTracker _immediateHiddenWorkingSetTrimTracker = new();
 
     private bool IsImmediateHiddenWorkingSetTrimEnabled =>
@@ -48,6 +56,7 @@ public partial class App
         }
 
         await manager.WaitForTrayAnimationsIdleAsync();
+        await Task.Delay(ImmediateHiddenWorkingSetTrimGracePeriodMs);
         if (!_immediateHiddenWorkingSetTrimTracker.TryConsume(generation))
         {
             return;
@@ -60,6 +69,10 @@ public partial class App
             visibility.LogicalVisibleCount != 0 ||
             visibility.HasNativeVisibleWidgets ||
             manager.HasActiveVisualWork ||
+            Volatile.Read(ref _quiescenceWorkingSetTrimRunning) != 0 ||
+            _quiescenceWorkingSetTrimTracker.LastTrimWithin(
+                DateTimeOffset.UtcNow,
+                QuiescenceWorkingSetTrimTracker.MinimumTrimInterval) ||
             !CanRunBackgroundMemoryCleanup())
         {
             Log($"[Memory] Immediate hidden working-set trim skipped reason=activity-or-disabled trigger={reason}");
@@ -73,10 +86,7 @@ public partial class App
         long started = Stopwatch.GetTimestamp();
         bool trimmed = Win32Helper.TrimWorkingSet();
         _immediateHiddenWorkingSetTrimTracker.Complete(generation, trimmed);
-        if (trimmed)
-        {
-            AdvanceMemoryCleanupEpoch($"working-set-trim:immediate-hidden:{reason}");
-        }
+        CompleteWorkingSetTrim(trimmed, $"immediate-hidden:{reason}");
 
         process.Refresh();
         Log(

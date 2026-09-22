@@ -20,6 +20,7 @@ public sealed class AotStage5B4C3B2B2BContractTests
                      "int SourceProcessId = 0",
                      "string? EnvelopeId = null",
                      "NativeAppNotificationActivationSource.NotificationInvokedEvent",
+                     "NativeAppNotificationActivationSource.CurrentAppInstance",
                      "DateTimeOffset.UtcNow",
                      "Environment.ProcessId"
                  })
@@ -42,7 +43,6 @@ public sealed class AotStage5B4C3B2B2BContractTests
                  {
                      "OnNativeNotificationActivationObserved(activation);",
                      "OnTodoNotificationActivationRouteObserved(activation, result);",
-                     "NativeAppNotificationActivationSource.CurrentAppInstance",
                      "envelope.ActivationSource",
                      "envelope.CreatedAtUtc",
                      "envelope.SourceProcessId",
@@ -109,7 +109,11 @@ public sealed class AotStage5B4C3B2B2BContractTests
 
         foreach (string token in new[]
                  {
+<<<<<<< HEAD
                      "$requiredAuditProfileVersion = 61",
+=======
+                     "$requiredAuditProfileVersion = 59",
+>>>>>>> upstream/main
                      "$requiredSummarySchemaVersion = 55",
                      "[switch]$IncludeColdStart",
                      "-AllowEarlyExit",
@@ -171,7 +175,11 @@ public sealed class AotStage5B4C3B2B2BContractTests
 
         foreach (string token in new[]
                  {
+<<<<<<< HEAD
                      "$auditProfileVersion = 61",
+=======
+                     "$auditProfileVersion = 59",
+>>>>>>> upstream/main
                      "schemaVersion = 55",
                      "stage5B4C3B2B2BMissingScenarioPatterns",
                      "stage5B4C3B2B2BMissingProductPatterns",
@@ -180,7 +188,11 @@ public sealed class AotStage5B4C3B2B2BContractTests
                      "stage5B4C3B2B2BRustAbiUnchanged",
                      "stage5B4C3B2B2BScenarioJsonSerializeCallCount",
                      "stage5B4C3B2B2BManagedUiJsonSerializeCallCount",
+<<<<<<< HEAD
                      "stage5B4C3B2B2BExpectedWmc1510Count = 867"
+=======
+                     "stage5B4C3B2B2BExpectedWmc1510Count = 866"
+>>>>>>> upstream/main
                  })
         {
             Assert.Contains(token, audit, StringComparison.Ordinal);

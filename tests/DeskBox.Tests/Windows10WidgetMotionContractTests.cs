@@ -100,8 +100,11 @@ public sealed class Windows10WidgetMotionContractTests
         Assert.Contains("!WindowsCompatibilityService.IsWindows11OrLater", bounds, StringComparison.Ordinal);
         Assert.Contains("SWP_NOCOPYBITS | Win32Helper.SWP_DEFERERASE", bounds, StringComparison.Ordinal);
         Assert.Contains("_resizeWorkAreaBounds", resizeGuides, StringComparison.Ordinal);
-        Assert.Contains("static glow", resizeGuides, StringComparison.Ordinal);
-        Assert.Contains("if (WindowsCompatibilityService.IsWindows11OrLater)", resizeGuides, StringComparison.Ordinal);
+        // Snap feedback is a single one-shot settle animation on every OS —
+        // no looping ambient animation may run during live resize, and no
+        // OS-specific visual branch is allowed back in.
+        Assert.DoesNotContain("RepeatBehavior.Forever", resizeGuides, StringComparison.Ordinal);
+        Assert.DoesNotContain("WindowsCompatibilityService.IsWindows11OrLater", resizeGuides, StringComparison.Ordinal);
         Assert.DoesNotContain("child.PointerPressed += ResizeBorder_PointerPressed", contentWindow, StringComparison.Ordinal);
     }
 
@@ -298,7 +301,7 @@ public sealed class Windows10WidgetMotionContractTests
         string policy = File.ReadAllText(TestPaths.FromRepository(
             "src/DeskBox/Services/InteractionBackdropSimplificationPolicy.cs"));
         string win32Helper = File.ReadAllText(TestPaths.FromRepository(
-            "src/DeskBox/Helpers/Win32Helper.cs"));
+            "src/DeskBox/Platform/Win32Helper.cs"));
 
         // Frosted glass stays by default: simplification is gated on measured
         // frame-budget overruns or ResourceSaver, never unconditional.
@@ -339,10 +342,10 @@ public sealed class Windows10WidgetMotionContractTests
             StringComparison.Ordinal);
 
         int restoreIndex = app.IndexOf(
-            "await WidgetManager.RestoreWidgetsAsync();",
+            "await widgetManager.RestoreWidgetsAsync();",
             StringComparison.Ordinal);
         int hotkeyIndex = app.IndexOf(
-            "InitializeGlobalHotkeyService(localizationService);",
+            "InitializeGlobalHotkeyService(localizationService)",
             StringComparison.Ordinal);
         Assert.True(restoreIndex >= 0);
         Assert.True(hotkeyIndex > restoreIndex);

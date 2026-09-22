@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using DeskBox.Helpers;
+using DeskBox.Platform;
 
 namespace DeskBox.Services;
 
@@ -132,7 +133,7 @@ public static class JumpListService
                             app.GetFolderPickerOwnerWindowHandle());
                         if (!string.IsNullOrWhiteSpace(folderPath))
                         {
-                            await app.WidgetManager.CreateFolderWidgetAsync(folderPath);
+                            await app.TryCreateFolderWidgetAsync(folderPath);
                         }
                     }
                     break;

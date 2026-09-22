@@ -134,6 +134,7 @@ public partial class SettingsViewModel
             HideShortcutExtensionWhenShowingFileExtensions = settings.HideShortcutExtensionWhenShowingFileExtensions;
             IdleWorkingSetTrimEnabled = settings.IdleWorkingSetTrimEnabled;
             ImmediateHiddenWorkingSetTrimEnabled = settings.ImmediateHiddenWorkingSetTrimEnabled;
+            QuiescenceWorkingSetTrimEnabled = settings.Performance.QuiescenceWorkingSetTrimEnabled;
 
             ApplyContentEditorSettingsSnapshot(settings);
             ApplyFileStackSettingsSnapshot(settings);
@@ -282,6 +283,7 @@ public partial class SettingsViewModel
         OnPropertyChanged(nameof(PinQuickAccessButtonText));
         OnPropertyChanged(nameof(PinQuickAccessToolTipText));
         OnPropertyChanged(nameof(AutoStartStatusText));
+        OnPropertyChanged(nameof(AvailableAutoStartModeOptions));
         OnPropertyChanged(nameof(GlobalHotkeyDescription));
         OnPropertyChanged(nameof(GlobalHotkeyWarningText));
         OnPropertyChanged(nameof(GlobalHotkeyText));
@@ -297,9 +299,9 @@ public partial class SettingsViewModel
         OnPropertyChanged(nameof(AvailableWidgetGroupNavigationStyleOptions));
         OnPropertyChanged(nameof(AvailableWidgetGroupTitleDisplayModeOptions));
         RefreshWidgetGroupSettings();
-OnPropertyChanged(nameof(WeatherCitySearchPlaceholder));
-OnPropertyChanged(nameof(WeatherCityNoResultsText));
-RefreshWeatherCityPopularCities();
+        OnPropertyChanged(nameof(WeatherCitySearchPlaceholder));
+        OnPropertyChanged(nameof(WeatherCityNoResultsText));
+        RefreshWeatherCityPopularCities();
         RefreshQuickCaptureClipboardDiagnostics();
     }
 

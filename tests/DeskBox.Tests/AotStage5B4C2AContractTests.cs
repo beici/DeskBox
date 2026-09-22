@@ -28,7 +28,7 @@ public sealed class AotStage5B4C2AContractTests
     public void StandardMatrix_UsesRealOsRegistrationAndSyntheticDispatchWithExactCounters()
     {
         string app = Read("src/DeskBox/App.AotHotkeySmoke.cs");
-        string helper = Read("src/DeskBox/Helpers/Win32Helper.AotHotkeySmoke.cs");
+        string helper = Read("src/DeskBox/Platform/Win32Helper.AotHotkeySmoke.cs");
 
         Assert.Contains("Ctrl + Shift", app, StringComparison.Ordinal);
         Assert.Contains("VirtualKey.F23", app, StringComparison.Ordinal);
@@ -110,12 +110,20 @@ public sealed class AotStage5B4C2AContractTests
         string project = Read("src/DeskBox/DeskBox.csproj");
         string rust = Read("native/deskbox-native/src/lib.rs");
 
+<<<<<<< HEAD
         Assert.Contains("$auditProfileVersion = 61", audit, StringComparison.Ordinal);
+=======
+        Assert.Contains("$auditProfileVersion = 59", audit, StringComparison.Ordinal);
+>>>>>>> upstream/main
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C2ARequiredScenarioPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C2AMissingSmokeScriptPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C2ARustAbiUnchanged", audit, StringComparison.Ordinal);
+<<<<<<< HEAD
         Assert.Contains("$RequiredAuditProfileVersion = 61", launcher, StringComparison.Ordinal);
+=======
+        Assert.Contains("$RequiredAuditProfileVersion = 59", launcher, StringComparison.Ordinal);
+>>>>>>> upstream/main
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("Native AOT stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("assert_eq!(deskbox_native_capabilities(), 511);", rust, StringComparison.Ordinal);

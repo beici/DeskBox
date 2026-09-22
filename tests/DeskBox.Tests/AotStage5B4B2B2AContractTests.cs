@@ -256,9 +256,15 @@ public sealed class AotStage5B4B2B2AContractTests
         string baseline = ReadRepositoryFile(
             "tests/DeskBox.Tests/JsonSerializationBaselineContractTests.cs");
 
+<<<<<<< HEAD
         Assert.Contains("Assert.Equal(29, actual.Count);", baseline, StringComparison.Ordinal);
         Assert.Contains("Assert.Equal(67, actual.Values.Sum());", baseline, StringComparison.Ordinal);
         Assert.Contains("Assert.Equal(27, actualContextOwners.Length);", baseline, StringComparison.Ordinal);
+=======
+        Assert.Contains("Assert.Equal(35, actual.Count);", baseline, StringComparison.Ordinal);
+        Assert.Contains("Assert.Equal(83, actual.Values.Sum());", baseline, StringComparison.Ordinal);
+        Assert.Contains("Assert.Equal(32, actualContextOwners.Length);", baseline, StringComparison.Ordinal);
+>>>>>>> upstream/main
     }
 
     [Fact]
@@ -268,10 +274,17 @@ public sealed class AotStage5B4B2B2AContractTests
         string launcher = ReadRepositoryFile("scripts/start-aot-preview.ps1");
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
 
+<<<<<<< HEAD
         Assert.Contains("$auditProfileVersion = 61", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B2B2A", audit, StringComparison.Ordinal);
         Assert.Contains("$RequiredAuditProfileVersion = 61", launcher, StringComparison.Ordinal);
+=======
+        Assert.Contains("$auditProfileVersion = 59", audit, StringComparison.Ordinal);
+        Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
+        Assert.Contains("stage5B4B2B2A", audit, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 59", launcher, StringComparison.Ordinal);
+>>>>>>> upstream/main
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("Todo", project, StringComparison.Ordinal);
@@ -290,7 +303,11 @@ public sealed class AotStage5B4B2B2AContractTests
         Assert.Contains("stage5B4B2B2AForbiddenScopePatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B2B2AJsonSerializeCallCount", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B2B2ASourceWarningMessages", audit, StringComparison.Ordinal);
+<<<<<<< HEAD
         Assert.Contains("stage5B4B2B2AExpectedWmc1510Count = 867", audit, StringComparison.Ordinal);
+=======
+        Assert.Contains("stage5B4B2B2AExpectedWmc1510Count = 866", audit, StringComparison.Ordinal);
+>>>>>>> upstream/main
     }
 
     private static int CountOccurrences(string value, string token)

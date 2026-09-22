@@ -1,8 +1,11 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
+using DeskBox.Core.Persistence;
+using DeskBox.FileSafety;
 using DeskBox.Models;
 
 namespace DeskBox.Services;
@@ -13,9 +16,22 @@ public sealed partial class DeskBoxDataBackupService
     private const int MinimumSupportedBackupSchemaVersion = 1;
     private const int MaxPreRestoreBackupCount = 5;
     private const int MaxRestoreFileCount = 100_000;
+    // The widget-style document is a small projected JSON (~60 scalar
+    // fields); 8 MiB is far beyond any legitimate document.
+    private const long MaxWidgetStyleEntryBytes = 8L * 1024 * 1024;
     private const long MaxRestoreFileSizeBytes = 4L * 1024 * 1024 * 1024;
     private const long MaxRestoreTotalSizeBytes = 16L * 1024 * 1024 * 1024;
     private const int MaxSnapshotCopyAttempts = 4;
+    private const int MaxScopedRestoreApplyAttempts = 3;
+    /// <summary>
+    /// <see cref="Exception.Data"/> key stamped on the InvalidDataException
+    /// <summary>Stamped on the
+    /// InvalidDataException for an unsupported schema version so the UI can
+    /// localize the failure. Carries the unsupported version number.</summary>
+    public const string BackupSchemaVersionDataKey = "DeskBox.BackupSchemaVersion";
+    /// <summary>Stamped on InvalidDataException when the archive lacks a usable
+    /// manifest — i.e. the picked file is not a DeskBox backup at all.</summary>
+    public const string BackupManifestInvalidDataKey = "DeskBox.BackupManifestInvalid";
     private static readonly SettingsJsonContext s_settingsDataJsonContext =
         new(CreateDataJsonOptions());
     private static readonly QuickCaptureJsonContext s_quickCaptureDataJsonContext =
@@ -311,6 +327,150 @@ public sealed partial class DeskBoxDataBackupService
         }
     }
 
+    /// <summary>
+    /// Domain-scoped cloud backup (roadmap §10): archives only the enabled
+    /// domains' data files, plus widget-style.json when the WidgetStyle
+    /// domain is on. The manifest carries the domain list so the archive
+    /// can never be mistaken for a full backup.
+    /// </summary>
+    /// <param name="widgetStyleProvider">
+    /// Supplies the widget-style document bytes when the scope includes
+    /// <see cref="CloudBackupDomain.WidgetStyle"/>; the service itself does
+    /// not hold a settings reference, so the caller projects live settings.
+    /// </param>
+    public async Task<string> ExportScopedBackupAsync(
+        string destinationDirectory,
+        CloudBackupDomain scope,
+        Func<CancellationToken, Task<byte[]?>>? widgetStyleProvider = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationDirectory);
+        destinationDirectory = Path.GetFullPath(destinationDirectory);
+        if (scope == CloudBackupDomain.None)
+        {
+            throw new ArgumentException("At least one backup domain must be enabled.", nameof(scope));
+        }
+
+        await _gate.WaitAsync(cancellationToken);
+        string? snapshotRoot = null;
+        try
+        {
+            Directory.CreateDirectory(destinationDirectory);
+            snapshotRoot = Path.Combine(BackupSnapshotStagingDirectory, $"scoped-{Guid.NewGuid():N}");
+            string snapshotDataDirectory = Path.Combine(snapshotRoot, "data");
+            Directory.CreateDirectory(snapshotDataDirectory);
+
+            await CreateScopedDataSnapshotAsync(snapshotDataDirectory, scope, cancellationToken);
+
+            IReadOnlyDictionary<string, byte[]>? rootEntries = null;
+            if (scope.HasFlag(CloudBackupDomain.WidgetStyle) && widgetStyleProvider is not null)
+            {
+                byte[]? styleDocument = await widgetStyleProvider(cancellationToken);
+                if (styleDocument is { Length: > 0 })
+                {
+                    rootEntries = new Dictionary<string, byte[]>
+                    {
+                        [CloudBackupDomains.WidgetStyleEntryName] = styleDocument
+                    };
+                }
+            }
+
+            string backupPath = GetAvailableArchivePath(
+                destinationDirectory,
+                $"DeskBox-CloudBackup-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
+            // The manifest must only claim domains that actually shipped —
+            // WidgetStyle without a produced document does not count.
+            CloudBackupDomain shippedScope = rootEntries is null
+                ? scope & ~CloudBackupDomain.WidgetStyle
+                : scope;
+            if (shippedScope == CloudBackupDomain.None)
+            {
+                throw new InvalidOperationException(
+                    "The scoped backup would be empty — no domain produced content.");
+            }
+            await CreateArchiveFromSnapshotAsync(
+                backupPath,
+                CloudBackupDomains.BackupKind,
+                snapshotDataDirectory,
+                cancellationToken,
+                CloudBackupDomains.ToManifestNames(shippedScope),
+                rootEntries,
+                DeviceIdentity.Id);
+            App.Log($"[DataBackup] Exported scoped backup '{backupPath}' (domains: {shippedScope}).");
+            return backupPath;
+        }
+        finally
+        {
+            if (!string.IsNullOrWhiteSpace(snapshotRoot))
+            {
+                TryDeleteDirectory(snapshotRoot);
+            }
+
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Copies only the enabled file domains' paths into the snapshot
+    /// staging dir. No FileSafety metadata and no OperationGate barrier
+    /// here: scoped domains never carry settings/history/journal, and
+    /// widget stores are not transaction files — the per-file stable copy
+    /// is the existing semantic.
+    /// </summary>
+    private async Task CreateScopedDataSnapshotAsync(
+        string snapshotDataDirectory,
+        CloudBackupDomain scope,
+        CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(DataDirectory))
+        {
+            return;
+        }
+
+        // Ship only todo stores a live widget actually reads. Orphan
+        // widgets/<id>/ dirs (deleted widgets, leftovers of earlier unmapped
+        // restores) would otherwise ride along in every backup and poison
+        // the destination's remap: each foreign id lands as data no widget
+        // displays. An empty live set means "cannot tell" — keep everything
+        // rather than silently drop data.
+        HashSet<string>? liveTodoIds = null;
+        if (scope.HasFlag(CloudBackupDomain.TodoData))
+        {
+            HashSet<string> live = await ReadLiveTodoWidgetIdsAsync(cancellationToken);
+            if (live.Count > 0)
+            {
+                liveTodoIds = live;
+            }
+        }
+
+        foreach (string sourcePath in Directory
+                     .EnumerateFiles(DataDirectory, "*", SearchOption.AllDirectories)
+                     .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string relativePath = Path.GetRelativePath(DataDirectory, sourcePath)
+                .Replace(Path.DirectorySeparatorChar, '/');
+            if (!CloudBackupDomains.IsInScope(scope, relativePath))
+            {
+                continue;
+            }
+
+            if (liveTodoIds is not null &&
+                CloudBackupDomains.TryGetTodoWidgetId(relativePath) is string todoWidgetId &&
+                !liveTodoIds.Contains(todoWidgetId))
+            {
+                continue;
+            }
+
+            App.MarkStartupProgress();
+            string destinationPath = Path.Combine(
+                snapshotDataDirectory,
+                relativePath.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+            await CopyStableSnapshotFileAsync(sourcePath, destinationPath, cancellationToken);
+        }
+    }
+
     public async Task<DeskBoxRestorePreparation> PrepareRestoreAsync(
         string archivePath,
         CancellationToken cancellationToken = default)
@@ -334,19 +494,37 @@ public sealed partial class DeskBoxDataBackupService
                 archivePath,
                 stagingRoot,
                 cancellationToken);
+            if (archiveInfo.Manifest.Domains is { Count: > 0 })
+            {
+                // A scoped cloud backup holds only its domains — the
+                // whole-directory swap below would wipe everything else.
+                throw new InvalidDataException(
+                    "This is a scoped cloud backup; restore it through cloud restore.");
+            }
+
             string stagedDataDirectory = Path.Combine(stagingRoot, "data");
             await RebaseManagedAttachmentPathsAsync(
                 stagedDataDirectory,
                 archiveInfo.Manifest.SourceDataPath,
+                todoWidgetIdRemaps: null,
                 cancellationToken);
-            ValidateRestoreData(stagedDataDirectory);
+            // Pre-restore archives are the safety net for restores: they can
+            // be created without settings.json, so they must also be
+            // restorable without it. Manual/automatic snapshots stay strict.
+            bool allowMissingSettings = string.Equals(
+                archiveInfo.Manifest.Kind, "pre-restore", StringComparison.Ordinal);
+            ValidateRestoreData(
+                stagedDataDirectory,
+                requireSettings: !allowMissingSettings);
 
             var marker = new PendingRestoreMarker(
                 stagingRoot,
                 archivePath,
                 DateTimeOffset.UtcNow,
                 archiveInfo.Manifest.CreatedAtUtc,
-                archiveInfo.Manifest.AppVersion);
+                archiveInfo.Manifest.AppVersion,
+                Domains: null,
+                AllowMissingSettings: allowMissingSettings);
             await WritePendingRestoreMarkerAtomicallyAsync(
                 PendingRestoreMarkerPath,
                 marker,
@@ -358,7 +536,8 @@ public sealed partial class DeskBoxDataBackupService
                 archiveInfo.FileCount,
                 archiveInfo.TotalUncompressedBytes,
                 archiveInfo.Manifest.SchemaVersion,
-                archiveInfo.Manifest.SchemaVersion >= 2);
+                archiveInfo.Manifest.SchemaVersion >= 2,
+                IsFromNewerAppVersion: IsBackupFromNewerApp(archiveInfo.Manifest.AppVersion));
         }
         catch
         {
@@ -373,6 +552,646 @@ public sealed partial class DeskBoxDataBackupService
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Scoped cloud restore (roadmap §10): stages a cloud backup and marks
+    /// it pending with the domain list. Apply replaces ONLY the staged
+    /// domains' files in the live data directory — every other path stays
+    /// untouched, and the marker makes a mid-apply crash retry-safe.
+    /// </summary>
+    /// <param name="requestedDomains">
+    /// Domains the user asked to restore; the applied scope is the
+    /// intersection with the archive's manifest domains (an archive lacking
+    /// a requested domain simply cannot provide it).
+    /// </param>
+    public async Task<DeskBoxRestorePreparation> PrepareScopedRestoreAsync(
+        string archivePath,
+        CloudBackupDomain requestedDomains,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(archivePath);
+        archivePath = Path.GetFullPath(archivePath);
+        if (!File.Exists(archivePath))
+        {
+            throw new FileNotFoundException("The selected DeskBox backup does not exist.", archivePath);
+        }
+
+        await _gate.WaitAsync(cancellationToken);
+        string? stagingRoot = null;
+        try
+        {
+            DeletePendingRestoreCore();
+            stagingRoot = Path.Combine(RestoreStagingDirectory, Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(stagingRoot);
+
+            RestoreArchiveInfo archiveInfo = await ExtractAndValidateRestoreArchiveAsync(
+                archivePath,
+                stagingRoot,
+                cancellationToken);
+
+            CloudBackupDomain manifestScope = CloudBackupDomains.FromManifestNames(
+                archiveInfo.Manifest.Domains);
+            if (manifestScope == CloudBackupDomain.None)
+            {
+                throw new InvalidDataException(
+                    "This is not a scoped cloud backup; use the full restore flow.");
+            }
+
+            CloudBackupDomain appliedScope = manifestScope & requestedDomains;
+            if (appliedScope == CloudBackupDomain.None)
+            {
+                throw new InvalidDataException(
+                    "The backup does not contain any of the requested domains.");
+            }
+
+            string stagedDataDirectory = Path.Combine(stagingRoot, "data");
+            if (Directory.Exists(stagedDataDirectory))
+            {
+                // The archive must not carry files outside its own manifest
+                // domains — a forged manifest could otherwise make the
+                // scoped apply overwrite non-domain data. Files from a
+                // manifest domain the user did not request are staged but
+                // simply not applied.
+                foreach (string stagedFile in Directory.EnumerateFiles(
+                             stagedDataDirectory, "*", SearchOption.AllDirectories))
+                {
+                    string stagedRelative = Path
+                        .GetRelativePath(stagedDataDirectory, stagedFile)
+                        .Replace(Path.DirectorySeparatorChar, '/');
+                    if (!CloudBackupDomains.IsInScope(manifestScope, stagedRelative))
+                    {
+                        throw new InvalidDataException(
+                            $"Scoped backup entry '{stagedRelative}' is outside the manifest domains.");
+                    }
+                }
+            }
+            // Remap order matters: plan source→target ids, move the staged
+            // widget dirs, THEN rebase attachment paths — embedded FilePaths
+            // carry the source id, so the rebase rewrites widgets/<source>
+            // to widgets/<target> while the moved files already sit there.
+            TodoRestorePlan todoPlan = appliedScope.HasFlag(CloudBackupDomain.TodoData)
+                ? await PlanOrphanedTodoWidgetRemapsAsync(
+                    stagingRoot, stagedDataDirectory, cancellationToken)
+                : TodoRestorePlan.Empty;
+            await ApplyTodoRestorePlanAsync(stagedDataDirectory, todoPlan, cancellationToken);
+
+            // Remaps AND merges are both "source store landed on a live
+            // widget" — report them together so the confirm dialog counts
+            // every redirected source store.
+            IReadOnlyList<DeskBoxTodoWidgetRemap> remaps =
+                todoPlan.Merges.Count == 0
+                    ? todoPlan.Remaps
+                    : todoPlan.Remaps.Concat(todoPlan.Merges).ToList();
+            IReadOnlyList<string> unmapped = todoPlan.Unmapped;
+            IReadOnlyDictionary<string, string>? todoWidgetIdRemaps =
+                todoPlan.Remaps.Count + todoPlan.Merges.Count > 0
+                    ? todoPlan.Remaps.Concat(todoPlan.Merges)
+                        .ToDictionary(
+                            r => r.SourceWidgetId,
+                            r => r.TargetWidgetId,
+                            StringComparer.Ordinal)
+                    : null;
+            await RebaseManagedAttachmentPathsAsync(
+                stagedDataDirectory,
+                archiveInfo.Manifest.SourceDataPath,
+                todoWidgetIdRemaps,
+                cancellationToken);
+            ValidateScopedRestoreData(stagedDataDirectory, appliedScope);
+            IReadOnlyList<DeskBoxDomainItemCount> domainItemCounts =
+                CountStagedDomainItems(stagedDataDirectory, appliedScope);
+            int attachmentReferences =
+                CountStagedAttachmentReferences(stagedDataDirectory, appliedScope);
+
+            var marker = new PendingRestoreMarker(
+                stagingRoot,
+                archivePath,
+                DateTimeOffset.UtcNow,
+                archiveInfo.Manifest.CreatedAtUtc,
+                archiveInfo.Manifest.AppVersion,
+                CloudBackupDomains.ToManifestNames(appliedScope));
+            await WritePendingRestoreMarkerAtomicallyAsync(
+                PendingRestoreMarkerPath,
+                marker,
+                cancellationToken);
+            App.Log($"[DataBackup] Prepared scoped restore from '{archivePath}' (domains: {appliedScope}).");
+            return new DeskBoxRestorePreparation(
+                archiveInfo.Manifest.CreatedAtUtc,
+                archiveInfo.Manifest.AppVersion,
+                archiveInfo.FileCount,
+                archiveInfo.TotalUncompressedBytes,
+                archiveInfo.Manifest.SchemaVersion,
+                archiveInfo.Manifest.SchemaVersion >= 2,
+                CloudBackupDomains.ToManifestNames(appliedScope),
+                archiveInfo.Manifest.SourceDeviceId,
+                remaps,
+                unmapped,
+                domainItemCounts,
+                attachmentReferences,
+                IsFromNewerAppVersion: IsBackupFromNewerApp(archiveInfo.Manifest.AppVersion));
+        }
+        catch
+        {
+            if (!string.IsNullOrWhiteSpace(stagingRoot))
+            {
+                TryDeleteDirectory(stagingRoot);
+            }
+
+            throw;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Scoped-archive validation: the staged data dir must hold only files
+    /// inside the applied domains (a tampered archive must never reach
+    /// non-domain paths), and each domain store file must parse.
+    /// </summary>
+    private static void ValidateScopedRestoreData(
+        string stagedDataDirectory,
+        CloudBackupDomain appliedScope)
+    {
+        foreach (CloudBackupDomain domain in CloudBackupDomains.FileDomains)
+        {
+            if (!appliedScope.HasFlag(domain))
+            {
+                continue;
+            }
+
+            if (domain == CloudBackupDomain.QuickCaptureData)
+            {
+                ValidateJsonFileIfPresent<QuickCaptureStoreData>(
+                    Path.Combine(stagedDataDirectory, "quick-capture", "quick-capture.json"),
+                    s_quickCaptureDataJsonContext.StoreData);
+            }
+        }
+
+        if (!Directory.Exists(stagedDataDirectory))
+        {
+            return;
+        }
+
+        string widgetsDirectory = Path.Combine(stagedDataDirectory, "widgets");
+        if (appliedScope.HasFlag(CloudBackupDomain.TodoData) &&
+            Directory.Exists(widgetsDirectory))
+        {
+            foreach (string todoPath in Directory.EnumerateFiles(
+                         widgetsDirectory,
+                         "todo.json",
+                         SearchOption.AllDirectories))
+            {
+                ValidateJsonFileIfPresent<TodoWidgetData>(
+                    todoPath,
+                    s_todoDataJsonContext.StoreData);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Live-item count per applied item domain, for the restore confirm
+    /// dialog: a manifest domain can legally hold zero records (the backup
+    /// was taken before any data existed), and restoring it still wipes the
+    /// local domain — the preview must say so. Tombstoned items do not
+    /// count. A store that fails to parse contributes zero rather than
+    /// failing the restore the validation step already accepted.
+    /// </summary>
+    private static IReadOnlyList<DeskBoxDomainItemCount> CountStagedDomainItems(
+        string stagedDataDirectory,
+        CloudBackupDomain appliedScope)
+    {
+        var counts = new List<DeskBoxDomainItemCount>(2);
+
+        if (appliedScope.HasFlag(CloudBackupDomain.TodoData))
+        {
+            int items = 0;
+            string widgetsDirectory = Path.Combine(stagedDataDirectory, "widgets");
+            if (Directory.Exists(widgetsDirectory))
+            {
+                foreach (string todoPath in Directory.EnumerateFiles(
+                             widgetsDirectory,
+                             "todo.json",
+                             SearchOption.AllDirectories))
+                {
+                    items += CountLiveItems<TodoWidgetData>(
+                        todoPath,
+                        s_todoDataJsonContext.StoreData,
+                        data => data.Items?.Count(item => item is { IsDeleted: false }) ?? 0);
+                }
+            }
+
+            counts.Add(new DeskBoxDomainItemCount(
+                CloudBackupDomains.ToManifestName(CloudBackupDomain.TodoData), items));
+        }
+
+        if (appliedScope.HasFlag(CloudBackupDomain.QuickCaptureData))
+        {
+            int items = CountLiveItems<QuickCaptureStoreData>(
+                Path.Combine(stagedDataDirectory, "quick-capture", "quick-capture.json"),
+                s_quickCaptureDataJsonContext.StoreData,
+                data =>
+                    (data.Items?.Count(item => item is { IsDeleted: false }) ?? 0) +
+                    (data.RecentItems?.Count(item => item is { IsDeleted: false }) ?? 0));
+            counts.Add(new DeskBoxDomainItemCount(
+                CloudBackupDomains.ToManifestName(CloudBackupDomain.QuickCaptureData), items));
+        }
+
+        return counts;
+    }
+
+    private static int CountLiveItems<TData>(
+        string storePath,
+        JsonTypeInfo<TData> typeInfo,
+        Func<TData, int> countItems)
+    {
+        try
+        {
+            if (!File.Exists(storePath))
+            {
+                return 0;
+            }
+
+            TData? data = JsonSerializer.Deserialize(File.ReadAllText(storePath), typeInfo);
+            return data is null ? 0 : countItems(data);
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        {
+            App.Log($"[DataBackup] Item count skipped for '{storePath}': {ex.Message}");
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Distinct attachment/image references inside the staged item data.
+    /// Attachment files are excluded from cloud backups by design, so the
+    /// confirm dialog uses this count to warn that these references will
+    /// dangle on a device that does not hold the files.
+    /// </summary>
+    private static int CountStagedAttachmentReferences(
+        string stagedDataDirectory,
+        CloudBackupDomain appliedScope)
+    {
+        int references = 0;
+
+        if (appliedScope.HasFlag(CloudBackupDomain.TodoData))
+        {
+            string widgetsDirectory = Path.Combine(stagedDataDirectory, "widgets");
+            if (Directory.Exists(widgetsDirectory))
+            {
+                foreach (string todoPath in Directory.EnumerateFiles(
+                             widgetsDirectory,
+                             "todo.json",
+                             SearchOption.AllDirectories))
+                {
+                    references += CountLiveItems<TodoWidgetData>(
+                        todoPath,
+                        s_todoDataJsonContext.StoreData,
+                        data => (data.Items ?? []).Sum(item =>
+                            item is null ? 0 : CountAttachmentPaths(item.Attachments, null)));
+                }
+            }
+        }
+
+        if (appliedScope.HasFlag(CloudBackupDomain.QuickCaptureData))
+        {
+            references += CountLiveItems<QuickCaptureStoreData>(
+                Path.Combine(stagedDataDirectory, "quick-capture", "quick-capture.json"),
+                s_quickCaptureDataJsonContext.StoreData,
+                data => (data.Items ?? []).Concat(data.RecentItems ?? []).Sum(item =>
+                    item is null ? 0 : CountAttachmentPaths(item.Attachments, item.ImagePath)));
+        }
+
+        return references;
+    }
+
+    private static int CountAttachmentPaths(
+        IEnumerable<TodoAttachment>? attachments,
+        string? imagePath)
+    {
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (TodoAttachment attachment in attachments ?? [])
+        {
+            if (attachment is not null && !string.IsNullOrWhiteSpace(attachment.FilePath))
+            {
+                paths.Add(attachment.FilePath.Trim());
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(imagePath))
+        {
+            paths.Add(imagePath.Trim());
+        }
+
+        return paths.Count;
+    }
+
+    /// <summary>
+    /// Todo stores are keyed by widget id, which is device-local. A snapshot
+    /// taken on another device — or before the widget was deleted and
+    /// recreated — stages widgets/&lt;id&gt;/ dirs the live settings do not
+    /// know; restoring them verbatim would wipe the live stores AND leave
+    /// the restored data invisible. This is a pure plan: it only decides
+    /// source→target id pairs and never touches the file system, so the
+    /// caller can move dirs first and then rebase attachment paths with
+    /// the remap applied.
+    ///
+    /// Pairing: orphans map onto free live widgets in id order — when the
+    /// snapshot carries more source lists than this device has free widgets,
+    /// the leftovers merge by item id into a target that will exist after
+    /// the restore rather than landing invisible under a foreign id. Only
+    /// a device with no todo widget at all leaves orphans unmapped —
+    /// preserved on disk under the source id and reported.
+    /// </summary>
+    private async Task<TodoRestorePlan> PlanOrphanedTodoWidgetRemapsAsync(
+        string stagingRoot,
+        string stagedDataDirectory,
+        CancellationToken cancellationToken)
+    {
+        const int MaxOrphanScanDepth = 64;
+        string stagedWidgetsDirectory = Path.Combine(stagedDataDirectory, "widgets");
+        if (!Directory.Exists(stagedWidgetsDirectory))
+        {
+            return TodoRestorePlan.Empty;
+        }
+
+        // Widget dirs that actually carry todo-domain payload in the snapshot.
+        var stagedIds = new List<string>();
+        foreach (string widgetDir in Directory.EnumerateDirectories(stagedWidgetsDirectory))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            bool carriesTodoDomain = Directory
+                .EnumerateFiles(widgetDir, "*", SearchOption.AllDirectories)
+                .Take(MaxOrphanScanDepth)
+                .Select(path => Path.GetRelativePath(stagedDataDirectory, path)
+                    .Replace(Path.DirectorySeparatorChar, '/'))
+                .Any(rel => CloudBackupDomains.IsInDomain(CloudBackupDomain.TodoData, rel));
+            if (carriesTodoDomain)
+            {
+                stagedIds.Add(Path.GetFileName(widgetDir));
+            }
+        }
+
+        if (stagedIds.Count == 0)
+        {
+            return TodoRestorePlan.Empty;
+        }
+
+        // The archive's widget-style document names the SOURCE device's live
+        // widgets, so staged todo dirs it does not list are the source's own
+        // orphan leftovers — not user data — and get dropped from the
+        // restore. An absent/unreadable document (or one naming none of the
+        // staged ids) means "cannot tell": every staged dir stays a
+        // candidate rather than risking real data.
+        var authoritativeSet = new HashSet<string>(stagedIds, StringComparer.Ordinal);
+        HashSet<string>? sourceLiveIds =
+            await ReadSourceLiveTodoWidgetIdsAsync(stagingRoot, cancellationToken);
+        if (sourceLiveIds is not null)
+        {
+            var named = stagedIds.Where(sourceLiveIds.Contains).ToList();
+            if (named.Count > 0)
+            {
+                authoritativeSet.IntersectWith(sourceLiveIds);
+            }
+        }
+
+        List<string> junk = stagedIds
+            .Where(id => !authoritativeSet.Contains(id))
+            .ToList();
+
+        HashSet<string> liveTodoIds = await ReadLiveTodoWidgetIdsAsync(cancellationToken);
+        List<string> orphans = stagedIds
+            .Where(id => authoritativeSet.Contains(id) && !liveTodoIds.Contains(id))
+            .OrderBy(id => id, StringComparer.Ordinal)
+            .ToList();
+        List<string> freeTargets = liveTodoIds
+            .Where(id => !authoritativeSet.Contains(id))
+            .OrderBy(id => id, StringComparer.Ordinal)
+            .ToList();
+
+        var remaps = new List<DeskBoxTodoWidgetRemap>();
+        var merges = new List<DeskBoxTodoWidgetRemap>();
+        var unmapped = new List<string>();
+
+        int pairs = Math.Min(orphans.Count, freeTargets.Count);
+        for (int index = 0; index < pairs; index++)
+        {
+            remaps.Add(new DeskBoxTodoWidgetRemap(orphans[index], freeTargets[index]));
+        }
+
+        if (orphans.Count > pairs)
+        {
+            // The merge target must be a widget whose staged store exists
+            // after the plan is applied: the first paired target, else the
+            // first live widget whose own store is already in the snapshot.
+            string? mergeTarget = remaps.Count > 0
+                ? remaps[0].TargetWidgetId
+                : liveTodoIds
+                    .Where(authoritativeSet.Contains)
+                    .OrderBy(id => id, StringComparer.Ordinal)
+                    .FirstOrDefault();
+            foreach (string leftover in orphans.Skip(pairs))
+            {
+                if (mergeTarget is null)
+                {
+                    unmapped.Add(leftover);
+                }
+                else
+                {
+                    merges.Add(new DeskBoxTodoWidgetRemap(leftover, mergeTarget));
+                }
+            }
+        }
+
+        return new TodoRestorePlan(remaps, merges, unmapped, junk);
+    }
+
+    /// <summary>
+    /// Widget ids the archive's widget-style document lists as live Todo
+    /// widgets on the source device — the liveness signal that lets the
+    /// restore tell real todo stores apart from the source's orphan debris.
+    /// Null when the document is absent, unreadable, or carries no widget
+    /// map (callers fall back to treating every staged dir as candidate).
+    /// </summary>
+    private static async Task<HashSet<string>?> ReadSourceLiveTodoWidgetIdsAsync(
+        string stagingRoot,
+        CancellationToken cancellationToken)
+    {
+        string documentPath = Path.Combine(
+            stagingRoot, CloudBackupDomains.WidgetStyleEntryName);
+        if (!File.Exists(documentPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            JsonObject? document = JsonNode
+                .Parse(await File.ReadAllBytesAsync(documentPath, cancellationToken))
+                ?.AsObject();
+            // Same shape check the apply path enforces — a foreign document
+            // must never decide which staged stores count as live.
+            if (document?["kind"] is not JsonValue docKindValue ||
+                !docKindValue.TryGetValue(out string? docKind) ||
+                !string.Equals(docKind, "widget-style", StringComparison.Ordinal) ||
+                document["widgets"] is not JsonObject widgets)
+            {
+                return null;
+            }
+
+            var ids = new HashSet<string>(StringComparer.Ordinal);
+            foreach ((string id, JsonNode? style) in widgets)
+            {
+                if (style is JsonObject styleObject &&
+                    styleObject["widgetKind"] is JsonValue kindValue &&
+                    kindValue.TryGetValue(out string? kind) &&
+                    string.Equals(kind, nameof(WidgetKind.Todo), StringComparison.OrdinalIgnoreCase))
+                {
+                    ids.Add(id);
+                }
+            }
+
+            return ids;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            App.Log($"[DataBackup] Could not read source widget liveness for scoped remap: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Materializes the plan inside the staging directory: junk source dirs
+    /// are deleted, remap dirs move onto the target id, and merge sources
+    /// append their items into the target store before being deleted. Runs
+    /// before attachment-path rebasing: embedded FilePaths carry the source
+    /// id, so the rebase rewrites widgets/&lt;source&gt; to
+    /// widgets/&lt;target&gt; while the payload already sits there.
+    /// </summary>
+    private static async Task ApplyTodoRestorePlanAsync(
+        string stagedDataDirectory,
+        TodoRestorePlan plan,
+        CancellationToken cancellationToken)
+    {
+        string stagedWidgetsDirectory = Path.Combine(stagedDataDirectory, "widgets");
+        foreach (string junkId in plan.JunkSourceIds)
+        {
+            TryDeleteDirectory(Path.Combine(stagedWidgetsDirectory, junkId));
+            App.Log($"[DataBackup] Scoped restore dropped source-orphan todo store '{junkId}'.");
+        }
+
+        foreach (DeskBoxTodoWidgetRemap remap in plan.Remaps)
+        {
+            // freeTargets excludes staged ids by construction, so the
+            // destination directory cannot already exist in the snapshot.
+            Directory.Move(
+                Path.Combine(stagedWidgetsDirectory, remap.SourceWidgetId),
+                Path.Combine(stagedWidgetsDirectory, remap.TargetWidgetId));
+            App.Log($"[DataBackup] Scoped restore remapped todo store '{remap.SourceWidgetId}' -> '{remap.TargetWidgetId}'.");
+        }
+
+        foreach (IGrouping<string, DeskBoxTodoWidgetRemap> group in plan.Merges
+                     .GroupBy(merge => merge.TargetWidgetId, StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var targetStore = new TodoWidgetStore(stagedWidgetsDirectory, group.Key);
+            TodoWidgetData target = await targetStore.LoadAsync();
+            target.Items ??= [];
+            var seenIds = new HashSet<string>(
+                target.Items.Where(item => item is not null).Select(item => item.Id),
+                StringComparer.Ordinal);
+            int nextSortOrder = target.Items.Count == 0
+                ? 0
+                : target.Items.Max(item => item?.SortOrder ?? 0) + 1;
+
+            foreach (DeskBoxTodoWidgetRemap merge in group)
+            {
+                var orphanStore = new TodoWidgetStore(stagedWidgetsDirectory, merge.SourceWidgetId);
+                TodoWidgetData orphan = await orphanStore.LoadAsync();
+                int appended = 0;
+                foreach (TodoItem item in orphan.Items ?? [])
+                {
+                    if (item is null ||
+                        string.IsNullOrWhiteSpace(item.Text) ||
+                        !seenIds.Add(item.Id))
+                    {
+                        continue;
+                    }
+
+                    item.SortOrder = nextSortOrder++;
+                    target.Items.Add(item);
+                    appended++;
+                }
+
+                TryDeleteDirectory(Path.Combine(stagedWidgetsDirectory, merge.SourceWidgetId));
+                App.Log($"[DataBackup] Scoped restore merged {appended} todo item(s) from '{merge.SourceWidgetId}' into '{merge.TargetWidgetId}'.");
+            }
+
+            await targetStore.SaveAsync(target);
+        }
+    }
+
+    /// <summary>
+    /// Live todo-widget ids from the data dir. widget-layout.json is the
+    /// first authority once it exists — it survives a settings.json loss
+    /// independently, and the widgets array may already live there while
+    /// settings is gone. settings.json is only the pre-adoption fallback; a
+    /// wiped device (the disaster-recovery case) has neither file, and the
+    /// empty set just leaves every orphan unmapped, which is the honest
+    /// answer.
+    /// </summary>
+    private async Task<HashSet<string>> ReadLiveTodoWidgetIdsAsync(CancellationToken cancellationToken)
+    {
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        string layoutPath = Path.Combine(DataDirectory, "widget-layout.json");
+        string settingsPath = Path.Combine(DataDirectory, "settings.json");
+
+        try
+        {
+            JsonArray? widgets;
+            if (File.Exists(layoutPath))
+            {
+                byte[] layoutJson = await File.ReadAllBytesAsync(layoutPath, cancellationToken);
+                widgets = JsonNode.Parse(layoutJson)?["layout"]?["widgets"] as JsonArray;
+            }
+            else if (File.Exists(settingsPath))
+            {
+                byte[] json = await File.ReadAllBytesAsync(settingsPath, cancellationToken);
+                widgets = JsonNode.Parse(json)?["widgets"] as JsonArray;
+            }
+            else
+            {
+                return ids;
+            }
+
+            if (widgets is null)
+            {
+                return ids;
+            }
+
+            foreach (JsonNode? node in widgets)
+            {
+                if (node is not JsonObject element ||
+                    element["id"] is not JsonValue idValue ||
+                    !idValue.TryGetValue(out string? id) ||
+                    string.IsNullOrEmpty(id) ||
+                    element["widgetKind"] is not JsonValue kindValue ||
+                    !kindValue.TryGetValue(out string? kind) ||
+                    !string.Equals(kind, nameof(WidgetKind.Todo), StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                ids.Add(id);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            App.Log($"[DataBackup] Could not enumerate live todo widgets for scoped remap: {ex.Message}");
+        }
+
+        return ids;
     }
 
     public async Task CancelPendingRestoreAsync(CancellationToken cancellationToken = default)
@@ -407,19 +1226,21 @@ public sealed partial class DeskBoxDataBackupService
                 throw new InvalidDataException("The pending restore staging path is invalid.");
             }
 
-            string stagedDataDirectory = Path.Combine(stagingRoot, "data");
-            ValidateRestoreData(stagedDataDirectory);
-
-            if (HasBackupSourceData())
+            if (marker.Domains is { Count: > 0 } markerDomains)
             {
-                Directory.CreateDirectory(PreRestoreBackupDirectory);
-                string preRestorePath = GetAvailableArchivePath(
-                    PreRestoreBackupDirectory,
-                    $"DeskBox-PreRestore-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
-                await CreateArchiveCoreAsync(preRestorePath, "pre-restore", cancellationToken);
-                PrunePreRestoreBackups();
-                App.Log($"[DataBackup] Created pre-restore backup '{preRestorePath}'.");
+                return await ApplyScopedRestoreCoreAsync(
+                    marker,
+                    stagingRoot,
+                    CloudBackupDomains.FromManifestNames(markerDomains),
+                    cancellationToken);
             }
+
+            string stagedDataDirectory = Path.Combine(stagingRoot, "data");
+            ValidateRestoreData(
+                stagedDataDirectory,
+                requireSettings: !marker.AllowMissingSettings);
+
+            marker = await EnsurePreRestoreSafetyBackupAsync(marker, cancellationToken);
 
             rollbackRoot = Path.Combine(_rootPath, "restore-rollback", Guid.NewGuid().ToString("N"));
             string rollbackDataDirectory = Path.Combine(rollbackRoot, "data");
@@ -472,6 +1293,352 @@ public sealed partial class DeskBoxDataBackupService
         }
     }
 
+    /// <summary>
+    /// Applies a scoped cloud restore: replaces only the marked domains'
+    /// files inside the live data directory. Everything outside the domains
+    /// — settings.json, FileSafety files, other widget stores — is never
+    /// touched. The operation is idempotent (staged files are the source of
+    /// truth and are not modified), so a mid-apply crash leaves the marker
+    /// in place and the next boot simply retries to convergence.
+    /// </summary>
+    private async Task<DeskBoxRestoreApplyResult> ApplyScopedRestoreCoreAsync(
+        PendingRestoreMarker marker,
+        string stagingRoot,
+        CloudBackupDomain scope,
+        CancellationToken cancellationToken)
+    {
+        string stagedDataDirectory = Path.Combine(stagingRoot, "data");
+        try
+        {
+            // Full local safety net before ANY restore — same as the
+            // classic path.
+            marker = await EnsurePreRestoreSafetyBackupAsync(marker, cancellationToken);
+
+            Directory.CreateDirectory(DataDirectory);
+            foreach (CloudBackupDomain domain in CloudBackupDomains.FileDomains)
+            {
+                if (!scope.HasFlag(domain))
+                {
+                    continue;
+                }
+
+                if (!marker.ReplaceItemData)
+                {
+                    // Additive merge: staged items fold into the live stores
+                    // by item id. Nothing local is ever deleted — a live
+                    // store the snapshot does not carry keeps its data.
+                    if (Directory.Exists(stagedDataDirectory))
+                    {
+                        if (domain == CloudBackupDomain.TodoData)
+                        {
+                            await MergeStagedTodoStoresAsync(
+                                stagedDataDirectory, cancellationToken);
+                        }
+                        else if (domain == CloudBackupDomain.QuickCaptureData)
+                        {
+                            await MergeStagedQuickCaptureStoreAsync(
+                                stagedDataDirectory, cancellationToken);
+                        }
+                    }
+
+                    continue;
+                }
+
+                // Snapshot-faithful domain replace: live domain files absent
+                // from the staged snapshot are deleted, then staged files
+                // are copied in. Non-domain paths are never enumerated.
+                foreach (string liveFile in Directory
+                             .EnumerateFiles(DataDirectory, "*", SearchOption.AllDirectories)
+                             .ToArray())
+                {
+                    string liveRelative = Path
+                        .GetRelativePath(DataDirectory, liveFile)
+                        .Replace(Path.DirectorySeparatorChar, '/');
+                    if (CloudBackupDomains.IsInDomain(domain, liveRelative))
+                    {
+                        File.Delete(liveFile);
+                    }
+                }
+
+                if (!Directory.Exists(stagedDataDirectory))
+                {
+                    continue;
+                }
+
+                foreach (string stagedFile in Directory.EnumerateFiles(
+                             stagedDataDirectory, "*", SearchOption.AllDirectories))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    string stagedRelative = Path
+                        .GetRelativePath(stagedDataDirectory, stagedFile)
+                        .Replace(Path.DirectorySeparatorChar, '/');
+                    if (!CloudBackupDomains.IsInDomain(domain, stagedRelative))
+                    {
+                        continue;
+                    }
+
+                    string destinationPath = Path.Combine(
+                        DataDirectory,
+                        stagedRelative.Replace('/', Path.DirectorySeparatorChar));
+                    Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+                    File.Copy(stagedFile, destinationPath, overwrite: true);
+                }
+            }
+
+            if (scope.HasFlag(CloudBackupDomain.WidgetStyle))
+            {
+                string styleDocumentPath = Path.Combine(
+                    stagingRoot,
+                    CloudBackupDomains.WidgetStyleEntryName);
+                if (File.Exists(styleDocumentPath))
+                {
+                    byte[] documentBytes = await File.ReadAllBytesAsync(
+                        styleDocumentPath,
+                        cancellationToken);
+                    WidgetStyleBackupProjection.ApplyResult styleResult =
+                        await WidgetStyleBackupProjection.ApplyAsync(
+                            documentBytes,
+                            Path.Combine(DataDirectory, "settings.json"),
+                            Path.Combine(DataDirectory, "widget-layout.json"),
+                            cancellationToken);
+                    App.Log(
+                        $"[DataBackup] Widget style restore: applied={styleResult.Applied}, " +
+                        $"shell={styleResult.ShellFieldsPatched}, widgets={styleResult.WidgetsPatched}" +
+                        (styleResult.SkippedReason is null ? "." : $", skipped={styleResult.SkippedReason}."));
+                }
+            }
+
+            TryDeleteFile(PendingRestoreMarkerPath);
+            TryDeleteDirectory(stagingRoot);
+            App.Log($"[DataBackup] Applied scoped restore from '{marker.ArchivePath}' (domains: {scope}).");
+            return new DeskBoxRestoreApplyResult(true, true, null);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // The marker and staging stay in place → next boot retries;
+            // the pre-restore zip is the manual recovery net. Retries are
+            // bounded: a deterministically failing archive would otherwise
+            // block every scheduled upload forever.
+            int attempts = marker.ApplyAttemptCount + 1;
+            if (attempts >= MaxScopedRestoreApplyAttempts)
+            {
+                App.Log(
+                    $"[DataBackup] Scoped restore abandoned after {attempts} attempts: {ex.Message}");
+                TryDeleteFile(PendingRestoreMarkerPath);
+                TryDeleteDirectory(stagingRoot);
+                return new DeskBoxRestoreApplyResult(
+                    true,
+                    false,
+                    $"Restore failed on {attempts} launches and was abandoned: {ex.Message}");
+            }
+
+            App.Log(
+                $"[DataBackup] Scoped restore failed (will retry on next launch, " +
+                $"attempt {attempts}/{MaxScopedRestoreApplyAttempts}): {ex}");
+            try
+            {
+                // The counter must persist even when the apply token is
+                // already cancelled — losing it would restart the budget.
+                await WritePendingRestoreMarkerAtomicallyAsync(
+                    PendingRestoreMarkerPath,
+                    marker with { ApplyAttemptCount = attempts },
+                    CancellationToken.None);
+            }
+            catch (Exception writeEx)
+            {
+                App.Log($"[DataBackup] Failed to persist restore attempt count: {writeEx.Message}");
+            }
+
+            return new DeskBoxRestoreApplyResult(true, false, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Records the item-restore mode chosen in the confirm dialog onto the
+    /// pending marker — additive merge (default) vs snapshot-faithful
+    /// replace. The choice is made after PrepareScopedRestoreAsync wrote
+    /// the marker, so it is rewritten atomically; returns false when
+    /// nothing is pending.
+    /// </summary>
+    internal async Task<bool> SetPendingRestoreItemReplaceModeAsync(
+        bool replaceItemData,
+        CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            if (!File.Exists(PendingRestoreMarkerPath))
+            {
+                return false;
+            }
+
+            PendingRestoreMarker marker = await ReadPendingRestoreMarkerAsync(cancellationToken);
+            await WritePendingRestoreMarkerAtomicallyAsync(
+                PendingRestoreMarkerPath,
+                marker with { ReplaceItemData = replaceItemData },
+                cancellationToken);
+            return true;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Merge-mode apply for the todo domain: every staged
+    /// widgets/&lt;id&gt;/todo.json folds its items into the live store at the
+    /// same path — remapped targets merge onto live widgets, unmapped
+    /// source ids still land on disk under their own id. Nothing is ever
+    /// deleted: live stores the snapshot does not carry keep their data.
+    /// </summary>
+    private async Task MergeStagedTodoStoresAsync(
+        string stagedDataDirectory,
+        CancellationToken cancellationToken)
+    {
+        string stagedWidgetsDirectory = Path.Combine(stagedDataDirectory, "widgets");
+        if (!Directory.Exists(stagedWidgetsDirectory))
+        {
+            return;
+        }
+
+        string liveWidgetsDirectory = Path.Combine(DataDirectory, "widgets");
+        foreach (string stagedTodoPath in Directory.EnumerateFiles(
+                     stagedWidgetsDirectory, "todo.json", SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string widgetId = Path.GetFileName(Path.GetDirectoryName(stagedTodoPath)!);
+            var stagedStore = new TodoWidgetStore(stagedWidgetsDirectory, widgetId);
+            var liveStore = new TodoWidgetStore(liveWidgetsDirectory, widgetId);
+            TodoWidgetData stagedData = await stagedStore.LoadAsync();
+            TodoWidgetData liveData = await liveStore.LoadAsync();
+            liveData.Items ??= [];
+            var liveIndexById = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (int index = 0; index < liveData.Items.Count; index++)
+            {
+                if (liveData.Items[index] is { } existing)
+                {
+                    liveIndexById.TryAdd(existing.Id, index);
+                }
+            }
+
+            int added = 0;
+            int updated = 0;
+            foreach (TodoItem item in stagedData.Items ?? [])
+            {
+                if (item is null)
+                {
+                    continue;
+                }
+
+                if (!liveIndexById.TryGetValue(item.Id, out int index))
+                {
+                    liveIndexById[item.Id] = liveData.Items.Count;
+                    liveData.Items.Add(item);
+                    added++;
+                }
+                else if (liveData.Items[index] is { } local &&
+                         ShouldRemoteItemWin(
+                             item.IsDeleted,
+                             item.UpdatedAt,
+                             local.IsDeleted,
+                             local.UpdatedAt))
+                {
+                    liveData.Items[index] = item;
+                    updated++;
+                }
+            }
+
+            await liveStore.SaveAsync(liveData);
+            App.Log($"[DataBackup] Merged staged todo store '{widgetId}': +{added} item(s), {updated} updated.");
+        }
+    }
+
+    /// <summary>
+    /// Merge-mode apply for the quick-capture domain: staged Items and
+    /// RecentItems union into the live store by item id under the same
+    /// no-delete rule. CurrentView is device-local UI state and stays.
+    /// </summary>
+    private async Task MergeStagedQuickCaptureStoreAsync(
+        string stagedDataDirectory,
+        CancellationToken cancellationToken)
+    {
+        string stagedStoreDirectory = Path.Combine(stagedDataDirectory, "quick-capture");
+        if (!File.Exists(Path.Combine(stagedStoreDirectory, "quick-capture.json")))
+        {
+            return;
+        }
+
+        var stagedStore = new QuickCaptureStore(stagedStoreDirectory);
+        var liveStore = new QuickCaptureStore(Path.Combine(DataDirectory, "quick-capture"));
+        QuickCaptureStoreData stagedData = await stagedStore.LoadAsync();
+        QuickCaptureStoreData liveData = await liveStore.LoadAsync();
+        liveData.Items ??= [];
+        liveData.RecentItems ??= [];
+        (int added, int updated) = (0, 0);
+        MergeList(liveData.Items, stagedData.Items);
+        MergeList(liveData.RecentItems, stagedData.RecentItems);
+        await liveStore.SaveAsync(liveData);
+
+        void MergeList(List<QuickCaptureItem> liveList, List<QuickCaptureItem>? stagedList)
+        {
+            var liveIndexById = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (int index = 0; index < liveList.Count; index++)
+            {
+                if (liveList[index] is { } existing)
+                {
+                    liveIndexById.TryAdd(existing.Id, index);
+                }
+            }
+
+            foreach (QuickCaptureItem item in stagedList ?? [])
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (item is null)
+                {
+                    continue;
+                }
+
+                if (!liveIndexById.TryGetValue(item.Id, out int index))
+                {
+                    liveIndexById[item.Id] = liveList.Count;
+                    liveList.Add(item);
+                    added++;
+                }
+                else if (liveList[index] is { } local &&
+                         ShouldRemoteItemWin(
+                             item.IsDeleted,
+                             item.UpdatedAt,
+                             local.IsDeleted,
+                             local.UpdatedAt))
+                {
+                    liveList[index] = item;
+                    updated++;
+                }
+            }
+        }
+        App.Log($"[DataBackup] Merged staged quick-capture store: +{added} item(s), {updated} updated.");
+    }
+
+    /// <summary>
+    /// Item-level merge conflict rule shared by the todo and quick-capture
+    /// merge paths: the staged record wins only when it is strictly newer
+    /// AND is not a tombstone covering a live local record — a merge must
+    /// never reduce what the local device can see.
+    /// </summary>
+    private static bool ShouldRemoteItemWin(
+        bool remoteIsDeleted,
+        DateTimeOffset remoteUpdatedAt,
+        bool localIsDeleted,
+        DateTimeOffset localUpdatedAt)
+    {
+        return !(remoteIsDeleted && !localIsDeleted) && remoteUpdatedAt > localUpdatedAt;
+    }
+
     private async Task<RestoreArchiveInfo> ExtractAndValidateRestoreArchiveAsync(
         string archivePath,
         string stagingRoot,
@@ -484,48 +1651,114 @@ public sealed partial class DeskBoxDataBackupService
             FileShare.Read,
             bufferSize: 81920,
             useAsync: true);
-        using var archive = new ZipArchive(input, ZipArchiveMode.Read, leaveOpen: false);
-        ZipArchiveEntry? manifestEntry = archive.Entries.SingleOrDefault(entry =>
-            string.Equals(entry.FullName, "manifest.json", StringComparison.Ordinal));
-        if (manifestEntry is null)
+        // A non-zip or truncated archive throws here — that's the common
+        // "user picked the wrong file" case, so it gets the same localized
+        // "not a valid backup" surface as a missing manifest.
+        ZipArchive archive;
+        try
         {
-            throw new InvalidDataException("The backup manifest is missing.");
+            archive = new ZipArchive(input, ZipArchiveMode.Read, leaveOpen: false);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or NotSupportedException)
+        {
+            throw new InvalidDataException("The selected file is not a readable backup archive.", ex)
+            {
+                Data = { [BackupManifestInvalidDataKey] = true }
+            };
         }
 
-        if (manifestEntry.Length > 1024 * 1024)
+        using (archive)
         {
-            throw new InvalidDataException("The backup manifest is too large.");
+            return await ExtractAndValidateManifestAsync(archive, stagingRoot, cancellationToken);
         }
+    }
 
+    private async Task<RestoreArchiveInfo> ExtractAndValidateManifestAsync(
+        ZipArchive archive,
+        string stagingRoot,
+        CancellationToken cancellationToken)
+    {
         DeskBoxBackupManifest manifest;
-        await using (Stream manifestStream = manifestEntry.Open())
+        try
         {
-            manifest = await JsonSerializer.DeserializeAsync(
-                           manifestStream,
-                           BackupJsonContext.Default.BackupManifest,
-                           cancellationToken) ??
-                       throw new InvalidDataException("The backup manifest is invalid.");
+            ZipArchiveEntry? manifestEntry = archive.Entries.SingleOrDefault(entry =>
+                string.Equals(entry.FullName, "manifest.json", StringComparison.Ordinal));
+            if (manifestEntry is null)
+            {
+                throw new InvalidDataException("The backup manifest is missing.")
+                {
+                    Data = { [BackupManifestInvalidDataKey] = true }
+                };
+            }
+
+            if (manifestEntry.Length > 1024 * 1024)
+            {
+                throw new InvalidDataException("The backup manifest is too large.")
+                {
+                    Data = { [BackupManifestInvalidDataKey] = true }
+                };
+            }
+
+            await using (Stream manifestStream = manifestEntry.Open())
+            {
+                // The declared Length is only the cheap pre-check — cap the
+                // actual inflated bytes so a crafted entry cannot expand
+                // unboundedly into the JSON parser.
+                var manifestBytes = new MemoryStream();
+                await CopyAndHashAsync(
+                    manifestStream,
+                    manifestBytes,
+                    cancellationToken,
+                    maxBytes: 1024 * 1024);
+                manifestBytes.Position = 0;
+                manifest = await JsonSerializer.DeserializeAsync(
+                               manifestBytes,
+                               BackupJsonContext.Default.BackupManifest,
+                               cancellationToken) ??
+                           throw new InvalidDataException("The backup manifest is invalid.")
+                           {
+                               Data = { [BackupManifestInvalidDataKey] = true }
+                           };
+            }
+        }
+        catch (Exception ex) when (
+            (ex is InvalidDataException or JsonException or NotSupportedException) &&
+            !ex.Data.Contains(BackupManifestInvalidDataKey))
+        {
+            // Malformed manifest JSON, unsupported compression, truncated
+            // entries — same user-facing story as a missing manifest.
+            throw new InvalidDataException("The backup manifest is unreadable.", ex)
+            {
+                Data = { [BackupManifestInvalidDataKey] = true }
+            };
         }
 
         if (manifest.SchemaVersion < MinimumSupportedBackupSchemaVersion ||
             manifest.SchemaVersion > BackupSchemaVersion)
         {
             throw new InvalidDataException(
-                $"Unsupported DeskBox backup schema version {manifest.SchemaVersion}.");
+                $"Unsupported DeskBox backup schema version {manifest.SchemaVersion}.")
+            {
+                Data = { [BackupSchemaVersionDataKey] = manifest.SchemaVersion }
+            };
         }
 
-        if (IsBackupFromNewerApp(manifest.AppVersion))
-        {
-            throw new InvalidDataException(
-                $"This backup was created by newer DeskBox version {manifest.AppVersion}.");
-        }
+        // Newer-app backups are NOT rejected: the schema gate above is the
+        // real format contract, and a hard version block strands every
+        // device that has not updated yet during a staggered rollout. The
+        // preparation record carries IsFromNewerAppVersion so both restore
+        // dialogs can warn that newer-version-only data may not survive.
 
         string destinationRoot = EnsureTrailingDirectorySeparator(
             Path.GetFullPath(Path.Combine(stagingRoot, "data")));
         var extractedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var extractedFiles = new Dictionary<string, DeskBoxBackupFileManifest>(StringComparer.OrdinalIgnoreCase);
+        DeskBoxBackupFileManifest? extractedWidgetStyle = null;
         int fileCount = 0;
         long totalUncompressedBytes = 0;
+        // Remaining ACTUAL-byte budget: separate from the declared-length
+        // sum because a malformed entry can under-report its true size.
+        long totalExtractedBudget = MaxRestoreTotalSizeBytes;
         foreach (ZipArchiveEntry entry in archive.Entries)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -536,7 +1769,11 @@ public sealed partial class DeskBoxDataBackupService
 
             if (entry.FullName.Contains('\\') ||
                 (!entry.FullName.StartsWith("data/", StringComparison.Ordinal) &&
-                 !string.Equals(entry.FullName, "data", StringComparison.Ordinal)))
+                 !string.Equals(entry.FullName, "data", StringComparison.Ordinal) &&
+                 !string.Equals(
+                     entry.FullName,
+                     CloudBackupDomains.WidgetStyleEntryName,
+                     StringComparison.Ordinal)))
             {
                 throw new InvalidDataException($"Unexpected backup entry '{entry.FullName}'.");
             }
@@ -546,8 +1783,17 @@ public sealed partial class DeskBoxDataBackupService
             string dataRootPath = destinationRoot.TrimEnd(
                 Path.DirectorySeparatorChar,
                 Path.AltDirectorySeparatorChar);
+            bool isWidgetStyleEntry = string.Equals(
+                entry.FullName,
+                CloudBackupDomains.WidgetStyleEntryName,
+                StringComparison.Ordinal);
             if (!string.Equals(destinationPath, dataRootPath, StringComparison.OrdinalIgnoreCase) &&
-                !destinationPath.StartsWith(destinationRoot, StringComparison.OrdinalIgnoreCase))
+                !destinationPath.StartsWith(destinationRoot, StringComparison.OrdinalIgnoreCase) &&
+                !(isWidgetStyleEntry &&
+                  string.Equals(
+                      destinationPath,
+                      Path.Combine(stagingRoot, CloudBackupDomains.WidgetStyleEntryName),
+                      StringComparison.OrdinalIgnoreCase)))
             {
                 throw new InvalidDataException($"Unsafe backup entry '{entry.FullName}'.");
             }
@@ -564,10 +1810,24 @@ public sealed partial class DeskBoxDataBackupService
                 throw new InvalidDataException("The backup data root entry must be a directory.");
             }
 
-            fileCount++;
-            if (fileCount > MaxRestoreFileCount || entry.Length > MaxRestoreFileSizeBytes)
+            if (isWidgetStyleEntry)
             {
-                throw new InvalidDataException("The backup contains too many files or an oversized file.");
+                // The style entry bypasses the per-file manifest but not the
+                // safety budget: it is a small JSON document by construction,
+                // so a dedicated cap stops a crafted archive from expanding
+                // unboundedly before the DOM parse.
+                if (entry.Length > MaxWidgetStyleEntryBytes)
+                {
+                    throw new InvalidDataException("The backup widget-style document is oversized.");
+                }
+            }
+            else
+            {
+                fileCount++;
+                if (fileCount > MaxRestoreFileCount || entry.Length > MaxRestoreFileSizeBytes)
+                {
+                    throw new InvalidDataException("The backup contains too many files or an oversized file.");
+                }
             }
 
             totalUncompressedBytes = checked(totalUncompressedBytes + entry.Length);
@@ -590,32 +1850,78 @@ public sealed partial class DeskBoxDataBackupService
                 FileShare.None,
                 bufferSize: 81920,
                 useAsync: true);
+            // The declared entry.Length checks above are only the cheap early
+            // reject; the hard caps are enforced on the bytes the deflate
+            // stream actually produces, capped at whichever budget runs out
+            // first — the per-file limit or the remaining total budget.
+            long extractedBudget = isWidgetStyleEntry
+                ? MaxWidgetStyleEntryBytes
+                : MaxRestoreFileSizeBytes;
             (long extractedLength, string sha256) = await CopyAndHashAsync(
                 source,
                 destination,
-                cancellationToken);
-            string relativePath = entry.FullName["data/".Length..];
-            extractedFiles[relativePath] = new DeskBoxBackupFileManifest(
-                relativePath,
-                extractedLength,
-                sha256);
+                cancellationToken,
+                Math.Min(extractedBudget, totalExtractedBudget));
+            totalExtractedBudget -= extractedLength;
+            if (isWidgetStyleEntry)
+            {
+                extractedWidgetStyle = new DeskBoxBackupFileManifest(
+                    entry.FullName,
+                    extractedLength,
+                    sha256);
+            }
+            else
+            {
+                string relativePath = entry.FullName["data/".Length..];
+                extractedFiles[relativePath] = new DeskBoxBackupFileManifest(
+                    relativePath,
+                    extractedLength,
+                    sha256);
+            }
         }
 
-        if (fileCount == 0)
+        bool isScopedArchive = manifest.Domains is { Count: > 0 };
+        if (fileCount == 0 && !isScopedArchive)
         {
             throw new InvalidDataException("The backup contains no DeskBox data files.");
         }
 
-        if (manifest.SchemaVersion >= 2)
+        if (manifest.SchemaVersion >= 2 &&
+            (extractedFiles.Count > 0 || !isScopedArchive))
         {
             ValidateIntegrityManifest(manifest.Files, extractedFiles);
         }
 
-        ValidateRestoreData(Path.Combine(stagingRoot, "data"));
+        // widget-style.json bypasses Files (root-level, not data-relative)
+        // but is covered by its own manifest field. Verify when declared —
+        // archives written before the field existed legitimately lack it;
+        // a declared entry with no matching archive entry is corruption.
+        if (manifest.WidgetStyleFile is { } expectedStyle)
+        {
+            if (extractedWidgetStyle is null ||
+                expectedStyle.Length != extractedWidgetStyle.Length ||
+                !string.Equals(
+                    expectedStyle.Sha256,
+                    extractedWidgetStyle.Sha256,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException(
+                    "The backup widget-style document failed integrity validation.");
+            }
+        }
+
+        if (!isScopedArchive)
+        {
+            ValidateRestoreData(
+                Path.Combine(stagingRoot, "data"),
+                requireSettings: !string.Equals(
+                    manifest.Kind, "pre-restore", StringComparison.Ordinal));
+        }
+
         return new RestoreArchiveInfo(manifest, fileCount, totalUncompressedBytes);
     }
 
-    private static void ValidateRestoreData(string dataDirectory)
+    private static void ValidateRestoreData(string dataDirectory, bool requireSettings = true)
     {
         if (!Directory.Exists(dataDirectory) ||
             !Directory.EnumerateFiles(dataDirectory, "*", SearchOption.AllDirectories).Any())
@@ -624,7 +1930,7 @@ public sealed partial class DeskBoxDataBackupService
         }
 
         string settingsPath = Path.Combine(dataDirectory, "settings.json");
-        if (!File.Exists(settingsPath))
+        if (requireSettings && !File.Exists(settingsPath))
         {
             throw new InvalidDataException("The backup is missing settings.json.");
         }
@@ -635,6 +1941,12 @@ public sealed partial class DeskBoxDataBackupService
         ValidateJsonFileIfPresent<QuickCaptureStoreData>(
             Path.Combine(dataDirectory, "quick-capture", "quick-capture.json"),
             s_quickCaptureDataJsonContext.StoreData);
+        ValidateJsonFileIfPresent<DesktopOrganizationHistoryData>(
+            Path.Combine(dataDirectory, "desktop-organization-history.json"),
+            DesktopOrganizationHistoryJsonContext.Default.DesktopOrganizationHistoryData);
+        ValidateJsonFileIfPresent<WidgetLayoutDocument>(
+            Path.Combine(dataDirectory, "widget-layout.json"),
+            WidgetLayoutJsonContext.Default.WidgetLayoutDocument);
 
         string widgetsDirectory = Path.Combine(dataDirectory, "widgets");
         if (Directory.Exists(widgetsDirectory))
@@ -679,6 +1991,7 @@ public sealed partial class DeskBoxDataBackupService
     private async Task RebaseManagedAttachmentPathsAsync(
         string stagedDataDirectory,
         string? sourceDataPath,
+        IReadOnlyDictionary<string, string>? todoWidgetIdRemaps,
         CancellationToken cancellationToken)
     {
         string quickCapturePath = Path.Combine(
@@ -726,6 +2039,7 @@ public sealed partial class DeskBoxDataBackupService
                 todoPath,
                 stagedDataDirectory,
                 sourceDataPath,
+                todoWidgetIdRemaps,
                 cancellationToken);
             string backupPath = ResilientJsonStore.GetBackupPath(todoPath);
             if (File.Exists(backupPath))
@@ -736,6 +2050,7 @@ public sealed partial class DeskBoxDataBackupService
                         backupPath,
                         stagedDataDirectory,
                         sourceDataPath,
+                        todoWidgetIdRemaps,
                         cancellationToken);
                 }
                 catch (Exception ex) when (ex is JsonException or InvalidDataException)
@@ -766,7 +2081,7 @@ public sealed partial class DeskBoxDataBackupService
                     attachment.FilePath,
                     sourceDataPath,
                     stagedDataDirectory,
-                    "quick-capture");
+                    ["quick-capture"]);
                 if (rebasedPath is not null)
                 {
                     rebasedPaths[attachment.FilePath] = rebasedPath;
@@ -786,7 +2101,7 @@ public sealed partial class DeskBoxDataBackupService
                         item.ImagePath,
                         sourceDataPath,
                         stagedDataDirectory,
-                        "quick-capture") ?? item.ImagePath;
+                        ["quick-capture"]) ?? item.ImagePath;
                 }
             }
         }
@@ -801,16 +2116,36 @@ public sealed partial class DeskBoxDataBackupService
         string path,
         string stagedDataDirectory,
         string? sourceDataPath,
+        IReadOnlyDictionary<string, string>? widgetIdRemaps,
         CancellationToken cancellationToken)
     {
         TodoWidgetData data = JsonSerializer.Deserialize(
                                   await File.ReadAllTextAsync(path, cancellationToken),
                                   s_todoDataJsonContext.StoreData) ??
                               throw new InvalidDataException("Todo backup data is invalid.");
-        string storeRelativePath = Path.GetRelativePath(
-                stagedDataDirectory,
-                Path.GetDirectoryName(path)!)
-            .Replace(Path.DirectorySeparatorChar, '/');
+        // The store dir may already have been moved to a remapped target id —
+        // embedded FilePaths still carry the SOURCE id, so the store-relative
+        // fallback lookup must use the source id while the final rewrite
+        // (inside TryRebaseManagedPath) points at the target. A merge target
+        // collects several source ids — every one is a fallback candidate.
+        string currentWidgetId = Path.GetFileName(Path.GetDirectoryName(path)!);
+        var storeRelativePaths = new List<string>
+        {
+            Path.GetRelativePath(stagedDataDirectory, Path.GetDirectoryName(path)!)
+                .Replace(Path.DirectorySeparatorChar, '/')
+        };
+        if (widgetIdRemaps is { Count: > 0 })
+        {
+            foreach (KeyValuePair<string, string> remap in widgetIdRemaps)
+            {
+                if (string.Equals(remap.Value, currentWidgetId, StringComparison.Ordinal) &&
+                    !storeRelativePaths.Contains($"widgets/{remap.Key}", StringComparer.Ordinal))
+                {
+                    storeRelativePaths.Add($"widgets/{remap.Key}");
+                }
+            }
+        }
+
         foreach (TodoAttachment attachment in (data.Items ?? [])
                      .SelectMany(item => item.Attachments ?? [])
                      .Where(attachment => attachment is not null && attachment.IsManagedCopy))
@@ -819,7 +2154,8 @@ public sealed partial class DeskBoxDataBackupService
                                       attachment.FilePath,
                                       sourceDataPath,
                                       stagedDataDirectory,
-                                      storeRelativePath) ??
+                                      storeRelativePaths,
+                                      widgetIdRemaps) ??
                                   attachment.FilePath;
         }
 
@@ -833,7 +2169,8 @@ public sealed partial class DeskBoxDataBackupService
         string? originalPath,
         string? sourceDataPath,
         string stagedDataDirectory,
-        string fallbackStoreRelativePath)
+        IReadOnlyList<string> fallbackStoreRelativePaths,
+        IReadOnlyDictionary<string, string>? widgetIdRemaps = null)
     {
         if (string.IsNullOrWhiteSpace(originalPath))
         {
@@ -847,10 +2184,33 @@ public sealed partial class DeskBoxDataBackupService
             relativePath = sourceRelativePath;
         }
 
-        relativePath ??= TryGetStoreRelativePath(originalPath, fallbackStoreRelativePath);
+        foreach (string fallbackStoreRelativePath in fallbackStoreRelativePaths)
+        {
+            relativePath ??= TryGetStoreRelativePath(originalPath, fallbackStoreRelativePath);
+        }
         if (string.IsNullOrWhiteSpace(relativePath))
         {
             return null;
+        }
+
+        // Embedded paths carry the source widget id; after a remap move the
+        // payload lives under the target id — rewrite the leading segment.
+        if (widgetIdRemaps is { Count: > 0 })
+        {
+            string normalized = relativePath.Replace('\\', '/');
+            const string widgetsPrefix = "widgets/";
+            if (normalized.StartsWith(widgetsPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                int idEnd = normalized.IndexOf('/', widgetsPrefix.Length);
+                if (idEnd > widgetsPrefix.Length &&
+                    widgetIdRemaps.TryGetValue(
+                        normalized[widgetsPrefix.Length..idEnd],
+                        out string? targetId))
+                {
+                    relativePath = (widgetsPrefix + targetId + normalized[idEnd..])
+                        .Replace('/', Path.DirectorySeparatorChar);
+                }
+            }
         }
 
         string stagedPath = Path.GetFullPath(Path.Combine(stagedDataDirectory, relativePath));
@@ -975,14 +2335,22 @@ public sealed partial class DeskBoxDataBackupService
 
     private bool HasBackupSourceData()
     {
+        // "Source data" means data the archive filter would actually keep:
+        // a data directory holding only device.id, sync/ protocol state or
+        // cache/ produces an empty snapshot whose validation would fail —
+        // and that failure would block the restore the net protects.
         return Directory.Exists(DataDirectory) &&
-            Directory.EnumerateFiles(DataDirectory, "*", SearchOption.AllDirectories).Any();
+            Directory.EnumerateFiles(DataDirectory, "*", SearchOption.AllDirectories)
+                .Any(path => ShouldIncludeInBackup(
+                    Path.GetRelativePath(DataDirectory, path)
+                        .Replace(Path.DirectorySeparatorChar, '/')));
     }
 
     private async Task CreateArchiveCoreAsync(
         string archivePath,
         string backupKind,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool requireSettings = true)
     {
         string snapshotRoot = Path.Combine(
             BackupSnapshotStagingDirectory,
@@ -990,8 +2358,9 @@ public sealed partial class DeskBoxDataBackupService
         string snapshotDataDirectory = Path.Combine(snapshotRoot, "data");
         try
         {
-            await CreateDataSnapshotAsync(snapshotDataDirectory, cancellationToken);
-            ValidateRestoreData(snapshotDataDirectory);
+            await CreateDataSnapshotAsync(
+                snapshotDataDirectory, cancellationToken, requireSettings);
+            ValidateRestoreData(snapshotDataDirectory, requireSettings);
             await CreateArchiveFromSnapshotAsync(
                 archivePath,
                 backupKind,
@@ -1154,8 +2523,17 @@ public sealed partial class DeskBoxDataBackupService
             }
 
             await using Stream manifestStream = manifestEntry.Open();
-            DeskBoxBackupManifest? manifest = await JsonSerializer.DeserializeAsync(
+            // The declared Length is only the cheap pre-check — a malformed
+            // entry can inflate past it, so cap the actual bytes read.
+            var manifestBytes = new MemoryStream();
+            await CopyAndHashAsync(
                 manifestStream,
+                manifestBytes,
+                cancellationToken,
+                maxBytes: 1024 * 1024);
+            manifestBytes.Position = 0;
+            DeskBoxBackupManifest? manifest = await JsonSerializer.DeserializeAsync(
+                manifestBytes,
                 BackupJsonContext.Default.BackupManifest,
                 cancellationToken);
             return manifest is null
@@ -1174,10 +2552,14 @@ public sealed partial class DeskBoxDataBackupService
 
     private async Task CreateDataSnapshotAsync(
         string snapshotDataDirectory,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool requireSettings = true)
     {
         string settingsPath = Path.Combine(DataDirectory, "settings.json");
-        if (!File.Exists(settingsPath))
+        // The pre-restore safety net must not require settings.json: a device
+        // whose settings were lost or quarantined still has widget stores
+        // worth preserving before a restore overwrites them.
+        if (requireSettings && !File.Exists(settingsPath))
         {
             throw new InvalidOperationException("DeskBox settings are not available for backup.");
         }
@@ -1193,8 +2575,63 @@ public sealed partial class DeskBoxDataBackupService
             .ToArray();
 
         Directory.CreateDirectory(snapshotDataDirectory);
+
+        // FileSafety metadata must come from a single transaction epoch:
+        // settings, the device-layout store, the organization-history store
+        // and the recovery journal are committed as a unit under
+        // OperationGate. The file SET is resolved inside the gate — a journal
+        // created while we waited for the gate must land in the snapshot, or
+        // the backup would hold settings@T1 with history@T0 and no WAL to
+        // converge them. Hold the gate only for these few small files; the
+        // rest still copies one by one from the pre-enumerated list.
+        //
+        // settings.json and widget-layout.json additionally commit under the
+        // settings write gate — a plain settings save does not take
+        // OperationGate, so without it the snapshot could tear mid-save into
+        // a pair that never existed on disk (settings@S0 with layout@S1).
+        // Lock order is OperationGate-then-write-gate everywhere, matching
+        // DesktopOrganizationTransaction's own save path.
+        string[] fileSafetyMetadata =
+        [
+            "settings.json",
+            "widget-layout.json",
+            "desktop-organization-history.json",
+            "desktop-organization-recovery.json"
+        ];
+        var metadataSet = new HashSet<string>(fileSafetyMetadata, StringComparer.OrdinalIgnoreCase);
+        await DesktopOrganizationTransaction.OperationGate.WaitAsync(cancellationToken);
+        try
+        {
+            SemaphoreSlim settingsWriteLock = SettingsService.FileWriteLockFor(DataDirectory);
+            await settingsWriteLock.WaitAsync(cancellationToken);
+            try
+            {
+                foreach (string relativePath in fileSafetyMetadata)
+                {
+                    string sourcePath = Path.Combine(DataDirectory, relativePath);
+                    if (!File.Exists(sourcePath)) continue;
+                    await CopyStableSnapshotFileAsync(
+                        sourcePath,
+                        Path.Combine(snapshotDataDirectory, relativePath),
+                        cancellationToken);
+                }
+            }
+            finally
+            {
+                settingsWriteLock.Release();
+            }
+        }
+        finally
+        {
+            DesktopOrganizationTransaction.OperationGate.Release();
+        }
+
         foreach ((string sourcePath, string relativePath) in sourceFiles)
         {
+            if (metadataSet.Contains(relativePath)) continue;
+            // A multi-gigabyte snapshot legitimately runs longer than the
+            // startup watchdog's stall window; each file proves progress.
+            App.MarkStartupProgress();
             cancellationToken.ThrowIfCancellationRequested();
             string destinationPath = Path.Combine(
                 snapshotDataDirectory,
@@ -1208,7 +2645,10 @@ public sealed partial class DeskBoxDataBackupService
         string archivePath,
         string backupKind,
         string snapshotDataDirectory,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<string>? manifestDomains = null,
+        IReadOnlyDictionary<string, byte[]>? rootEntries = null,
+        string? sourceDeviceId = null)
     {
         (string SourcePath, string RelativePath)[] sourceFiles = Directory
             .EnumerateFiles(snapshotDataDirectory, "*", SearchOption.AllDirectories)
@@ -1252,13 +2692,42 @@ public sealed partial class DeskBoxDataBackupService
                         fileManifest.Add(new DeskBoxBackupFileManifest(relativePath, length, sha256));
                     }
 
+                    // Root-level entries (e.g. widget-style.json) live beside
+                    // manifest.json — they are backup artifacts, not data
+                    // files, and scoped restore reads them from staging root.
+                    DeskBoxBackupFileManifest? widgetStyleManifest = null;
+                    if (rootEntries is not null)
+                    {
+                        foreach ((string entryName, byte[] content) in rootEntries)
+                        {
+                            ZipArchiveEntry rootEntry = archive.CreateEntry(
+                                entryName,
+                                CompressionLevel.Fastest);
+                            await using Stream entryStream = rootEntry.Open();
+                            await entryStream.WriteAsync(content, cancellationToken);
+                            if (string.Equals(
+                                    entryName,
+                                    CloudBackupDomains.WidgetStyleEntryName,
+                                    StringComparison.Ordinal))
+                            {
+                                widgetStyleManifest = new DeskBoxBackupFileManifest(
+                                    entryName,
+                                    content.Length,
+                                    Convert.ToHexString(SHA256.HashData(content)));
+                            }
+                        }
+                    }
+
                     var manifest = new DeskBoxBackupManifest(
                         BackupSchemaVersion,
                         backupKind,
                         DateTimeOffset.UtcNow,
                         typeof(DeskBoxDataBackupService).Assembly.GetName().Version?.ToString() ?? "unknown",
                         DataDirectory,
-                        fileManifest);
+                        fileManifest,
+                        manifestDomains,
+                        sourceDeviceId,
+                        widgetStyleManifest);
                     ZipArchiveEntry manifestEntry = archive.CreateEntry("manifest.json", CompressionLevel.Fastest);
                     await using (Stream manifestStream = manifestEntry.Open())
                     {
@@ -1360,14 +2829,67 @@ public sealed partial class DeskBoxDataBackupService
         }
     }
 
-    private void PrunePreRestoreBackups()
+    /// <summary>
+    /// Creates the pre-restore safety net once per pending-restore
+    /// transaction. A scoped restore retries on every launch until it
+    /// converges; creating a fresh archive per attempt would stack
+    /// post-restore states and eventually prune the FIRST snapshot — the
+    /// only one that actually holds pre-restore data. The pinned path is
+    /// written into the marker BEFORE the archive is created so a crash
+    /// can never leave an unbounded accumulation, and the pin exempts the
+    /// archive from pruning while the marker lives.
+    /// </summary>
+    private async Task<PendingRestoreMarker> EnsurePreRestoreSafetyBackupAsync(
+        PendingRestoreMarker marker,
+        CancellationToken cancellationToken)
     {
-        foreach (string obsoletePath in Directory
-                     .EnumerateFiles(PreRestoreBackupDirectory, "DeskBox-PreRestore-*.zip")
-                     .OrderByDescending(File.GetLastWriteTimeUtc)
-                     .Skip(MaxPreRestoreBackupCount))
+        if (marker.SafetyBackupPath is { } pinned && File.Exists(pinned))
         {
-            TryDeleteFile(obsoletePath);
+            return marker;
+        }
+
+        if (!HasBackupSourceData())
+        {
+            return marker;
+        }
+
+        Directory.CreateDirectory(PreRestoreBackupDirectory);
+        string preRestorePath = GetAvailableArchivePath(
+            PreRestoreBackupDirectory,
+            $"DeskBox-PreRestore-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
+        await WritePendingRestoreMarkerAtomicallyAsync(
+            PendingRestoreMarkerPath,
+            marker with { SafetyBackupPath = preRestorePath },
+            cancellationToken);
+        await CreateArchiveCoreAsync(
+            preRestorePath, "pre-restore", cancellationToken,
+            requireSettings: false);
+        PrunePreRestoreBackups(preRestorePath);
+        App.Log($"[DataBackup] Created pre-restore backup '{preRestorePath}'.");
+        // The pinned path must flow back to the caller's marker instance:
+        // the retry-attempt rewrite below does `marker with {...}` and would
+        // otherwise clobber the pin from the disk copy, stacking one safety
+        // archive per failed launch.
+        return marker with { SafetyBackupPath = preRestorePath };
+    }
+
+    private void PrunePreRestoreBackups(string? pinnedPath = null)
+    {
+        int kept = 0;
+        foreach (string candidatePath in Directory
+                     .EnumerateFiles(PreRestoreBackupDirectory, "DeskBox-PreRestore-*.zip")
+                     .OrderByDescending(File.GetLastWriteTimeUtc))
+        {
+            if (pinnedPath is not null &&
+                string.Equals(candidatePath, pinnedPath, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (++kept > MaxPreRestoreBackupCount)
+            {
+                TryDeleteFile(candidatePath);
+            }
         }
     }
 
@@ -1447,31 +2969,100 @@ public sealed partial class DeskBoxDataBackupService
         }
     }
 
+    /// <summary>
+    /// ResilientJsonStore sidecars only ever sit next to a DeskBox *.json
+    /// store: "&lt;store&gt;.json.bak" and
+    /// "&lt;store&gt;.json.corrupt-&lt;timestamp&gt;-&lt;guid&gt;". Scoped to
+    /// that exact namespace so user files under attachments/ (which keep
+    /// their original names) are never filtered out.
+    /// </summary>
+    private static bool IsInternalStoreRecoveryArtifact(string relativePath) =>
+        relativePath.EndsWith(".json.bak", StringComparison.OrdinalIgnoreCase) ||
+        relativePath.Contains(".json.corrupt-", StringComparison.OrdinalIgnoreCase);
+
     private static bool ShouldIncludeInBackup(string relativePath)
     {
-        if (relativePath.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
+        // DeskBox-managed disposable subtrees first: nothing under them is
+        // user data, and they can never contain a managed-attachments dir.
+        // cache/ (widget image caches) and weather-cache.json regenerate on
+        // next use; quick-capture exports/thumbnails are derived artifacts.
+        //
+        // device.id is excluded deliberately: it is installation-local
+        // identity, not user data. Carrying it into a backup would clone the
+        // device identity onto every machine that restores it — silently
+        // misattributing sync-layer provenance. DeviceIdentity.GetOrCreate
+        // regenerates a fresh ID on first use after a restore.
+        //
+        // sync/ is excluded deliberately too: it is device-local protocol
+        // state (outbox queue, pull cursors, revision map, conflict log).
+        // Restoring it onto another machine would replay stale cursors and
+        // push intents against data the restore also rewrote — the sync
+        // contract assigns it no backup semantics at all.
+        if (relativePath.StartsWith("quick-capture/thumbnails/", StringComparison.OrdinalIgnoreCase) ||
+            relativePath.StartsWith("quick-capture/exports/", StringComparison.OrdinalIgnoreCase) ||
+            relativePath.StartsWith("cache/", StringComparison.OrdinalIgnoreCase) ||
+            relativePath.StartsWith("sync/", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(relativePath, "weather-cache.json", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(relativePath, "device.id", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
-        // cache/ (widget image caches) and weather-cache.json are disposable:
-        // they regenerate on next use, so backups skip them. Restoring a
-        // backup without them only means the first weather render falls back
-        // to the location flow and glance images redownload.
-        return !relativePath.StartsWith("quick-capture/thumbnails/", StringComparison.OrdinalIgnoreCase) &&
-               !relativePath.StartsWith("quick-capture/exports/", StringComparison.OrdinalIgnoreCase) &&
-               !relativePath.StartsWith("cache/", StringComparison.OrdinalIgnoreCase) &&
-               !string.Equals(relativePath, "weather-cache.json", StringComparison.OrdinalIgnoreCase);
+        // Managed attachments are user data with their ORIGINAL filenames —
+        // no extension or sidecar heuristic may ever drop them (a user file
+        // literally named "config.json.bak" or "file.tmp" must still be
+        // backed up, or restore leaves dangling attachment metadata).
+        if (IsAttachmentPath(relativePath))
+        {
+            return true;
+        }
+
+        // .tmp files and ResilientJsonStore sidecars are machine-local
+        // recovery artifacts, not user data: a stale recovery .bak inside a
+        // backup would resurrect a ghost pending journal on the restore
+        // machine, and .corrupt-* quarantines are dead forensics. The store
+        // regenerates its .bak on the next save anyway. The artifact check
+        // is scoped to the ResilientJsonStore naming convention itself
+        // ("<store>.json.bak" / "<store>.json.corrupt-*").
+        // The style-restore journal is in-flight transaction state, not user
+        // data: carrying pending/committed/orig files into a backup would
+        // land a half-applied restore on the target machine and let a stale
+        // journal fire the first time a style restore runs there.
+        if (relativePath.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase) ||
+            relativePath.Contains(".style-restore.", StringComparison.OrdinalIgnoreCase) ||
+            IsInternalStoreRecoveryArtifact(relativePath))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Managed attachment directories hold user files under their original
+    /// names — "attachments/" as a path segment anywhere under the data
+    /// root marks user content (widgets/&lt;id&gt;/attachments/,
+    /// quick-capture/attachments/, ...), which must never be filtered by
+    /// extension or store-sidecar heuristics.
+    /// </summary>
+    private static bool IsAttachmentPath(string relativePath)
+    {
+        string normalized = relativePath.Replace('\\', '/');
+        return normalized.StartsWith("attachments/", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains("/attachments/", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<(long Length, string Sha256)> CopyAndHashAsync(
         Stream source,
         Stream destination,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long maxBytes = long.MaxValue)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         byte[] buffer = new byte[81920];
         long totalBytes = 0;
+        long bytesSinceProgressMark = 0;
+        const long progressMarkIntervalBytes = 32L * 1024 * 1024;
         while (true)
         {
             int bytesRead = await source.ReadAsync(buffer, cancellationToken);
@@ -1480,9 +3071,27 @@ public sealed partial class DeskBoxDataBackupService
                 break;
             }
 
+            // Enforce the byte budget on what the stream ACTUALLY yields —
+            // the zip central directory's declared Length is attacker-
+            // controlled and cannot be trusted to bound inflation.
+            if (totalBytes + bytesRead > maxBytes)
+            {
+                throw new InvalidDataException(
+                    "The backup contains too many files or an oversized file.");
+            }
+
             hash.AppendData(buffer, 0, bytesRead);
             await destination.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
             totalBytes = checked(totalBytes + bytesRead);
+            // A single multi-gigabyte file can outlast the startup watchdog's
+            // stall window on slow storage; mark progress per chunk so the
+            // copy itself proves the process is alive.
+            bytesSinceProgressMark += bytesRead;
+            if (bytesSinceProgressMark >= progressMarkIntervalBytes)
+            {
+                bytesSinceProgressMark = 0;
+                App.MarkStartupProgress();
+            }
         }
 
         return (totalBytes, Convert.ToHexString(hash.GetHashAndReset()));
@@ -1564,7 +3173,25 @@ public sealed partial class DeskBoxDataBackupService
         DateTimeOffset CreatedAtUtc,
         string AppVersion,
         string? SourceDataPath = null,
-        IReadOnlyList<DeskBoxBackupFileManifest>? Files = null);
+        IReadOnlyList<DeskBoxBackupFileManifest>? Files = null,
+        // Cloud-backup domain names (CloudBackupDomains.ToManifestName).
+        // Absent on classic full backups; a non-empty list means the archive
+        // holds ONLY those domains and must go through the scoped restore —
+        // a whole-directory swap would wipe everything else. Null stays
+        // unwritten so classic manifests keep their canonical key set.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        IReadOnlyList<string>? Domains = null,
+        // Scoped cloud backups only: the full device id that produced the
+        // archive (the file name only carries the 8-char suffix). Surfaced
+        // in the restore confirmation; never used to gate restores — a
+        // wiped device regenerates its id and still owns its backups.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        string? SourceDeviceId = null,
+        // Integrity entry for the root-level widget-style.json — it lives
+        // outside data/ so it cannot ride in Files. Optional: archives
+        // written before this field existed simply skip the check.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        DeskBoxBackupFileManifest? WidgetStyleFile = null);
 
     private sealed record DeskBoxBackupFileManifest(
         string Path,
@@ -1581,7 +3208,37 @@ public sealed partial class DeskBoxDataBackupService
         string ArchivePath,
         DateTimeOffset PreparedAtUtc,
         DateTimeOffset BackupCreatedAtUtc,
-        string AppVersion);
+        string AppVersion,
+        // Non-empty → scoped cloud restore: replace only the listed domains'
+        // files instead of swapping the whole data directory. Null stays
+        // unwritten so classic markers keep their canonical key set.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        IReadOnlyList<string>? Domains = null,
+        // A "pre-restore" safety archive legitimately lacks settings.json —
+        // it captured whatever survived on a device that lost it. Refusing
+        // to restore it would strand the very data it exists to protect.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        bool AllowMissingSettings = false,
+        // The safety archive belongs to this pending-restore transaction,
+        // not to a single apply attempt: retries reuse the FIRST snapshot
+        // (the only one holding pre-restore data) and pruning must never
+        // age it out while the marker lives.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        string? SafetyBackupPath = null,
+        // Scoped restores only: the item-restore mode the user picked in
+        // the confirm dialog. True = snapshot-faithful domain replace;
+        // false/absent = additive merge (nothing local is deleted). The
+        // field is inverted on purpose: the marker is written BEFORE the
+        // user confirms, so an app exit while the dialog is still open
+        // must fall back to the non-destructive mode, never to replace.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        bool ReplaceItemData = false,
+        // Bounded retries: a deterministically failing scoped restore
+        // (e.g. an archive from a future schema) must not retry on every
+        // boot forever — the pending marker also blocks scheduled uploads.
+        // Rewritten atomically on each failed apply.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        int ApplyAttemptCount = 0);
 
     [JsonSourceGenerationOptions(
         GenerationMode = JsonSourceGenerationMode.Metadata,
@@ -1635,7 +3292,67 @@ public sealed record DeskBoxRestorePreparation(
     int FileCount,
     long TotalUncompressedBytes,
     int BackupSchemaVersion,
-    bool HasIntegrityManifest);
+    bool HasIntegrityManifest,
+    // Non-empty on scoped cloud restores — the domains that will be applied.
+    IReadOnlyList<string>? Domains = null,
+    // Scoped cloud restores only: full device id recorded in the archive
+    // manifest (informational — never a restore gate).
+    string? SourceDeviceId = null,
+    // Scoped restores only: staged todo stores whose source widget id does
+    // not exist on this device were remapped onto live todo widgets so the
+    // restored data stays visible.
+    IReadOnlyList<DeskBoxTodoWidgetRemap>? TodoWidgetRemaps = null,
+    // Source widget ids that could not be remapped (no free todo widget on
+    // this device). Their files are still restored under the source id —
+    // preserved on disk even though no widget currently reads them.
+    IReadOnlyList<string>? UnmappedTodoWidgetIds = null,
+    // Scoped cloud restores only: live-item count per applied item domain
+    // (todo-data, quick-capture-data), so the confirm dialog can say "this
+    // domain holds 0 items" instead of letting an empty domain silently
+    // wipe local data. WidgetStyle is a settings projection, not item
+    // data, and never appears here.
+    IReadOnlyList<DeskBoxDomainItemCount>? DomainItemCounts = null,
+    // Scoped restores only: attachment/image references inside the staged
+    // item data. Attachment FILES never ship in a cloud backup, so the
+    // confirm dialog warns that these references dangle after a
+    // cross-device restore.
+    int AttachmentReferenceCount = 0,
+    // True when the archive was written by a newer DeskBox build. Restore
+    // is allowed — the schema version is the real compatibility gate — but
+    // the confirm dialog warns that newer-version-only fields may not
+    // survive being saved again by this older build.
+    bool IsFromNewerAppVersion = false);
+
+/// <summary>One todo-store directory remapped from source to target widget id.</summary>
+public sealed record DeskBoxTodoWidgetRemap(string SourceWidgetId, string TargetWidgetId);
+
+/// <summary>
+/// Planned staging mutations for a scoped todo restore: directory remaps,
+/// item-level merges (source store folded into a target when the snapshot
+/// has more lists than this device has free widgets), source ids that could
+/// not land on any live widget, and staged dirs the archive's own style
+/// document does not list as live on the source device (orphan debris).
+/// </summary>
+internal sealed record TodoRestorePlan(
+    IReadOnlyList<DeskBoxTodoWidgetRemap> Remaps,
+    IReadOnlyList<DeskBoxTodoWidgetRemap> Merges,
+    IReadOnlyList<string> Unmapped,
+    IReadOnlyList<string> JunkSourceIds)
+{
+    internal static TodoRestorePlan Empty { get; } = new(
+        Array.Empty<DeskBoxTodoWidgetRemap>(),
+        Array.Empty<DeskBoxTodoWidgetRemap>(),
+        Array.Empty<string>(),
+        Array.Empty<string>());
+}
+
+/// <summary>
+/// Live-item count for one applied item domain in a scoped restore —
+/// <paramref name="Domain"/> is the manifest name
+/// (<see cref="CloudBackupDomains.ToManifestName"/>), <paramref name="Items"/>
+/// the non-deleted entries the domain will actually restore.
+/// </summary>
+public sealed record DeskBoxDomainItemCount(string Domain, int Items);
 
 internal sealed record DeskBoxRestoreApplyResult(
     bool HadPendingRestore,

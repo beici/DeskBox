@@ -89,7 +89,11 @@ public sealed class AotStage4E2ContractTests
     {
         string audit = ReadRepositoryFile("scripts/publish-aot-audit.ps1");
 
+<<<<<<< HEAD
         Assert.Contains("$auditProfileVersion = 61", audit, StringComparison.Ordinal);
+=======
+        Assert.Contains("$auditProfileVersion = 59", audit, StringComparison.Ordinal);
+>>>>>>> upstream/main
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage4E2SourceFiles", audit, StringComparison.Ordinal);
         Assert.Contains("stage4E2LegacyBindingSourceMatches", audit, StringComparison.Ordinal);
@@ -103,7 +107,11 @@ public sealed class AotStage4E2ContractTests
     {
         string audit = ReadRepositoryFile("scripts/publish-aot-audit.ps1");
 
+<<<<<<< HEAD
         Assert.Contains("$stage4E2MaximumWmc1510Count = 870", audit, StringComparison.Ordinal);
+=======
+        Assert.Contains("$stage4E2MaximumWmc1510Count = 866", audit, StringComparison.Ordinal);
+>>>>>>> upstream/main
         Assert.Contains("Stage 4E-2 WMC1510 count regressed above its ceiling", audit, StringComparison.Ordinal);
     }
 

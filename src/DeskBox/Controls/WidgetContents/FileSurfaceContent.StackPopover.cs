@@ -4,6 +4,7 @@ using System.Numerics;
 using DeskBox.Controls;
 using DeskBox.Helpers;
 using DeskBox.Models;
+using DeskBox.Platform;
 using DeskBox.Services;
 using DeskBox.ViewModels;
 using DeskBox.Views;
@@ -37,8 +38,6 @@ public sealed partial class FileSurfaceContent
     private TextBox? _stackPopoverTitleEditor;
     private StackPopoverInlineRenameWindow? _stackPopoverTitleEditorWindow;
     private TextBlock? _stackPopoverEmptyText;
-    private Canvas? _stackPopoverTextShadowHost;
-    private WidgetTextShadowManager? _stackPopoverTextShadowManager;
     private Canvas? _stackPopoverReorderOverlay;
     private Border? _stackPopoverReorderIndicator;
     private Canvas? _stackPopoverSelectionOverlay;
@@ -72,6 +71,7 @@ public sealed partial class FileSurfaceContent
     private bool _stackPopoverTitleEditing;
     private bool _stackPopoverTitleCommitInProgress;
     private string? _stackPopoverTitleOriginalName;
+    private long _stackPopoverTitleOpenedAtTick;
     private bool _stackPopoverLayoutRefreshQueued;
     private int _stackPopoverIconContainerStyleSignature;
 
@@ -1231,17 +1231,6 @@ public sealed partial class FileSurfaceContent
         _stackPopoverCloseButton = closeButton;
         content.Children.Add(titleHost);
 
-        var textShadowHost = new Canvas
-        {
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch,
-            IsHitTestVisible = false
-        };
-        Grid.SetRowSpan(textShadowHost, 2);
-        Canvas.SetZIndex(textShadowHost, 30);
-        content.Children.Add(textShadowHost);
-        _stackPopoverTextShadowHost = textShadowHost;
-
         var itemsHost = new Grid
         {
             Background = new SolidColorBrush(
@@ -1298,9 +1287,10 @@ public sealed partial class FileSurfaceContent
         Canvas.SetZIndex(reorderOverlay, 25);
         var reorderIndicator = new Border
         {
-            Background = new SolidColorBrush(
-                App.Current.ThemeService?.GetEffectiveAccentColor() ??
-                AccentColorHelper.DefaultAccentColor),
+            // Starts uncolored: UpdateStackPopoverAppearance repaints it through
+            // the neutral palette once the tree is attached, so the indicator
+            // never shows a color resolved from a different scope.
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             CornerRadius = new CornerRadius(1),
             IsHitTestVisible = false,
             Visibility = Visibility.Collapsed
@@ -1359,6 +1349,9 @@ public sealed partial class FileSurfaceContent
         object sender,
         DoubleTappedRoutedEventArgs e)
     {
+        App.Log(
+            "[DiagRename] Title double-tapped fired " +
+            $"titleText={_stackPopoverTitleText is not null}");
         if (_stackPopoverTitleText is { } title)
         {
             BeginStackPopoverTitleRename(title);
@@ -1383,8 +1376,16 @@ public sealed partial class FileSurfaceContent
             _stackPopoverKey is not { } stackKey ||
             ViewModel.FindStackByKey(stackKey) is not { } stack)
         {
+            App.Log(
+                "[DiagRename] Title rename guard rejected " +
+                $"editing={_stackPopoverTitleEditing} " +
+                $"sameText={ReferenceEquals(_stackPopoverTitleText, title)} " +
+                $"key={_stackPopoverKey ?? "<null>"} " +
+                $"stackFound={_stackPopoverKey is not null && ViewModel.FindStackByKey(_stackPopoverKey) is not null}");
             return;
         }
+
+        App.Log("[DiagRename] Title rename proceeding");
 
         const double editorHeight =
             StackPopoverLayoutCalculator.TitleEditorHeight;
@@ -1433,6 +1434,7 @@ public sealed partial class FileSurfaceContent
         _stackPopoverTitleOriginalName = stack.Name;
         _stackPopoverTitleEditor = editor;
         _stackPopoverTitleEditorWindow = editorWindow;
+        _stackPopoverTitleOpenedAtTick = Environment.TickCount64;
         title.Visibility = Visibility.Collapsed;
         App.Current?.WidgetManager?.BeginWidgetInteraction(
             "surface-stack-popover-title-rename-opened");
@@ -1486,6 +1488,7 @@ public sealed partial class FileSurfaceContent
         if (_stackPopoverTitleEditing &&
             ReferenceEquals(sender, _stackPopoverTitleEditorWindow))
         {
+            App.Log("[DiagRename] Closed by window Closed event");
             CommitStackPopoverTitleRename();
         }
     }
@@ -1497,11 +1500,13 @@ public sealed partial class FileSurfaceContent
         if (e.Key == Windows.System.VirtualKey.Enter)
         {
             e.Handled = true;
+            App.Log("[DiagRename] KeyDown Enter");
             CommitStackPopoverTitleRename();
         }
         else if (e.Key == Windows.System.VirtualKey.Escape)
         {
             e.Handled = true;
+            App.Log("[DiagRename] KeyDown Escape");
             CancelStackPopoverTitleRename();
         }
     }
@@ -1541,19 +1546,33 @@ public sealed partial class FileSurfaceContent
 
     private void StackPopoverTitleEditor_LostFocus(
         object sender,
-        RoutedEventArgs e) =>
+        RoutedEventArgs e)
+    {
+        // The editor window and the popover host exchange Win32 activation
+        // while the editor is still coming up, which raises one spurious
+        // LostFocus. The item editor swallows that via the same grace period;
+        // committing on it closed the title editor ~30ms after it opened.
+        if (InlineEditorFocus.TryRecoverFocusWithinGrace(
+                _stackPopoverTitleOpenedAtTick,
+                sender as TextBox))
+        {
+            App.Log("[DiagRename] LostFocus recovered within grace");
+            return;
+        }
+
+        App.Log("[DiagRename] Editor LostFocus committing");
         CommitStackPopoverTitleRename();
+    }
 
     private void StackPopoverSurface_PointerPressed(
         object sender,
         PointerRoutedEventArgs e)
     {
-        if (!_stackPopoverTitleEditing)
+        if (_stackPopoverTitleEditing)
         {
-            return;
+            App.Log("[DiagRename] Surface pointer press while editing");
+            CommitStackPopoverTitleRename();
         }
-
-        CommitStackPopoverTitleRename();
     }
 
     private void CommitStackPopoverTitleRename()
@@ -1818,9 +1837,7 @@ public sealed partial class FileSurfaceContent
     }
 
     private bool IsStackPopoverDarkTheme() =>
-        ActualTheme == ElementTheme.Dark ||
-        ActualTheme == ElementTheme.Default &&
-        Application.Current?.RequestedTheme == ApplicationTheme.Dark;
+        NeutralInteractionBrush.IsDarkTheme(this);
 
     private int _stackPopoverAppearanceSignature;
 
@@ -1882,15 +1899,6 @@ public sealed partial class FileSurfaceContent
         {
             content.RequestedTheme = requestedTheme;
             ApplyStackPopoverForegroundResources(content);
-            if (followMaterial)
-            {
-                UpdateStackPopoverTextEdge(content, primary);
-            }
-            else if (_stackPopoverTextShadowManager is not null)
-            {
-                _stackPopoverTextShadowManager.Dispose();
-                _stackPopoverTextShadowManager = null;
-            }
         }
         if (_stackPopoverTitleText is not null)
         {
@@ -1902,8 +1910,8 @@ public sealed partial class FileSurfaceContent
         }
         if (_stackPopoverReorderIndicator is not null)
         {
-            _stackPopoverReorderIndicator.Background =
-                SharedBrushCache.GetOrCreate(materialAppearance.AccentColor);
+            _stackPopoverReorderIndicator.Background = SharedBrushCache.GetOrCreate(
+                NeutralInteractionBrush.Line(_stackPopoverReorderIndicator));
         }
 
         _stackPopoverHostWindow?.UpdateAppearance(materialAppearance, followMaterial);
@@ -1933,34 +1941,6 @@ public sealed partial class FileSurfaceContent
         SharedBrushCache.GetOrCreate(isDark
             ? Windows.UI.Color.FromArgb(0xD8, 0x2B, 0x2B, 0x31)
             : Windows.UI.Color.FromArgb(0xE0, 0xF2, 0xF2, 0xF5));
-
-    private void UpdateStackPopoverTextEdge(
-        FrameworkElement content,
-        Brush? primary)
-    {
-        string edgeMode = WindowsCompatibilityService.IsHighContrast
-            ? WidgetForegroundSettings.EdgeOff
-            : WidgetForegroundSettings.ResolveEdgeMode(
-                Config,
-                _settingsService.Settings);
-        if (string.Equals(
-                edgeMode,
-                WidgetForegroundSettings.EdgeOff,
-                StringComparison.Ordinal) ||
-            primary is not SolidColorBrush primaryBrush ||
-            _stackPopoverTextShadowHost is null)
-        {
-            _stackPopoverTextShadowManager?.Dispose();
-            _stackPopoverTextShadowManager = null;
-            return;
-        }
-
-        _stackPopoverTextShadowManager ??=
-            new WidgetTextShadowManager(
-                content,
-                _stackPopoverTextShadowHost);
-        _stackPopoverTextShadowManager.Apply(edgeMode, primaryBrush.Color);
-    }
 
     private void UpdateStackPopoverScrollPolicy(int visibleItemCount)
     {
@@ -2297,10 +2277,7 @@ public sealed partial class FileSurfaceContent
         {
             _stackPopoverCloseButton.Click -= StackPopoverCloseButton_Click;
         }
-        _stackPopoverTextShadowManager?.Dispose();
-        _stackPopoverTextShadowManager = null;
-        ResetBoxSelectionState();
-        if (_stackPopoverHostWindow is { } releasingHost)
+        ResetBoxSelectionState();        if (_stackPopoverHostWindow is { } releasingHost)
         {
             releasingHost.DeactivatedByOutsideClick -=
                 StackPopoverHost_DeactivatedByOutsideClick;
@@ -2319,7 +2296,6 @@ public sealed partial class FileSurfaceContent
         _stackPopoverTitleEditorWindow = null;
         _stackPopoverItemRenameEditor = null;
         _stackPopoverEmptyText = null;
-        _stackPopoverTextShadowHost = null;
         _stackPopoverReorderOverlay = null;
         _stackPopoverReorderIndicator = null;
         _stackPopoverSelectionOverlay = null;

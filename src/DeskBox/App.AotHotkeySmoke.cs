@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using DeskBox.Helpers;
 using DeskBox.Models;
+using DeskBox.Platform;
 using DeskBox.Services;
 using Windows.System;
 using WinRT.Interop;
@@ -209,9 +210,9 @@ public partial class App
         var globalGesture = new GlobalHotkeyGesture(
             HotkeyModifierKeys.Control | HotkeyModifierKeys.Shift,
             (int)VirtualKey.F23);
-        bool globalApplied = (await global.TryApplyGestureAsync(globalGesture).ConfigureAwait(false)).Succeeded;
+        bool globalApplied = global.TryApplyGesture(globalGesture, out string? globalError);
         result.GlobalStandardApplySucceeded = globalApplied;
-        result.GlobalStandardApplyError = global.LastError;
+        result.GlobalStandardApplyError = globalError;
         global.SetEnabled(true);
         result.GlobalStandardRegistered = global.IsRegistered;
         result.GlobalStandardUsesReservedHook = global.UsesReservedHook;
@@ -225,7 +226,7 @@ public partial class App
         var searchGesture = new GlobalHotkeyGesture(
             HotkeyModifierKeys.Control | HotkeyModifierKeys.Alt,
             (int)VirtualKey.F24);
-        bool searchApplied = (await search.TryApplyGestureAsync(searchGesture).ConfigureAwait(false)).Succeeded;
+        bool searchApplied = search.TryApplyGesture(searchGesture);
         search.SetEnabled(true);
         result.SearchStandardApplySucceeded = searchApplied;
         result.SearchStandardRegistered = search.IsRegistered;
@@ -238,7 +239,7 @@ public partial class App
 
         await TriggerGlobalStandardHotkeyAsync(global, result);
         await TriggerSearchStandardHotkeyAsync(search, result);
-        await ExerciseGlobalConflictRollback(trayWindowHandle, global, globalGesture, result);
+        ExerciseGlobalConflictRollback(trayWindowHandle, global, globalGesture, result);
         ExerciseSearchConflictRollback(trayWindowHandle, search, searchGesture, result);
         await ExerciseReservedHookLifecycleAsync(global, globalGesture, result);
 
@@ -333,7 +334,7 @@ public partial class App
             "Search RegisterHotKey did not dispatch exactly once.");
     }
 
-    private static async Task ExerciseGlobalConflictRollback(
+    private static void ExerciseGlobalConflictRollback(
         IntPtr trayWindowHandle,
         GlobalHotkeyService service,
         GlobalHotkeyGesture expectedGesture,
@@ -353,12 +354,13 @@ public partial class App
             $"Global conflict holder failed with {result.GlobalConflictHolderError}.");
         try
         {
-            var conflictGesture = new GlobalHotkeyGesture(
-                HotkeyModifierKeys.Control | HotkeyModifierKeys.Alt,
-                (int)VirtualKey.F22);
-            bool applied = (await service.TryApplyGestureAsync(conflictGesture).ConfigureAwait(false)).Succeeded;
+            bool applied = service.TryApplyGesture(
+                new GlobalHotkeyGesture(
+                    HotkeyModifierKeys.Control | HotkeyModifierKeys.Alt,
+                    (int)VirtualKey.F22),
+                out string? error);
             result.GlobalConflictApplyReturned = applied;
-            result.GlobalConflictApplyError = service.LastError;
+            result.GlobalConflictApplyError = error;
             result.GlobalConflictRolledBack = !applied && service.IsRegistered &&
                 service.CurrentGesture.Equals(expectedGesture);
             RequireAotHotkey(
@@ -422,12 +424,11 @@ public partial class App
     {
         long receivedBefore = service.ReceivedCount;
         long invokedBefore = service.InvocationCount;
-        GlobalHotkeyService.HotkeyApplyResult reservedApply = await service.TryApplyGestureAsync(
+        bool applied = service.TryApplyGesture(
             new GlobalHotkeyGesture(
                 HotkeyModifierKeys.Windows,
-                (int)VirtualKey.Space)).ConfigureAwait(false);
-        bool applied = reservedApply.Succeeded;
-        string? error = reservedApply.Error ?? service.LastError;
+                (int)VirtualKey.Space),
+            out string? error);
         result.ReservedHookApplySucceeded = applied;
         result.ReservedHookApplyError = error;
         result.ReservedHookRegistered = service.IsRegistered;
@@ -454,8 +455,7 @@ public partial class App
             "reserved-hook-no-synthetic-claim",
             "Reserved hook triggered without a physical input sample.");
 
-        bool restored = (await service.TryApplyGestureAsync(standardGesture).ConfigureAwait(false)).Succeeded;
-        string? restoreError = service.LastError;
+        bool restored = service.TryApplyGesture(standardGesture, out string? restoreError);
         bool stopped = await WaitForAotHotkeyConditionAsync(
             () => service.ReservedHookThreadId == 0,
             TimeSpan.FromSeconds(3));

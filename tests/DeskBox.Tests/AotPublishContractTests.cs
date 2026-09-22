@@ -364,7 +364,7 @@ public sealed class AotPublishContractTests
         Assert.Contains("DESKBOX_SHORTCUT_BACKEND", loader, StringComparison.Ordinal);
         Assert.Contains("RuntimeFeature.IsDynamicCodeSupported", loader, StringComparison.Ordinal);
         Assert.Contains("return ShortcutBackendMode.Rust", loader, StringComparison.Ordinal);
-        Assert.Contains("LoadLibraryExW", loader, StringComparison.Ordinal);
+        Assert.Contains("Kernel32NativeMethods.LoadLibraryEx(", loader, StringComparison.Ordinal);
         Assert.Contains("LoadLibrarySearchDllLoadDir", loader, StringComparison.Ordinal);
         Assert.Contains("LoadLibrarySearchSystem32", loader, StringComparison.Ordinal);
         Assert.Contains("Path.Combine(AppContext.BaseDirectory, DllName)", loader, StringComparison.Ordinal);
@@ -519,7 +519,11 @@ public sealed class AotPublishContractTests
         Assert.Contains("exactly one root-level deskbox_native.dll", script, StringComparison.Ordinal);
         Assert.DoesNotContain("deskbox_search_core.dll", script, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", script, StringComparison.Ordinal);
+<<<<<<< HEAD
         Assert.Contains("auditProfileVersion = 61", script, StringComparison.Ordinal);
+=======
+        Assert.Contains("auditProfileVersion = 59", script, StringComparison.Ordinal);
+>>>>>>> upstream/main
         Assert.Contains("warningCodeCounts", script, StringComparison.Ordinal);
         Assert.Contains("targetedWarningCounts", script, StringComparison.Ordinal);
         Assert.Contains("workingTreeFingerprintBefore", script, StringComparison.Ordinal);
@@ -544,7 +548,7 @@ public sealed class AotPublishContractTests
 
     [Theory]
     [InlineData("src/DeskBox/ViewModels/SearchPopupViewModel.cs", 15)]
-    [InlineData("src/DeskBox/ViewModels/SettingsViewModel.cs", 75)]
+    [InlineData("src/DeskBox/ViewModels/SettingsViewModel.cs", 77)]
     public void AotSensitiveViewModels_UseObservablePartialProperties(
         string relativePath,
         int expectedCount)

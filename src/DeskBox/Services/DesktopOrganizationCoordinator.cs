@@ -1,5 +1,5 @@
-using System.Runtime.InteropServices;
 using DeskBox.Models;
+using DeskBox.Platform;
 
 namespace DeskBox.Services;
 
@@ -280,7 +280,7 @@ public sealed class DesktopOrganizationCoordinator
 
     public async Task UndoAsync(string historyId, IntPtr ownerWindowHandle = default)
     {
-        OrganizationHistoryEntry? history = _settingsService.Settings.RecentOrganizationHistory
+        OrganizationHistoryEntry? history = _settingsService.OrganizationHistory.Entries
             .FirstOrDefault(entry =>
                 string.Equals(entry.Id, historyId, StringComparison.Ordinal));
         if (history is null)
@@ -289,6 +289,36 @@ public sealed class DesktopOrganizationCoordinator
         }
 
         await _organizerService.UndoAsync(historyId, ownerWindowHandle);
+        await CleanupCreatedTargetsAsync(history);
+    }
+
+    /// <summary>
+    /// Stops further restore attempts for an interrupted undo and cleans up
+    /// widgets the operation created that are now empty. The unblock itself
+    /// is durable; widget cleanup is best-effort.
+    /// </summary>
+    public async Task AbandonUndoAsync(string historyId)
+    {
+        OrganizationHistoryEntry? history = await _transaction.AbandonUndoAsync(historyId);
+        if (history is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await CleanupCreatedTargetsAsync(history);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[DesktopOrganization] Widget cleanup after abandoning restore failed: {ex}");
+        }
+    }
+
+    public Task AbandonPendingRecoveryAsync() => _transaction.AbandonPendingRecoveryAsync();
+
+    private async Task CleanupCreatedTargetsAsync(OrganizationHistoryEntry history)
+    {
         foreach (OrganizationHistoryTarget target in history.Targets)
         {
             if (target.WasCreated && (!Directory.Exists(target.DirectoryPath) ||
@@ -329,13 +359,13 @@ public sealed class DesktopOrganizationCoordinator
             return;
         }
 
-        NativeRect nativeWorkArea = default;
-        if (!SystemParametersInfo(SpiGetWorkArea, 0, ref nativeWorkArea, 0))
+        Win32Helper.NativeRect nativeWorkArea = default;
+        if (!Win32Helper.SystemParametersInfo(SpiGetWorkArea, 0, ref nativeWorkArea, 0))
         {
             return;
         }
 
-        double scale = Math.Max(1, GetDpiForSystem() / 96d);
+        double scale = Math.Max(1, Win32Helper.GetDpiForSystem() / 96d);
         var workArea = new DesktopOrganizationRect(
             nativeWorkArea.Left,
             nativeWorkArea.Top,
@@ -381,24 +411,4 @@ public sealed class DesktopOrganizationCoordinator
     }
 
     private const uint SpiGetWorkArea = 0x0030;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct NativeRect
-    {
-        public int Left;
-        public int Top;
-        public int Right;
-        public int Bottom;
-    }
-
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SystemParametersInfo(
-        uint action,
-        uint parameter,
-        ref NativeRect value,
-        uint update);
-
-    [DllImport("user32.dll")]
-    private static extern uint GetDpiForSystem();
 }

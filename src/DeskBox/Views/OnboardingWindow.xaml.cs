@@ -1,6 +1,7 @@
 using CommunityToolkit.WinUI.Animations;
 using DeskBox.Helpers;
 using DeskBox.Models;
+using DeskBox.Platform;
 using DeskBox.Services;
 using Microsoft.UI;
 using Microsoft.UI.Composition.SystemBackdrops;
@@ -45,6 +46,7 @@ public sealed partial class OnboardingWindow : Window
     private int _startupToggleRefreshGeneration;
     private int _stepIndex;
     private bool _hasLoaded;
+    private bool _isClosed;
     private bool _isSubclassInstalled;
     private bool _isAnimating;
     private bool _isRecordingHotkey;
@@ -130,8 +132,10 @@ public sealed partial class OnboardingWindow : Window
 
         Closed += (_, _) =>
         {
+            _isClosed = true;
             Activated -= OnboardingWindow_Activated;
             _introGeneration++;
+            _storageEntryStateRefreshGeneration++;
             _introStoryboard?.Stop();
             _brandLogoShineStoryboard?.Stop();
             _stepTransitionStoryboard?.Stop();

@@ -79,7 +79,11 @@ public sealed class AotStage5B4C3B2B2AContractTests
 
         foreach (string token in new[]
                  {
+<<<<<<< HEAD
                      "$requiredAuditProfileVersion = 61",
+=======
+                     "$requiredAuditProfileVersion = 59",
+>>>>>>> upstream/main
                      "$requiredSummarySchemaVersion = 55",
                      "[Guid]::NewGuid().ToString(\"N\")",
                      "-AllowEarlyExit",
@@ -118,10 +122,17 @@ public sealed class AotStage5B4C3B2B2AContractTests
             "AotTodoNotificationSurfaceEvidence? TodoNotificationSurface",
             managed,
             StringComparison.Ordinal);
+<<<<<<< HEAD
         Assert.Contains("Assert.Equal(29, actual.Count)", baseline, StringComparison.Ordinal);
         Assert.Contains("Assert.Equal(67, actual.Values.Sum())", baseline, StringComparison.Ordinal);
         Assert.Contains(
             "Assert.Equal(27, actualContextOwners.Length)",
+=======
+        Assert.Contains("Assert.Equal(35, actual.Count)", baseline, StringComparison.Ordinal);
+        Assert.Contains("Assert.Equal(83, actual.Values.Sum())", baseline, StringComparison.Ordinal);
+        Assert.Contains(
+            "Assert.Equal(32, actualContextOwners.Length)",
+>>>>>>> upstream/main
             baseline,
             StringComparison.Ordinal);
     }
@@ -135,7 +146,11 @@ public sealed class AotStage5B4C3B2B2AContractTests
             "docs/architecture/stage-reports/aot-stage-5b-4c3b2b2a-report.md");
         string roadmap = Read("docs/architecture/rust-native-aot-roadmap.md");
 
+<<<<<<< HEAD
         Assert.Contains("$auditProfileVersion = 61", audit, StringComparison.Ordinal);
+=======
+        Assert.Contains("$auditProfileVersion = 59", audit, StringComparison.Ordinal);
+>>>>>>> upstream/main
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C3B2B2AMissingScenarioPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C3B2B2AMissingProductPatterns", audit, StringComparison.Ordinal);

@@ -552,7 +552,6 @@ public sealed partial class TodoWidgetContent
                 SelectFilter(target);
                 ShowUndoToast(
                     App.Current.LocalizationService.Format("Todo.DropTab.Applied", changedCount),
-                    durationMs: CopyToastMs,
                     clearUndoOnHide: false);
             }
         }
@@ -667,9 +666,10 @@ public sealed partial class TodoWidgetContent
 
         if (active)
         {
+            // Insertion position is a drag state, so it draws the neutral
+            // interaction line rather than the accent.
             border.BorderBrush = new SolidColorBrush(
-                App.Current.ThemeService?.GetEffectiveAccentColor() ??
-                AccentColorHelper.DefaultAccentColor);
+                NeutralInteractionBrush.Line(border));
             border.BorderThickness = insertAfter
                 ? new Thickness(0, 0, 0, 2)
                 : new Thickness(0, 2, 0, 0);
@@ -851,7 +851,6 @@ public sealed partial class TodoWidgetContent
                 {
                     ShowUndoToast(
                         App.Current.LocalizationService.T("Todo.Dropped"),
-                        durationMs: CopyToastMs,
                         clearUndoOnHide: false);
                 }
 
@@ -867,7 +866,6 @@ public sealed partial class TodoWidgetContent
             await ViewModel.AddItemAsync(text);
             ShowUndoToast(
                 App.Current.LocalizationService.T("Todo.Dropped"),
-                durationMs: CopyToastMs,
                 clearUndoOnHide: false);
             return true;
         }
@@ -876,7 +874,6 @@ public sealed partial class TodoWidgetContent
             App.Log($"[Todo] Failed to import dropped content: {ex}");
             ShowUndoToast(
                 App.Current.LocalizationService.T("Todo.DropFailed"),
-                durationMs: UndoToastMs,
                 clearUndoOnHide: false);
             return false;
         }
@@ -916,7 +913,6 @@ public sealed partial class TodoWidgetContent
 
             ShowUndoToast(
                 App.Current.LocalizationService.T("Todo.Dropped"),
-                durationMs: CopyToastMs,
                 clearUndoOnHide: false);
             return true;
         }
@@ -925,7 +921,6 @@ public sealed partial class TodoWidgetContent
             App.Log($"[Todo] Failed to import native dropped files: {ex}");
             ShowUndoToast(
                 App.Current.LocalizationService.T("Todo.DropFailed"),
-                durationMs: UndoToastMs,
                 clearUndoOnHide: false);
             return false;
         }

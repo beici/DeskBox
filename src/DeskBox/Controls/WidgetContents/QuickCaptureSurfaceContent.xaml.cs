@@ -1,6 +1,7 @@
 using DeskBox.Contracts;
 using DeskBox.Helpers;
 using DeskBox.Models;
+using DeskBox.Platform;
 using DeskBox.Services;
 using DeskBox.ViewModels;
 using System.ComponentModel;
@@ -1878,10 +1879,10 @@ public sealed partial class QuickCaptureSurfaceContent :
                 button.Tag as string,
                 _detailAppearance.ToString(),
                 StringComparison.Ordinal);
+            // A selected swatch ring is a selection state, so it uses the
+            // neutral strong stroke rather than the accent.
             button.BorderBrush = selected
-                ? new SolidColorBrush(
-                    App.Current.ThemeService?.GetEffectiveAccentColor() ??
-                    AccentColorHelper.DefaultAccentColor)
+                ? new SolidColorBrush(NeutralInteractionBrush.Line(button))
                 : new SolidColorBrush(Colors.Transparent);
             button.BorderThickness = new Thickness(selected ? 1.5 : 1);
         }
@@ -3138,10 +3139,10 @@ public sealed partial class QuickCaptureSurfaceContent :
         bool active,
         bool insertAfter)
     {
+        // Insertion position is a drag state, so it draws the neutral
+        // interaction line rather than the accent.
         border.BorderBrush = active
-            ? new SolidColorBrush(
-                App.Current.ThemeService?.GetEffectiveAccentColor() ??
-                AccentColorHelper.DefaultAccentColor)
+            ? new SolidColorBrush(NeutralInteractionBrush.Line(border))
             : new SolidColorBrush(Colors.Transparent);
         border.BorderThickness = active
             ? insertAfter
@@ -3154,27 +3155,27 @@ public sealed partial class QuickCaptureSurfaceContent :
         Border border,
         bool active)
     {
+        // As in the file surface, a drop target reads as the neutral hover
+        // surface: neutral wash plus a neutral border, with no accent and no
+        // hardcoded fallback colour.
         border.Background = active
-            ? ResolveBrush(
-                "SubtleFillColorSecondaryBrush",
-                Color.FromArgb(0x28, 0x78, 0x9E, 0xFF))
+            ? new SolidColorBrush(NeutralInteractionBrush.Fill(border))
             : new SolidColorBrush(Colors.Transparent);
         border.BorderBrush = active
-            ? new SolidColorBrush(
-                App.Current.ThemeService?.GetEffectiveAccentColor() ??
-                AccentColorHelper.DefaultAccentColor)
+            ? new SolidColorBrush(NeutralInteractionBrush.Line(border))
             : new SolidColorBrush(Colors.Transparent);
         border.BorderThickness = new Thickness(active ? 1 : 0);
     }
 
-    private static Brush ResolveBrush(string key, Color fallback)
+    private Brush ResolveBrush(string key, Color fallback)
     {
-        return Application.Current.Resources.TryGetValue(
-                   key,
-                   out object? value) &&
-               value is Brush brush
-            ? brush
-            : new SolidColorBrush(fallback);
+        // A bare Application.Resources lookup resolves theme dictionaries
+        // against the application theme (the system theme captured at
+        // startup), so it kept returning the light card brush after the
+        // widget was overridden to dark — the light veil over the list and
+        // detail surfaces. Resolve by this element's own theme instead.
+        return NeutralInteractionBrush.ResolveThemedResource(key, this) ??
+               new SolidColorBrush(fallback);
     }
 
     private void UpdateSelectedViewVisual()
@@ -3311,7 +3312,10 @@ public sealed partial class QuickCaptureSurfaceContent :
 
         ApplyDetailMaterialSurface();
         RefreshItemMaterialSurfaces();
-        ApplyClipboardItemColors();
+        // The segmented pointer states copy theme-dependent neutral colors at
+        // apply time, so a light/dark flip must re-apply them (parity with the
+        // standalone window's OnRootElementThemeChanged).
+        ApplySegmentedStyle();
     }
 
     private void RefreshItemMaterialSurfaces()

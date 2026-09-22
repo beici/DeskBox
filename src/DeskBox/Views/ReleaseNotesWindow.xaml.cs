@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using DeskBox.Helpers;
 using DeskBox.Models;
+using DeskBox.Platform;
 using DeskBox.Services;
 using Microsoft.UI;
 using Microsoft.UI.Text;
@@ -253,7 +254,7 @@ public sealed partial class ReleaseNotesWindow : Window
         return container;
     }
 
-    private static FrameworkElement CreateSeparator()
+    private FrameworkElement CreateSeparator()
     {
         return new Border
         {
@@ -263,7 +264,7 @@ public sealed partial class ReleaseNotesWindow : Window
         };
     }
 
-    private static FrameworkElement CreateCodeBlock(SimpleMarkdownBlock block)
+    private FrameworkElement CreateCodeBlock(SimpleMarkdownBlock block)
     {
         string text = block.Inlines.FirstOrDefault()?.Text ?? string.Empty;
         return new Border
@@ -468,14 +469,10 @@ public sealed partial class ReleaseNotesWindow : Window
         RemoveMinimumSizeHook();
     }
 
-    private static Brush GetThemeBrush(string key)
+    private Brush GetThemeBrush(string key)
     {
-        if (Application.Current.Resources.TryGetValue(key, out object value) && value is Brush brush)
-        {
-            return brush;
-        }
-
-        return new SolidColorBrush(Colors.Transparent);
+        return NeutralInteractionBrush.ResolveThemedResource(key, RootGrid) ??
+               new SolidColorBrush(Colors.Transparent);
     }
 
     private Brush GetAccentBrush() =>

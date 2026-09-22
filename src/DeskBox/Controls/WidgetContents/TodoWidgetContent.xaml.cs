@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Collections.Specialized;
 using System.Numerics;
 using DeskBox.Contracts;
+using DeskBox.Platform;
 using DeskBox.Services;
 using DeskBox.Helpers;
 using DeskBox.Models;
@@ -26,8 +27,6 @@ public sealed partial class TodoWidgetContent : UserControl
         TodoItemViewModel Item,
         Windows.Foundation.Rect Bounds);
 
-    private const int UndoToastMs = 4200;
-    private const int CopyToastMs = 900;
     private const int CopyTapDelayMs = 210;
 
     private string? _draggedTodoItemId;

@@ -45,7 +45,7 @@ public sealed class AotStage5B4C1B2BContractTests
         Assert.Contains("SHOP_FILEPATH", helper, StringComparison.Ordinal);
         Assert.Contains("AotFilePropertiesFixture.TryBeginInvocation", helper, StringComparison.Ordinal);
         Assert.Contains("AotFilePropertiesFixture.RecordInvocationResult", helper, StringComparison.Ordinal);
-        Assert.Contains("bool invoked = SHObjectProperties", helper, StringComparison.Ordinal);
+        Assert.Contains("bool invoked = Shell32NativeMethods.SHObjectProperties", helper, StringComparison.Ordinal);
         Assert.DoesNotContain("TaskDialog", helper, StringComparison.Ordinal);
     }
 
@@ -74,7 +74,7 @@ public sealed class AotStage5B4C1B2BContractTests
     {
         string fixture = ReadRepositoryFile(
             "src/DeskBox/Services/AotFilePropertiesFixture.cs");
-        string win32 = ReadRepositoryFile("src/DeskBox/Helpers/Win32Helper.cs");
+        string win32 = ReadRepositoryFile("src/DeskBox/Platform/Win32Helper.cs");
 
         Assert.Contains("CaptureVisibleTopLevelWindowHandles", fixture, StringComparison.Ordinal);
         Assert.Contains("ObserveAndCloseOwnedDialogAsync", fixture, StringComparison.Ordinal);
@@ -197,13 +197,22 @@ public sealed class AotStage5B4C1B2BContractTests
         string launcher = ReadRepositoryFile("scripts/start-aot-preview.ps1");
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
 
+<<<<<<< HEAD
         Assert.Contains("$auditProfileVersion = 61", audit, StringComparison.Ordinal);
+=======
+        Assert.Contains("$auditProfileVersion = 59", audit, StringComparison.Ordinal);
+>>>>>>> upstream/main
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1B2BMissingRunnerPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1B2BForbiddenScopePatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1B2BRustAbiUnchanged", audit, StringComparison.Ordinal);
+<<<<<<< HEAD
         Assert.Contains("stage5B4C1B2BExpectedWmc1510Count = 867", audit, StringComparison.Ordinal);
         Assert.Contains("$RequiredAuditProfileVersion = 61", launcher, StringComparison.Ordinal);
+=======
+        Assert.Contains("stage5B4C1B2BExpectedWmc1510Count = 866", audit, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 59", launcher, StringComparison.Ordinal);
+>>>>>>> upstream/main
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("actual SHObjectProperties dialog", project, StringComparison.Ordinal);

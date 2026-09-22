@@ -131,7 +131,11 @@ public sealed class AotStage5B4C3B2B1ContractTests
             "scripts/run-aot-todo-notification-forwarding-smoke.ps1");
         string managedRunner = Read("scripts/run-aot-managed-ui-smoke.ps1");
 
+<<<<<<< HEAD
         Assert.Contains("$requiredAuditProfileVersion = 61", runner, StringComparison.Ordinal);
+=======
+        Assert.Contains("$requiredAuditProfileVersion = 59", runner, StringComparison.Ordinal);
+>>>>>>> upstream/main
         Assert.Contains("$requiredSummarySchemaVersion = 55", runner, StringComparison.Ordinal);
         Assert.Contains("-NoStop", runner, StringComparison.Ordinal);
         Assert.Contains("-ExpectExistingInstance", runner, StringComparison.Ordinal);
@@ -162,10 +166,17 @@ public sealed class AotStage5B4C3B2B1ContractTests
             "tests/DeskBox.Tests/JsonSerializationBaselineContractTests.cs");
         string rust = Read("native/deskbox-native/src/lib.rs");
 
+<<<<<<< HEAD
         Assert.Contains("TwentyEightFilesAndSixtyFourCalls", baseline, StringComparison.Ordinal);
         Assert.Contains("Assert.Equal(29, actual.Count)", baseline, StringComparison.Ordinal);
         Assert.Contains("Assert.Equal(67, actual.Values.Sum())", baseline, StringComparison.Ordinal);
         Assert.Contains("Assert.Equal(27, actualContextOwners.Length)", baseline, StringComparison.Ordinal);
+=======
+        Assert.Contains("ThirtyFiveFilesAndEightyThreeCalls", baseline, StringComparison.Ordinal);
+        Assert.Contains("Assert.Equal(35, actual.Count)", baseline, StringComparison.Ordinal);
+        Assert.Contains("Assert.Equal(83, actual.Values.Sum())", baseline, StringComparison.Ordinal);
+        Assert.Contains("Assert.Equal(32, actualContextOwners.Length)", baseline, StringComparison.Ordinal);
+>>>>>>> upstream/main
         Assert.Contains(
             "App.AotTodoNotificationForwardingSmoke.cs\"] = 1",
             baseline,
@@ -187,12 +198,20 @@ public sealed class AotStage5B4C3B2B1ContractTests
         string report = Read("docs/architecture/stage-reports/aot-stage-5b-4c3b2b1-report.md");
         string roadmap = Read("docs/architecture/rust-native-aot-roadmap.md");
 
+<<<<<<< HEAD
         Assert.Contains("$auditProfileVersion = 61", audit, StringComparison.Ordinal);
+=======
+        Assert.Contains("$auditProfileVersion = 59", audit, StringComparison.Ordinal);
+>>>>>>> upstream/main
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C3B2B1RequiredScenarioPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C3B2B1MissingSmokeScriptPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C3B2B1RustAbiUnchanged", audit, StringComparison.Ordinal);
+<<<<<<< HEAD
         Assert.Contains("$RequiredAuditProfileVersion = 61", launcher, StringComparison.Ordinal);
+=======
+        Assert.Contains("$RequiredAuditProfileVersion = 59", launcher, StringComparison.Ordinal);
+>>>>>>> upstream/main
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("Native AOT stage 5B-4C3B2B2A", project, StringComparison.Ordinal);
         Assert.Contains("real Windows notification click", project, StringComparison.Ordinal);

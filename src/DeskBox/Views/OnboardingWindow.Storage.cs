@@ -144,12 +144,84 @@ public sealed partial class OnboardingWindow
         {
             try
             {
-                await App.Current.WidgetManager.UpdateDefaultManagedStorageRootAsync(normalizedPath);
+                ManagedStorageMigrationResult? result;
+                if (RootGrid.XamlRoot is not null)
+                {
+                    result = await ManagedStorageMigrationDialog.RunAsync(
+                        RootGrid.XamlRoot,
+                        RootGrid.DispatcherQueue,
+                        _localizationService,
+                        currentPath,
+                        normalizedPath,
+                        options => App.Current.WidgetManager
+                            .UpdateDefaultManagedStorageRootAsync(normalizedPath, options),
+                        (items, options) => App.Current.WidgetManager
+                            .RetrySkippedMigrationItemsAsync(items, options));
+                    if (result is null)
+                    {
+                        // Canceled or failed — the dialog already showed it.
+                        return false;
+                    }
+                }
+                else
+                {
+                    result = await App.Current.WidgetManager
+                        .UpdateDefaultManagedStorageRootAsync(normalizedPath);
+                }
+
+                if (result.Residues.Count > 0 && RootGrid.XamlRoot is not null)
+                {
+                    // The migration finished; only the old-root cleanup left
+                    // folders behind. Surface them with an explicit
+                    // recycle-or-keep choice instead of staying silent.
+                    await ManagedStorageMigrationResidueDialog.ShowMigrationResidueAsync(
+                        RootGrid.XamlRoot,
+                        _localizationService,
+                        folders => App.Current.WidgetManager.DeleteMigrationResidueFoldersAsync(folders),
+                        result);
+                }
+            }
+            catch (ManagedStorageDestinationResidueException ex)
+            {
+                if (RootGrid.XamlRoot is not null)
+                {
+                    ContentDialogResult choice = await ManagedStorageMigrationResidueDialog
+                        .ShowStaleDestinationAsync(
+                            RootGrid.XamlRoot,
+                            _localizationService,
+                            ex.StaleDestinationFolders);
+                    if (choice == ContentDialogResult.Primary)
+                    {
+                        await App.Current.WidgetManager.DeleteMigrationResidueFoldersAsync(
+                            ex.StaleDestinationFolders);
+                        return await ChangeStoragePathToAsync(normalizedPath);
+                    }
+                }
+                return false;
+            }
+            catch (ManagedStorageRollbackFailureException ex)
+            {
+                // The rollback left folders in both roots: list them and offer
+                // a conservative retry instead of a bare failure message (#112).
+                if (RootGrid.XamlRoot is not null)
+                {
+                    await ManagedStorageMigrationResidueDialog.ShowRollbackFailureAsync(
+                        RootGrid.XamlRoot,
+                        _localizationService,
+                        failures => App.Current.WidgetManager.RetryMigrationRollbackAsync(failures),
+                        ex);
+                }
+                return false;
             }
             catch (Exception ex)
             {
                 if (RootGrid.XamlRoot is not null)
                 {
+                    // The outer message only counts completed items; the inner
+                    // exception names the file that failed (e.g. locked by an app).
+                    string detail = ex.InnerException is { } inner
+                        ? $"{ex.Message} {inner.Message}"
+                        : ex.Message;
                     var errorDialog = new ContentDialog
                     {
                         XamlRoot = RootGrid.XamlRoot,
@@ -158,7 +230,7 @@ public sealed partial class OnboardingWindow
                         DefaultButton = ContentDialogButton.Close,
                         Content = new TextBlock
                         {
-                            Text = _localizationService.Format("Settings.Dialog.MigrateFailedBody", ex.Message),
+                            Text = _localizationService.Format("Settings.Dialog.MigrateFailedBody", detail),
                             TextWrapping = TextWrapping.Wrap
                         }
                     };

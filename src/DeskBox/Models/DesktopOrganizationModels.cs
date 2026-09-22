@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace DeskBox.Models;
 
 public static class DesktopOrganizationCategoryIds
@@ -233,11 +235,35 @@ public sealed class DesktopOrganizationRecoveryJournal
 
     public string TransactionId { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Durable terminal marker written before an abandon touches settings.
+    /// A crash between marking and clearing must never let startup recovery
+    /// execute a transaction the user explicitly abandoned, so recovery
+    /// refuses to act on a journal carrying this flag.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool IsAbandoned { get; set; }
+
     public DateTimeOffset StartedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public List<DesktopOrganizationRecoveryItem> Items { get; set; } = [];
 
     public List<string> CreatedWidgetIds { get; set; } = [];
+}
+
+/// <summary>
+/// Durable object identity of the destination object recorded when a
+/// physical move completed. Recovery may only move an item back while the
+/// object currently at the destination path still carries exactly this
+/// identity; a missing identity means no automatic restore authority.
+/// </summary>
+public sealed class DesktopOrganizationDestinationIdentity
+{
+    public ulong VolumeSerialNumber { get; set; }
+
+    public ulong FileIdHigh { get; set; }
+
+    public ulong FileIdLow { get; set; }
 }
 
 public sealed class DesktopOrganizationRecoveryItem
@@ -257,11 +283,21 @@ public sealed class DesktopOrganizationRecoveryItem
     public string TargetWidgetId { get; set; } = string.Empty;
 
     public bool Completed { get; set; }
+
+    public DesktopOrganizationDestinationIdentity? DestinationIdentity { get; set; }
 }
 
 public sealed class DesktopOrganizationExecutionResult
 {
     public OrganizationHistoryEntry History { get; init; } = new();
+
+    /// <summary>
+    /// This run's completed receipts, captured before the persisted history
+    /// entry may be compacted to a summary by the retention policy. The
+    /// result page renders these; <see cref="History"/> remains the durable
+    /// record (possibly a receipt-less summary for oversized batches).
+    /// </summary>
+    public List<OrganizationHistoryItem> CompletedItems { get; init; } = [];
 
     public List<WidgetConfig> CreatedWidgets { get; init; } = [];
 

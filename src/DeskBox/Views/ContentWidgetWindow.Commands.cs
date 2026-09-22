@@ -3,6 +3,7 @@ using DeskBox.Controls;
 using DeskBox.Controls.WidgetContents;
 using DeskBox.Helpers;
 using DeskBox.Models;
+using DeskBox.Platform;
 using DeskBox.Services;
 using Microsoft.UI;
 using Microsoft.UI.Composition;
@@ -421,8 +422,10 @@ public sealed partial class ContentWidgetWindow
             }
             else if (showForegroundColorPickerWhenClosed)
             {
-                DispatcherQueue.TryEnqueue(async () =>
-                    await ShowWidgetForegroundColorPickerAsync());
+                DispatcherQueue.TryEnqueue(() =>
+                    ShowFlyoutWithInteraction(
+                        BuildWidgetForegroundColorPickerFlyout(),
+                        ContentWidgetShell));
             }
         };
         flyout.Items.Add(rename);
@@ -436,8 +439,10 @@ public sealed partial class ContentWidgetWindow
         flyout.Items.Add(WidgetCollapseMenuBuilder.Create(
             _config,
             SettingsService.Settings.WidgetCollapseBehavior,
+            SettingsService.Settings.WidgetCompactExpansionDirection,
             App.Current.LocalizationService,
             SetCollapseBehaviorOverride,
+            SetCompactExpansionDirectionOverride,
             ResetCompactWidthOverride));
         flyout.Items.Add(WidgetLockMenuBuilder.Create(
             App.Current.LocalizationService,
@@ -553,24 +558,55 @@ public sealed partial class ContentWidgetWindow
             : localization.T("Widget.FeatureWidget.Disable");
     }
 
-    private void ShowCloseWidgetFlyout()
-    {
-        ShowCloseWidgetFlyout(ContentWidgetShell.MoreActionButton);
-    }
-
-    private void ShowCloseWidgetFlyout(FrameworkElement target)
+    private Task ShowCloseWidgetFlyout(FrameworkElement target)
     {
         if (_isCloseWidgetPending ||
             App.Current.WidgetManager is not { } widgetManager)
         {
+            return Task.CompletedTask;
+        }
+
+        return _config.WidgetKind == WidgetKind.File
+            ? ShowFileWidgetCloseFlowAsync(widgetManager, target)
+            : ShowFeatureWidgetCloseFlow(widgetManager, target);
+    }
+
+    private Task ShowFeatureWidgetCloseFlow(
+        WidgetManager widgetManager,
+        FrameworkElement target)
+    {
+        ShowFlyoutWithInteraction(
+            CreateFeatureWidgetCloseFlyout(widgetManager),
+            target);
+        return Task.CompletedTask;
+    }
+
+    private async Task ShowFileWidgetCloseFlowAsync(
+        WidgetManager widgetManager,
+        FrameworkElement target)
+    {
+        // An empty managed folder has nothing to keep or move back, so skip
+        // the close-mode selection and recycle the folder together with the
+        // widget. The policy fails closed: an unknown entry count keeps the
+        // selection flow, and the actual deletion still goes through the
+        // recycle bin plus the manager's managed-root re-validation.
+        bool canCleanupManagedStorage =
+            widgetManager.CanCleanupManagedStorageForWidget(_config.Id);
+        int? managedFolderEntryCount = canCleanupManagedStorage
+            ? await CountTopLevelFolderEntriesAsync(
+                Path.GetFullPath(_config.MappedFolderPath!))
+            : null;
+        if (FileWidgetCloseFlowPolicy.ShouldCloseEmptyManagedFolderDirectly(
+                canCleanupManagedStorage,
+                managedFolderEntryCount))
+        {
+            await ExecuteFileWidgetCloseActionAsync(
+                WidgetRemovalAction.DeleteManagedFolder);
             return;
         }
 
-        MenuFlyout flyout = _config.WidgetKind == WidgetKind.File
-            ? CreateFileWidgetCloseFlyout(widgetManager)
-            : CreateFeatureWidgetCloseFlyout(widgetManager);
         ShowFlyoutWithInteraction(
-            flyout,
+            CreateFileWidgetCloseFlyout(widgetManager),
             target);
     }
 
@@ -585,14 +621,28 @@ public sealed partial class ContentWidgetWindow
 
     private void QueueCloseWidgetFlyout(IDisposable? interactionHandoff)
     {
-        if (DispatcherQueue.TryEnqueue(() =>
+        QueueInteractionGuardedFlyout(
+            interactionHandoff,
+            () => ShowCloseWidgetFlyout(ContentWidgetShell));
+    }
+
+    private void QueueInteractionGuardedFlyout(
+        IDisposable? interactionHandoff,
+        Func<Task> showAsync)
+    {
+        if (DispatcherQueue.TryEnqueue(async () =>
         {
             try
             {
-                // ShowFlyoutWithInteraction acquires the confirmation flyout's
-                // own interaction before this handoff is released, so a grouped
-                // Smart capsule cannot collapse between the two MenuFlyouts.
-                ShowCloseWidgetFlyout(ContentWidgetShell);
+                // The show delegate acquires its own interaction (see
+                // ShowFlyoutWithInteraction) before this handoff is released,
+                // so a grouped Smart capsule cannot collapse between the two
+                // MenuFlyouts.
+                await showAsync();
+            }
+            catch (Exception ex)
+            {
+                App.Log($"[ContentWidget] Queued confirmation flyout failed: {ex}");
             }
             finally
             {
@@ -701,6 +751,7 @@ public sealed partial class ContentWidgetWindow
             "\uE8CA",
             isDanger: false));
         bool confirmFolderRecycleWhenClosed = false;
+        IDisposable? recycleConfirmationHandoff = null;
         var recycleFolder = new MenuFlyoutItem
         {
             Text = localization.T("Widget.DeleteFolderToRecycleBin"),
@@ -708,14 +759,22 @@ public sealed partial class ContentWidgetWindow
         };
         WidgetDangerActionStyle.Apply(recycleFolder);
         recycleFolder.Click += (_, _) =>
+        {
             confirmFolderRecycleWhenClosed = true;
+            // Hold the interaction across the flyout transition: without the
+            // handoff a Smart capsule collapses as soon as this flyout closes,
+            // and the recycle confirmation below never becomes visible.
+            recycleConfirmationHandoff ??= AcquireCloseWidgetFlyoutHandoff();
+        };
         flyout.Items.Add(recycleFolder);
         flyout.Closed += (_, _) =>
         {
             if (confirmFolderRecycleWhenClosed)
             {
-                DispatcherQueue.TryEnqueue(async () =>
-                    await ShowDeleteManagedFolderConfirmationAsync());
+                QueueInteractionGuardedFlyout(
+                    recycleConfirmationHandoff,
+                    () => ShowDeleteManagedFolderConfirmationAsync());
+                recycleConfirmationHandoff = null;
             }
         };
         flyout.Items.Add(new MenuFlyoutSeparator());
@@ -829,10 +888,15 @@ public sealed partial class ContentWidgetWindow
             _isCloseWidgetPending = false;
             App.Log(
                 $"[ContentWidget] Close widget failed id={_config.Id}: {ex}");
-            await ShowErrorDialogAsync(
-                App.Current.LocalizationService.T(
-                    "Widget.DeleteWidgetFailed"),
-                ex.Message);
+            // Same window-clipping problem as the title-rename failure: a
+            // ContentDialog inside a small widget window gets cut off, so
+            // surface the failure as in-widget feedback instead.
+            ContentWidgetShell.ShowFeedback(new WidgetFeedbackRequest(
+                App.Current.LocalizationService.Format(
+                    "Widget.DeleteWidgetFailedWithReason",
+                    ex.Message),
+                WidgetFeedbackSeverity.Error,
+                "widget-delete-error"));
         }
     }
 
@@ -1043,7 +1107,18 @@ public sealed partial class ContentWidgetWindow
         }
         catch (Exception ex)
         {
-            await ShowErrorDialogAsync(App.Current.LocalizationService.T("Widget.RenameFailed"), ex.Message);
+            // A ContentDialog rendered inside a small widget window is
+            // clipped by the window bounds. Surface the failure through the
+            // shell's in-widget feedback instead, like the quick capture
+            // rename does, and keep the editor open so the name can be fixed.
+            App.Log(
+                $"[ContentWidget] Title rename failed id={_config.Id}: {ex}");
+            ContentWidgetShell.ShowFeedback(new WidgetFeedbackRequest(
+                App.Current.LocalizationService.Format(
+                    "Widget.RenameFailedWithReason",
+                    ex.Message),
+                WidgetFeedbackSeverity.Error,
+                "widget-title-rename-error"));
             InlineEditorFocus.FocusWhenLoaded(
                 editor,
                 static focused => focused.SelectAll(),
@@ -1081,27 +1156,7 @@ public sealed partial class ContentWidgetWindow
         RestoreDesktopLayerFromManager();
     }
 
-    private async Task ShowErrorDialogAsync(string title, string message)
-    {
-        var localization = App.Current.LocalizationService;
-        var dialog = new ContentDialog
-        {
-            XamlRoot = RootGrid.XamlRoot,
-            Title = title,
-            Content = new TextBlock
-            {
-                Text = message,
-                TextWrapping = TextWrapping.WrapWholeWords,
-                MaxWidth = 320
-            },
-            CloseButtonText = localization.T("Common.Ok"),
-            DefaultButton = ContentDialogButton.Close
-        };
-
-        await dialog.ShowAsync();
-    }
-
-    private void ShowFlyoutWithInteraction(MenuFlyout flyout, FrameworkElement target, Windows.Foundation.Point? position = null)
+    private void ShowFlyoutWithInteraction(FlyoutBase flyout, FrameworkElement target, Windows.Foundation.Point? position = null)
     {
         BeginCompactInteraction();
         App.Current.WidgetManager?.BeginWidgetInteraction("content-flyout-opened");
@@ -1119,7 +1174,9 @@ public sealed partial class ContentWidgetWindow
 
         if (position is Windows.Foundation.Point point)
         {
-            flyout.ShowAt(target, point);
+            flyout.ShowAt(
+                target,
+                new FlyoutShowOptions { Position = point });
         }
         else
         {

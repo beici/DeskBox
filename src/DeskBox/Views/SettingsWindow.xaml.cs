@@ -1,6 +1,7 @@
 using DeskBox.Controls;
 using DeskBox.Helpers;
 using DeskBox.Models;
+using DeskBox.Platform;
 using DeskBox.Services;
 using DeskBox.ViewModels;
 using DeskBox.Views.SettingsSections;
@@ -121,6 +122,7 @@ public sealed partial class SettingsWindow : Window
             ["CapsuleAnimationSettings"] = new("CapsuleAnimationSettings", "Settings.Capsule.Animation.Title", "CapsuleMode", "CapsuleMode"),
             ["CapsuleOverridesSettings"] = new("CapsuleOverridesSettings", "Settings.Capsule.Overrides.Title", "CapsuleMode", "CapsuleMode"),
             ["BackupRestoreSettings"] = new("BackupRestoreSettings", "Settings.DataBackup.Title", "Maintenance", "Maintenance"),
+            ["CloudBackupSettings"] = new("CloudBackupSettings", "Settings.CloudBackup.Title", "Maintenance", "Maintenance"),
             ["DataHealthSettings"] = new("DataHealthSettings", "Settings.AttachmentHealth.Title", "Maintenance", "Maintenance"),
             ["CompatibilityDiagnosticsSettings"] = new("CompatibilityDiagnosticsSettings", "Settings.DragDropPermission.Title", "Maintenance", "Maintenance")
         };
@@ -215,6 +217,11 @@ public sealed partial class SettingsWindow : Window
         _resizeSettleTimer.Tick += ResizeSettleTimer_Tick;
         _sectionLayoutSettleTimer.Tick += SectionLayoutSettleTimer_Tick;
         Activated += SettingsWindow_Activated;
+        _appWindow.Closing += SettingsWindow_AppWindowClosing;
+        // Subscribed only after _appWindow exists: ActualThemeChanged can
+        // also fire on an OS theme flip while RequestedTheme is Default,
+        // and the handler touches _appWindow.TitleBar.
+        SettingsRoot.ActualThemeChanged += SettingsRoot_ActualThemeChanged;
         Closed += SettingsWindow_Closed;
         constructionStopwatch.Stop();
         LogConstructionCheckpoint("complete");
@@ -227,7 +234,18 @@ public sealed partial class SettingsWindow : Window
             return;
         }
 
+        // Reveal-time calibration: a missed ColorValuesChanged (or any other
+        // break in the refresh chain) can never leave the window visibly
+        // frozen on a stale theme.
+        _themeService.ApplyToWindow(this);
         _appWindow.Show();
+        // Route through the manager so a quick-reveal raised session (widget
+        // group held topmost) lifts this window above the widgets instead of
+        // leaving it in the normal band below them. Outside a session this is
+        // the ordinary bring-to-front pulse, matching the other popups.
+        App.Current.WidgetManager?.BringAuxiliaryWindowToFront(
+            _hWnd,
+            "settings-shown");
         Activate();
         if (_hasShownOnce)
         {
@@ -251,11 +269,6 @@ public sealed partial class SettingsWindow : Window
         Close();
     }
 
-    // The XAML tree of a closed window is retained by native references that
-    // outlive the managed teardown in SettingsWindow_Closed, so every
-    // open/close cycle used to leak a full settings tree. Cancelling the close
-    // and hiding instead keeps exactly one window alive for the process
-    // lifetime; real destruction only happens via CloseForShutdown.
     private void RefreshOnReopen()
     {
         if (_isClosed)
@@ -293,6 +306,34 @@ public sealed partial class SettingsWindow : Window
         RestartResizeSettleTimer();
     }
 
+    // The XAML tree of a closed window is retained by native references that
+    // outlive the managed teardown in SettingsWindow_Closed, so every
+    // open/close cycle used to leak a full settings tree. Cancelling at the
+    // official AppWindow.Closing gate and hiding instead keeps exactly one
+    // window alive for the process lifetime; real destruction only happens
+    // via CloseForShutdown. Window.Closed therefore keeps its pure
+    // real-close meaning, which also keeps ThemeService's
+    // closed-means-untrack bookkeeping honest.
+    private void SettingsWindow_AppWindowClosing(
+        AppWindow sender,
+        AppWindowClosingEventArgs args)
+    {
+        if (_allowRealClose)
+        {
+            return;
+        }
+
+        args.Cancel = true;
+        _appWindow.Hide();
+        App.Current.WidgetManager?.ReleaseRaisedBandGuest(
+            _hWnd,
+            "settings-hidden");
+        App.ScheduleBackgroundMemoryCleanup("settings-hidden");
+    }
+
+    private void SettingsRoot_ActualThemeChanged(FrameworkElement sender, object args) =>
+        ApplyTitleBarButtonColors();
+
     private void SettingsWindow_Closed(object sender, WindowEventArgs args)
     {
         if (_isClosed)
@@ -300,20 +341,16 @@ public sealed partial class SettingsWindow : Window
             return;
         }
 
-        if (!_allowRealClose)
-        {
-            args.Handled = true;
-            _appWindow.Hide();
-            return;
-        }
-
         _isClosed = true;
         Activated -= SettingsWindow_Activated;
+        _appWindow.Closing -= SettingsWindow_AppWindowClosing;
         Closed -= SettingsWindow_Closed;
         SizeChanged -= SettingsWindow_SizeChanged;
         SettingsRoot.Loaded -= SettingsRoot_Loaded;
+        SettingsRoot.ActualThemeChanged -= SettingsRoot_ActualThemeChanged;
         SettingsRoot.RemoveHandler(UIElement.PointerPressedEvent, _settingsRootPointerPressedHandler);
         SettingsRoot.RemoveHandler(UIElement.PointerReleasedEvent, _settingsRootPointerReleasedHandler);
+        App.Current.CloudBackupService.BackupRunCompleted -= OnCloudBackupRunCompleted;
 
         _resizeSettleTimer.Stop();
         _resizeSettleTimer.Tick -= ResizeSettleTimer_Tick;
@@ -388,19 +425,15 @@ public sealed partial class SettingsWindow : Window
 
     private void OnAppearanceChanged()
     {
-        void Apply()
-        {
-            ApplyTitleBarButtonColors();
-            RefreshFeatureWidgetList();
-        }
-
+        // Title-bar button colors are driven by SettingsRoot_ActualThemeChanged
+        // so they always follow the applied theme rather than event ordering.
         if (DispatcherQueue.HasThreadAccess)
         {
-            Apply();
+            RefreshFeatureWidgetList();
             return;
         }
 
-        DispatcherQueue.TryEnqueue(Apply);
+        DispatcherQueue.TryEnqueue(RefreshFeatureWidgetList);
     }
 
     private Brush CreateFeatureWidgetIconBrush()
@@ -526,7 +559,6 @@ public sealed partial class SettingsWindow : Window
             AboutInfoActionsPanel.Orientation = isNarrow ? Orientation.Vertical : Orientation.Horizontal;
             AboutMeButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
             AboutWebsiteButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-            FeedbackEmailButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
             StoreSupportButton.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
             UpdateActionsPanel.HorizontalAlignment = isNarrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Right;
             UpdateActionsPanel.Orientation = isNarrow ? Orientation.Vertical : Orientation.Horizontal;
