@@ -415,6 +415,16 @@ P0：§6 重写为 Runtime 矩阵（删除 A→B→C 旧结论，与 §14 唯一
 - 审计可见告警码仍全部落在允许清单内（`CS0108/CS0169/CS0414/CS8601/CS8602/WMC1510`），`MVVMTK0045`/`CsWinRT1028` 均为 0。
 
 **Why:** 合并把上游的 compiled-binding 迁移结果与 fork 独有的 Music 设置节合到同一棵树，WMC1510 与两侧实测值都不同；等值断言不重校准会让 audit 在 28 个阶段直接抛错。**教训**：`-ne` 等值钉版对「合并后计数」最脆弱，合并触碰 XAML 后必须重跑 audit，而不是沿用任一侧的历史数字。
+
+**收尾加固（2026-09-23，提交 `c131ccc`）**：重校准之后补做了门禁回放与对账，把「实测 742」升级为「可证通过」：
+
+- **门禁回放**：把 35 枚 WMC1510 钉版**与比较算子**从脚本解析出来后（不硬编码），用脚本自身的 `$warningCodeRegex` 与 `$allowedWarningCodes` 扫真实 publish 日志 → **35/35 PASS**，0 处算子错配（`Maximum`⇒`-gt`、`Expected`⇒`-ne`），告警白名单门禁 PASS。
+- **脚本硬编码路径扫描**：218 条去重路径全部有效——217 条存在 + 1 条**有意缺席**（`$stage4D2RemovedSourceFiles` 的反向断言，消费者 `:9272`，语义是「必须不存在」）；源码计数钉版 `$stage5B4B1ExpectedBindableViewModelPropertyCount = 351` 复算一致。
+- **文件集对账**（对两个父提交各做一次路径集差）：fork 侧 8 处缺失 = 7 处 `Helpers/`→`Platform/` 重定位 + 1 处上游 1.5.1 删除（`Views/WidgetTextShadowManager.cs` 并入 presentation/runtime 策略，合并取上游，符合「上游架构照收」）；上游侧 25 处缺失全部来自 fork `ad8febe`（DEF-027/016「remove dead QuickCapture host」，13 文件 7796 行）的有意删除 → 合并正确保留 fork 意图，**无静默丢失**。
+- **审计脚本传的 `-p:Platform=x64` / `-p:DeskBoxDistribution=Direct` 与本次实测等价**：`DeskBox.csproj` 中的 `'$(Platform)'` 条件只作用于 Rust 原生层、缩略图代理与错误分支，不参与任何 XAML 包含或编译常量；`DeskBoxDistribution` 默认值即 `Direct`（`:24`）。
+- 全量套件的 10 项失败为环境性，且已证明与合并无关：`git log <merge>^1..HEAD -- <失败测试文件> <被测生产文件>` 输出为空，禁用沙箱复跑同样失败（改文件属性 / 删独占句柄文件被拒）。
+- 唯一真实遗留已修（提交 `c131ccc`）：上游 v1.5.5 新增的 `SettingsSliceOwnershipContractTests.FacadeAccessManifest` 携带 6 条指向 fork 已删的 `QuickCaptureWidgetWindow` partial 的孤儿条目；孤儿条目对「只减不增」门禁是惰性的，但会为不存在的文件预留预算，削弱护栏，故删除（149→143 条）。
+
 ## 附录 A：关键证据文件索引
 
 | 主题 | 文件 |
