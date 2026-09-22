@@ -424,6 +424,10 @@ P0：§6 重写为 Runtime 矩阵（删除 A→B→C 旧结论，与 §14 唯一
 - **审计脚本传的 `-p:Platform=x64` / `-p:DeskBoxDistribution=Direct` 与本次实测等价**：`DeskBox.csproj` 中的 `'$(Platform)'` 条件只作用于 Rust 原生层、缩略图代理与错误分支，不参与任何 XAML 包含或编译常量；`DeskBoxDistribution` 默认值即 `Direct`（`:24`）。
 - **全量套件两次干净复跑均为 4226/4226 全绿**（0 失败，各约 2 分 30 秒）。合并过程中观察到的 10 项 `FileServiceTests` / `ManagedStorageMigrationSafetyTests` 失败，是**并发或中断运行残留的文件锁污染**所致——同一构建配置（`bin\x64\Debug\...`）、同一筛选集，污染态单次耗时 17 分钟、干净态 2 分 30 秒，且失败断言两侧的文件在 `git log <merge>^1..HEAD` 中从未被合并触碰。故既非环境限制，亦非合并缺陷。
 - 唯一真实遗留已修（提交 `c131ccc`）：上游 v1.5.5 新增的 `SettingsSliceOwnershipContractTests.FacadeAccessManifest` 携带 6 条指向 fork 已删的 `QuickCaptureWidgetWindow` partial 的孤儿条目；孤儿条目对「只减不增」门禁是惰性的，但会为不存在的文件预留预算，削弱护栏，故删除（149→143 条）。
+- **审计脚本本体已在本机跑到实测阶段**：补齐沙箱缺失的 `PATHEXT` 与 `PROGRAMFILES*` / `PROGRAMDATA` 后，`scripts/publish-aot-audit.ps1 -Platform x64` 走通了还原、XAML/C# 编译与 Rust 原生层构建（`AbiVersion 2`、`Capabilities 511`、10 个导出、`RuntimeProbeExecuted: True`、`Machine 0x8664`）。
+- **审计自身的 `publish.log` 实测 `WMC1510` = 742**（14 个 XAML 文件逐文件求和也恰为 742），其中含 fork 独有 `Views/SettingsSections/MusicSettingsSection.xaml` 的 `(30,21) (31,21) (45,21) (59,21)` 四处；其余告警码仅 `CS8602`×14 / `CS8601`×2 / `CS0414`×2 / `CS0169`×2 / `CS0108`×2，**全部落在允许清单内**。这把重校准从「回放可证」升级为「审计本体实测一致」。
+- **审计最终止于 ILC 原生链接**：`Microsoft.NETCore.Native.Publish.targets(63,5): error : Cross-OS native compilation is not supported`（原生 AOT 链接需要 Windows 宿主工具链）——属**本沙箱宿主的能力边界，非合并缺陷**。该步位于 28 阶段门禁之前，故 `summary.json` 不生成；门禁结论仍以上方回放为准。
+- **该跑法不污染锁文件**：运行前后 `src/DeskBox/packages.lock.json`、`src/DeskBox.Abstractions/packages.lock.json`、`src/DeskBox.Updater/packages.lock.json`、`src/DeskBox/packages.aot.lock.json` 的 sha256 逐位一致，`git status --short` 为空。（此前观察到的污染发生在**带 AOT 属性的 restore** 下，若出现用 `git checkout -- <lock>` 回滚。）
 
 ## 附录 A：关键证据文件索引
 
