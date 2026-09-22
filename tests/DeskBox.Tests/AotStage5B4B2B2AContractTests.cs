@@ -268,10 +268,10 @@ public sealed class AotStage5B4B2B2AContractTests
         string launcher = ReadRepositoryFile("scripts/start-aot-preview.ps1");
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
 
-        Assert.Contains("$auditProfileVersion = 62", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 63", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B2B2A", audit, StringComparison.Ordinal);
-        Assert.Contains("$RequiredAuditProfileVersion = 62", launcher, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 63", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("Todo", project, StringComparison.Ordinal);
@@ -290,7 +290,7 @@ public sealed class AotStage5B4B2B2AContractTests
         Assert.Contains("stage5B4B2B2AForbiddenScopePatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B2B2AJsonSerializeCallCount", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B2B2ASourceWarningMessages", audit, StringComparison.Ordinal);
-        Assert.Contains("stage5B4B2B2AExpectedWmc1510Count = 866", audit, StringComparison.Ordinal);
+        Assert.Contains("stage5B4B2B2AExpectedWmc1510Count = 742", audit, StringComparison.Ordinal);
     }
 
     private static int CountOccurrences(string value, string token)

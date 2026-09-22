@@ -27,7 +27,7 @@
 ## 2. 硬约束（技术事实，已核实）
 
 1. **NativeAOT 禁止动态程序集加载**：`Assembly.Load`/运行时代码生成均不可用（dotnet/runtime #117470）。**DeskBox 不做运行时 .NET 程序集加载**；对于第三方可执行代码，优先评估 **WASM 组件**（进程内沙箱）与**进程外 Runtime**两条路线（理论上还存在内嵌脚本引擎/DSL 解释器等路线，当前不评估）；声明式资源包独立于代码 Runtime。
-2. **测试与审计体系按"文件路径 + 计数"冻结**：147 个路径式源码扫描契约测试（24 个文件含 52 处硬编码 `WidgetManager.*.cs` 路径）；`JsonSerializationBaselineContractTests` 冻结 28 文件/64 调用/26 context（**v1.5 起已多项目扫描**）；`AotStage4D1BContractTests` 冻结 XAML 计数 347 项；`scripts/publish-aot-audit.ps1` 含 227 处硬编码路径、`auditProfileVersion`（批次 B 起=62，动脚本须 bump 并同步全部钉版测试）、**31 处 WMC1510 等值断言（=863）+4 处 ceiling**。护栏改造已在阶段 0/批次 A/B 落地（SourceFile 重定位接线/多根扫描/audit 全管线重对齐），后续搬迁税按"每文件一条映射+触碰点同步"重估。另有 63 个测试文件直接断言 DeskBox.csproj 内容——"项目结构"本身是被测试冻结的一级接口。
+2. **测试与审计体系按"文件路径 + 计数"冻结**：147 个路径式源码扫描契约测试（24 个文件含 52 处硬编码 `WidgetManager.*.cs` 路径）；`JsonSerializationBaselineContractTests` 冻结 28 文件/64 调用/26 context（**v1.5 起已多项目扫描**）；`AotStage4D1BContractTests` 冻结 XAML 计数 347 项；`scripts/publish-aot-audit.ps1` 含 227 处硬编码路径、`auditProfileVersion`（批次 B 起=62；v1.5.5 上游合并后重校准至 63，动脚本须 bump 并同步全部钉版测试）、**31 处 WMC1510 等值断言（=742）+4 处 ceiling**。护栏改造已在阶段 0/批次 A/B 落地（SourceFile 重定位接线/多根扫描/audit 全管线重对齐），后续搬迁税按"每文件一条映射+触碰点同步"重估。另有 63 个测试文件直接断言 DeskBox.csproj 内容——"项目结构"本身是被测试冻结的一级接口。
 3. **本地化资源经 `Assembly.GetExecutingAssembly()` 读取**（LocalizationService.cs:471；CitySearchService.cs:72 的 cities.json 同模式）：代码搬到子程序集后静默回落。本地化留宿主 + 资源加载器抽象。
 4. **设置系统**：`AppSettings` 约 200 字段单一类、684 处直接读写、14 个 Normalize 双向全量执行；`SchemaVersion=9` + 10 级迁移链；备份服务强制含 settings.json。
 5. **AOT 红线**：OneTime x:Bind 模式不改回；`SearchResultRowControl.Item` 保持 internal；`*.AotBindableProperties.cs` 必须随 ViewModel 同程序集；**`App.Aot*Smoke.cs`/`WidgetManager.Aot*Smoke.cs` 是宿主类 partial，物理上搬不走**——每个功能的 AOT 证据链天然横跨两个程序集（v1.1 新增：这是反对多程序集拆分的结构性论据）；每新程序集必须复制 retail smoke 排除 ItemGroup、提交双锁文件、加 IVT。
@@ -405,6 +405,16 @@ P0：§6 重写为 Runtime 矩阵（删除 A→B→C 旧结论，与 §14 唯一
 
 **Why:** 两轮外部评审与内部审计三方收敛，纪律条款是防止后续批次倒退的护栏。
 
+### 16.7 v1.5.5 上游合并后的 audit 重校准（2026-09-23，profile 62→63）
+
+上游 v1.5.5（`Tianyu199509/DeskBox` @ `d4b0a7a`）合入后，先按 handoff 策略整体取上游侧钉版（WMC1510=866），再在 Windows 上以 `scripts/publish-aot-audit.ps1` 的**同一 publish 命令**实测合并树的 WMC1510：
+
+- 实测 **742**（单次 publish 日志中 `WMC1510` 行数与去重数一致，均为 742；`dotnet build` 会重复两遍，故必须以 publish 日志为准）。
+- 与两侧实测对账：上游 866 − `Views/QuickCaptureWidgetWindow.xaml`（合并按 fork 侧删除：1088 行、151 处 `{Binding}`）+ fork 独有的 `Views/SettingsSections/MusicSettingsSection.xaml`（**+4**，逐行确认 30/31/45/59 四处）= **742**。
+- 31 处 `ExpectedWmc1510Count` 是 `-ne` 等值断言（4 处 `Maximum` 为 `-gt` ceiling），故 866→742 全量重校准；按脚本头部纪律 bump `$auditProfileVersion` 62→63，并同步 `start-aot-preview.ps1`、4 个 `run-aot-*-smoke.ps1` 钉版链与 45 个契约测试（合计 54 文件：87 处 profile + 55 处 WMC 钉版）。
+- 审计可见告警码仍全部落在允许清单内（`CS0108/CS0169/CS0414/CS8601/CS8602/WMC1510`），`MVVMTK0045`/`CsWinRT1028` 均为 0。
+
+**Why:** 合并把上游的 compiled-binding 迁移结果与 fork 独有的 Music 设置节合到同一棵树，WMC1510 与两侧实测值都不同；等值断言不重校准会让 audit 在 28 个阶段直接抛错。**教训**：`-ne` 等值钉版对「合并后计数」最脆弱，合并触碰 XAML 后必须重跑 audit，而不是沿用任一侧的历史数字。
 ## 附录 A：关键证据文件索引
 
 | 主题 | 文件 |
