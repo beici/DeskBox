@@ -343,12 +343,8 @@ public sealed class SettingsSliceOwnershipContractTests
         ["src/DeskBox/Views/OnboardingWindow.Storage.cs"] = 5,
         ["src/DeskBox/Views/OnboardingWindow.TaskFlow.cs"] = 5,
         ["src/DeskBox/Views/OnboardingWindow.xaml.cs"] = 4,
-        ["src/DeskBox/Views/QuickCaptureWidgetWindow.Appearance.cs"] = 3,
-        ["src/DeskBox/Views/QuickCaptureWidgetWindow.Detail.cs"] = 2,
-        ["src/DeskBox/Views/QuickCaptureWidgetWindow.Editing.cs"] = 1,
-        ["src/DeskBox/Views/QuickCaptureWidgetWindow.Menus.cs"] = 2,
-        ["src/DeskBox/Views/QuickCaptureWidgetWindow.ResponsiveDetail.cs"] = 2,
-        ["src/DeskBox/Views/QuickCaptureWidgetWindow.xaml.cs"] = 12,
+        // QuickCaptureWidgetWindow partials went away with the dead host
+        // (ad8febe, DEF-027/016), so their facade budgets are retired too.
         ["src/DeskBox/Views/SearchPopupWindow.xaml.cs"] = 22,
         ["src/DeskBox/Views/SettingsSections/DesktopOrganizationSettingsSection.xaml.cs"] = 22,
         ["src/DeskBox/Views/SettingsSections/SearchSettingsSection.xaml.cs"] = 24,
