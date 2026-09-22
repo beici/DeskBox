@@ -39,7 +39,7 @@ public sealed class SettingsSliceOwnershipContractTests
     [Fact]
     public void EveryFacadeProperty_MapsToExactlyOneSliceProperty()
     {
-        Assert.Equal(220, FacadeProperties.Length);
+        Assert.Equal(222, FacadeProperties.Length);
 
         foreach (PropertyInfo facade in FacadeProperties)
         {
@@ -235,9 +235,11 @@ public sealed class SettingsSliceOwnershipContractTests
         ["src/DeskBox/Services/AutoStartDefaultPolicy.cs"] = 1,
         ["src/DeskBox/Services/DataBackupSettingsPolicy.cs"] = 15,
         ["src/DeskBox/Services/DesktopAutoOrganizationWatcher.cs"] = 13,
-        // 5 = legacy 4 + DesktopDoubleClickEnabled read backing the hook
-        // watchdog's HookProbeWanted gate (activation service line 122).
-        ["src/DeskBox/Services/DesktopDoubleClickActivationService.cs"] = 5,
+        // Upstream's snapshot measured 5 (legacy 4 + the HookProbeWanted gate
+        // read). The fork keeps the enabled-state read/write/rollback triple in
+        // both toggle paths, which is 8 facade reads of
+        // DesktopDoubleClickEnabled; the merge preserved the fork's 8.
+        ["src/DeskBox/Services/DesktopDoubleClickActivationService.cs"] = 8,
         ["src/DeskBox/Services/DesktopOrganizationCoordinator.cs"] = 13,
         ["src/DeskBox/Services/DesktopOrganizationTransaction.Restore.cs"] = 3,
         ["src/DeskBox/Services/DesktopOrganizationTransaction.cs"] = 9,
@@ -257,9 +259,9 @@ public sealed class SettingsSliceOwnershipContractTests
         ["src/DeskBox/Services/SearchEngineService.cs"] = 7,
         ["src/DeskBox/Services/SearchHotkeyService.cs"] = 12,
         ["src/DeskBox/Services/SearchResultActionService.cs"] = 2,
-        ["src/DeskBox/Services/SettingsMigrationService.cs"] = 35,
+        ["src/DeskBox/Services/SettingsMigrationService.cs"] = 38,
         ["src/DeskBox/Services/SettingsSearchCatalog.cs"] = 20,
-        ["src/DeskBox/Services/SettingsService.cs"] = 605,
+        ["src/DeskBox/Services/SettingsService.cs"] = 607,
         ["src/DeskBox/Services/ThemeService.cs"] = 11,
         ["src/DeskBox/Services/TodoReminderService.cs"] = 8,
         ["src/DeskBox/Services/WeatherService.cs"] = 1,
@@ -278,6 +280,9 @@ public sealed class SettingsSliceOwnershipContractTests
         ["src/DeskBox/Services/WidgetManager.TrayAnimation.cs"] = 3,
         ["src/DeskBox/Services/WidgetManager.cs"] = 27,
         ["src/DeskBox/Services/WidgetStartupRestorePolicy.cs"] = 2,
+        // Fork-only: the title-alignment store added by the fork reads the
+        // facade directly (upstream has no such file).
+        ["src/DeskBox/Services/WidgetTitleAppearanceSettings.cs"] = 4,
         ["src/DeskBox/Services/WidgetTopologyLayoutService.cs"] = 22,
         ["src/DeskBox/ViewModels/GlanceWidgetViewModel.cs"] = 4,
         ["src/DeskBox/ViewModels/MusicWidgetViewModel.Lifecycle.cs"] = 1,
@@ -307,6 +312,8 @@ public sealed class SettingsSliceOwnershipContractTests
         ["src/DeskBox/ViewModels/SettingsViewModel.PreferenceCommands.cs"] = 2,
         ["src/DeskBox/ViewModels/SettingsViewModel.QuickCaptureDiagnostics.cs"] = 2,
         ["src/DeskBox/ViewModels/SettingsViewModel.RuntimeDiagnostics.cs"] = 1,
+        // Fork-only: the frame-rate cap selection options read the facade.
+        ["src/DeskBox/ViewModels/SettingsViewModel.SelectionOptions.cs"] = 3,
         ["src/DeskBox/ViewModels/SettingsViewModel.SettingsSync.cs"] = 133,
         ["src/DeskBox/ViewModels/SettingsViewModel.WeatherOptions.cs"] = 2,
         ["src/DeskBox/ViewModels/SettingsViewModel.WidgetForeground.cs"] = 6,
@@ -348,9 +355,13 @@ public sealed class SettingsSliceOwnershipContractTests
         ["src/DeskBox/Views/SettingsWindow.HotkeyAndAppearance.cs"] = 4,
         ["src/DeskBox/Views/SettingsWindow.Maintenance.cs"] = 3,
         ["src/DeskBox/Views/SettingsWindow.Navigation.cs"] = 3,
+        // Fork-only host settings partial (record-colours editor).
+        ["src/DeskBox/Views/SettingsWindow.QuickCaptureColors.cs"] = 2,
         ["src/DeskBox/Views/WidgetWindowBase.Backdrop.cs"] = 10,
         ["src/DeskBox/Views/WidgetWindowBase.Bounds.cs"] = 3,
         ["src/DeskBox/Views/WidgetWindowBase.Collapse.cs"] = 35,
+        // Fork-only: title-alignment application on the widget window.
+        ["src/DeskBox/Views/WidgetWindowBase.TitleAppearance.cs"] = 5,
     };
 
     private static readonly Regex FacadePassthroughAccess = new(

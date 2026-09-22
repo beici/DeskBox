@@ -116,7 +116,9 @@ internal sealed class WidgetToolDialogWindow : Window
         WindowId windowId = Win32Interop.GetWindowIdFromWindow(WindowHandle);
         _appWindow = AppWindow.GetFromWindowId(windowId);
         AppBranding.ApplyWindowIcon(_appWindow);
-        _appWindow.IsShownInSwitchers = false;
+        // Early-logon sessions reject IsShownInSwitchers with E_NOTIMPL; the
+        // helper degrades with a log line instead of failing window creation.
+        WindowShellState.TryHideFromSwitchers(_appWindow);
         if (_appWindow.Presenter is OverlappedPresenter presenter)
         {
             presenter.IsResizable = true;

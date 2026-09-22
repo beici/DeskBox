@@ -1150,31 +1150,21 @@ public sealed partial class FileSurfaceContent :
             return;
         }
 
-        // The StorageItem broker call below is synchronous on the UI STA, and
-        // DragItemsStartingEventArgs carries no deferral to await it on. The
-        // drag path already bypasses the broker for .lnk payloads, so measure
-        // what it actually costs for ordinary files before restructuring this
-        // sequence; the number rides along on the existing protocol log.
-        long storageBrokerMs = 0;
-        var storageBrokerWatch = System.Diagnostics.Stopwatch.StartNew();
-        bool isManagedShortcutDrag = IsManagedShortcutDrag(
-            selectedItems.Select(item => item.Path).ToArray());
-        if (!FileItemDragPackage.TryPrepare(
+        // DEF-023 (THR-03): the StorageItem broker round-trips are deferred
+        // (SetDataProvider + GetStorageItemsAsync, mirroring
+        // QuickCaptureDragPackage) instead of blocking the UI STA with
+        // GetAwaiter().GetResult() — a slow or network drive used to freeze
+        // the shell for the whole drag-start. The event handler itself stays
+        // fully synchronous, preserving drag-commit semantics.
+        if (!FileItemDragPackage.TryPrepareDeferred(
                 e.Data,
                 selectedItems,
                 WidgetId,
-                paths =>
-                {
-                    storageBrokerWatch.Restart();
-                    IReadOnlyList<IStorageItem> resolved = _fileService.GetStorageItems(paths);
-                    storageBrokerMs = storageBrokerWatch.ElapsedMilliseconds;
-                    return resolved;
-                },
+                _fileService,
                 paths => paths.Count == 1
                     ? Path.GetFileName(paths[0])
                     : paths.Count.ToString(),
-                out FileItemDragPackageResult result,
-                isManagedShortcutDrag))
+                out FileItemDragPackageResult result))
         {
             _activeDragSessionId = null;
             e.Cancel = true;
@@ -1201,9 +1191,7 @@ public sealed partial class FileSurfaceContent :
             $"session={FormatDragSessionId(_activeDragSessionId)} " +
             $"kind=file popover={fromStackPopover} paths=" +
             $"{result.SourcePaths.Count} storage={result.HasStorageItems} " +
-            $"storageBrokerMs={storageBrokerMs} " +
-            $"nativeShell={result.UsesNativeShellDataObject} " +
-            $"managedShortcut={isManagedShortcutDrag} requested=" +
+            $"nativeShell={result.UsesNativeShellDataObject} requested=" +
             $"{e.Data.RequestedOperation} mode=" +
             $"{(sender is ListView ? "list" : "icons")} " +
             $"pathSample='{string.Join(" | ", result.SourcePaths.Take(5))}'");
@@ -1217,7 +1205,7 @@ public sealed partial class FileSurfaceContent :
         // DragItemsStarting state. Advertise the safe capability set up front so
         // internal targets never have to infer it from a possibly incomplete
         // path/selection snapshot. RequestedOperation is owned by
-        // FileItemDragPackage.TryPrepare and is not rewritten here.
+        // FileItemDragPackage.TryPrepareDeferred and is not rewritten here.
         e.AllowedOperations = FileItemDragPackage.SupportedOperations;
 
         string[] sourcePaths = _activeDragSourcePaths.Length > 0

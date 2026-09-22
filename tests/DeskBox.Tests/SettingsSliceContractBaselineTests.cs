@@ -338,6 +338,8 @@ public sealed class SettingsSliceContractBaselineTests
         "widgetMaterialIntensity",
         "widgetForegroundMode",
         "widgetForegroundColor",
+        "widgetTitleAlignment",
+        "widgetAnimationFrameRate",
         "widgetBorderColorMode",
         "widgetBorderStyle",
         "widgetCornerPreference",

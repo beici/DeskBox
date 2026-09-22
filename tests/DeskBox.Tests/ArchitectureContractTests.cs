@@ -42,6 +42,11 @@ public sealed class ArchitectureContractTests
         "DeskBox.Models",
         "DeskBox.Services",
         "DeskBox.ViewModels",
+        // Upstream 1.5.5 re-homed the platform interop layer (including
+        // ChineseTextConverter) under DeskBox.Platform. CitySearchService's use
+        // of that type was already allow-listed while it lived in
+        // DeskBox.Helpers, so the merged tree only renames the dependency.
+        "DeskBox.Platform",
     ];
 
     private sealed record FeatureSpec(
@@ -70,15 +75,19 @@ public sealed class ArchitectureContractTests
             // Weather gained WeatherWidgetContentAdapter.cs in the 1.5.0 merge:
             // the adapter owns the view-model mapping that used to live in the
             // content code-behind, so the file count grows by exactly one.
-            ["Weather"] = 17,
-            ["Todo"] = 36,
-            ["Music"] = 15,
+            // The 1.5.5 settings-slice refactor then adds exactly one
+            // Models/<Feature>SettingsSlice.cs per feature (Glance already
+            // carried its settings elsewhere), so each feature below is +1.
+            ["Weather"] = 18,
+            ["Todo"] = 37,
+            ["Music"] = 16,
             ["Glance"] = 19,
-            ["Search"] = 20,
+            ["Search"] = 21,
             // The 1.5.0 merge added the record-colors trio: the settings store
             // (Services), the shared editor (re-homed into WidgetContents) and
             // the host settings code-behind. Net +3 over the frozen 22.
-            ["QuickCapture"] = 25,
+            // 1.5.5 adds Models/QuickCaptureSettingsSlice.cs (+1).
+            ["QuickCapture"] = 26,
         };
 
     private static readonly Dictionary<string, int> FrozenAmbientWidgetManagerAccess =
@@ -86,6 +95,11 @@ public sealed class ArchitectureContractTests
         {
             ["src/DeskBox/Views/SettingsSections/GlanceWidgetSettingsSection.xaml.cs"] = 9,
             ["src/DeskBox/ViewModels/QuickCaptureWidgetViewModel.Operations.cs"] = 1,
+            // Upstream 1.5.5 routes the search popup's committed-colour pushes
+            // through the ambient manager (3 sites, all App.Current.WidgetManager;
+            // the fork snapshot had none). The ratchet only shrinks, so this
+            // records the accepted upstream growth explicitly instead of hiding it.
+            ["src/DeskBox/Views/SearchPopupWindow.xaml.cs"] = 3,
             // The 1.5.0 record-colors settings section pushes committed colors
             // to loaded surfaces through the same bulk-apply entry the widget
             // menu uses. Host settings code is the owner of "apply to loaded

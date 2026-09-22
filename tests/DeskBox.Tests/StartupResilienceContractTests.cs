@@ -254,7 +254,10 @@ public sealed class StartupResilienceContractTests
         Slice(
             Read("src/DeskBox/App.xaml.cs"),
             "protected override async void OnLaunched",
-            "FailStartup(\"exception during startup\", ex);");
+            // DEF-020 (fork red line) replaced upstream's
+            // FailStartup("exception during startup", ex); with a logged,
+            // user-visible notification, so OnLaunched now ends there.
+            "ShowStartupFailureNotification(startupPhase, ex);");
 
     private static IEnumerable<string> EnumerateProductSources()
     {

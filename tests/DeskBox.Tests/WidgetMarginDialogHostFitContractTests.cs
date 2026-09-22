@@ -46,7 +46,11 @@ public sealed class WidgetMarginDialogHostFitContractTests
             host,
             StringComparison.Ordinal);
         Assert.Contains("presenter.IsAlwaysOnTop = true;", host, StringComparison.Ordinal);
-        Assert.Contains("_appWindow.IsShownInSwitchers = false;", host, StringComparison.Ordinal);
+        // Kept out of Alt+Tab through the degrading helper: early-logon sessions
+        // reject IsShownInSwitchers with E_NOTIMPL, and the upstream contract
+        // (StartupResilienceContractTests) bans the raw assignment everywhere
+        // except WindowShellState itself.
+        Assert.Contains("WindowShellState.TryHideFromSwitchers(_appWindow);", host, StringComparison.Ordinal);
         Assert.Contains("TaskCompletionSource<bool>", host, StringComparison.Ordinal);
         Assert.Contains(
             "VerticalScrollBarVisibility = ScrollBarVisibility.Auto",

@@ -13,7 +13,7 @@ public sealed class JsonSerializationBaselineContractTests : IDisposable
         Guid.NewGuid().ToString("N"));
 
     [Fact]
-    public void ProductionInventory_IsFrozenAtThirtyFiveFilesAndEightyThreeCalls()
+    public void ProductionInventory_IsFrozenAtThirtySixFilesAndEightySixCalls()
     {
         var expected = new Dictionary<string, int>(StringComparer.Ordinal)
         {
@@ -72,8 +72,8 @@ public sealed class JsonSerializationBaselineContractTests : IDisposable
             Assert.Equal(expectedCount, actual[path]);
         }
 
-        Assert.Equal(35, actual.Count);
-        Assert.Equal(83, actual.Values.Sum());
+        Assert.Equal(36, actual.Count);
+        Assert.Equal(86, actual.Values.Sum());
 
         string[] expectedContextOwners =
         [
@@ -119,7 +119,7 @@ public sealed class JsonSerializationBaselineContractTests : IDisposable
             .Order()
             .ToArray();
 
-        Assert.Equal(32, actualContextOwners.Length);
+        Assert.Equal(33, actualContextOwners.Length);
         Assert.Equal(expectedContextOwners, actualContextOwners);
     }
 

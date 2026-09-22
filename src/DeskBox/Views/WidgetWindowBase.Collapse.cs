@@ -3200,10 +3200,10 @@ public abstract partial class WidgetWindowBase
                 RectInt32 compactBounds = GetStableCompactBounds(from);
                 long expandLayoutStarted = Stopwatch.GetTimestamp();
                 WidgetCompactExpansionLayout layout = preparedExpansionLayout ??
+                    ResolveRequestedCompactExpansion(compactBounds);
                 _compactTransitionLayoutResolveMs = Stopwatch
                     .GetElapsedTime(expandLayoutStarted)
                     .TotalMilliseconds;
-                    ResolveRequestedCompactExpansion(compactBounds);
                 _compactExpansionAnchor = layout.Anchor;
                 transitionAnchor = layout.Anchor;
                 transitionPivot = layout.Pivot;

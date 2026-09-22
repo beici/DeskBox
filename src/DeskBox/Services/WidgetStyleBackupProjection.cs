@@ -46,8 +46,16 @@ internal static class WidgetStyleBackupProjection
         "widgetCornerPreference",
         "widgetAnimationEffect", "widgetAnimationSpeed",
         "widgetAnimationSlideDirection", "widgetAnimationEasingIntensity",
+        // Fork-only frame-rate cap (widget animation family). Without this
+        // entry the merged 1.5.5 tree would silently drop it from the style
+        // backup document — the slice owns the field, the whitelist is a
+        // hand-maintained wire-name set.
+        "widgetAnimationFrameRate",
         "displayWidgetChromeMode", "interactiveWidgetChromeMode",
-        "widgetTitleIconMode", "showHoverButtons", "widgetHoverButtonActions",
+        "widgetTitleIconMode",
+        // Fork-only title alignment (chrome/title display family).
+        "widgetTitleAlignment",
+        "showHoverButtons", "widgetHoverButtonActions",
         // Compact-state appearance only — never its geometry or triggers.
         "widgetCollapsedStyle", "widgetCompactContentMode",
         "widgetCompactHideSensitiveContent", "widgetCompactMediaCornerMode",

@@ -15,7 +15,13 @@ if ($Platform -ne "x64") {
 }
 
 $auditStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-$auditProfileVersion = 59
+# Fork note: this profile is one ahead of upstream's. Any pattern, count,
+# ceiling or contract change in this script requires bumping this number
+# and syncing $RequiredAuditProfileVersion in scripts/start-aot-preview.ps1,
+# the lowercase requiredAuditProfileVersion chain in the run-aot-*-smoke.ps1
+# runners, and every contract test pinning the previous value
+# (grep -rn auditProfileVersion).
+$auditProfileVersion = 62
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $project = Join-Path $repoRoot "src\DeskBox\DeskBox.csproj"
@@ -422,6 +428,7 @@ $forbiddenFiles = @(
     "DeskBox.dll",
     "DeskBox.deps.json",
     "DeskBox.runtimeconfig.json",
+    "DeskBox.Abstractions.dll",
     "DeskBox.Updater.dll",
     "DeskBox.Updater.deps.json",
     "DeskBox.Updater.runtimeconfig.json"
@@ -2067,7 +2074,7 @@ $stage5AMissingDataPathPatterns = @(
     }
 )
 $stage5ARequiredLauncherPatterns = @(
-    '$RequiredAuditProfileVersion = 59',
+    '$RequiredAuditProfileVersion = 62',
     '$RequiredSummarySchemaVersion = 55',
     'Test-PathEqualOrInside',
     'Get-DirectoryStateFingerprint',
@@ -3605,7 +3612,7 @@ $stage5B4B1MissingBindableTypePatterns = @(
         }
     }
 )
-$stage5B4B1ExpectedBindableViewModelPropertyCount = 349
+$stage5B4B1ExpectedBindableViewModelPropertyCount = 351
 $stage5B4B1ActualBindableViewModelPropertyCount = [regex]::Matches(
     $stage5B4B1Sources[$stage5B4B1SourceFiles[9]],
     [regex]::Escape('nameof(')).Count
@@ -7953,7 +7960,7 @@ $stage5B4C3B2B1RunnerSource =
 $stage5B4C3B2B1RequiredSmokeScriptPatterns = @(
     'TodoNotificationEnvelopeForwarding',
     'run-aot-todo-notification-forwarding-smoke.ps1',
-    '$requiredAuditProfileVersion = 59',
+    '$requiredAuditProfileVersion = 62',
     '$requiredSummarySchemaVersion = 55',
     '-NoStop',
     '-ExpectExistingInstance',
@@ -8123,7 +8130,7 @@ $stage5B4C3B2B2ARunnerSource =
 $stage5B4C3B2B2ARequiredSmokeScriptPatterns = @(
     'TodoNotificationSurfaceRouting',
     'run-aot-todo-notification-surface-smoke.ps1',
-    '$requiredAuditProfileVersion = 59',
+    '$requiredAuditProfileVersion = 62',
     '$requiredSummarySchemaVersion = 55',
     '-AllowEarlyExit',
     '-StartupWaitSeconds 1',
@@ -8293,7 +8300,7 @@ $stage5B4C3B2B2BRunnerSource =
     $stage5B4C3B2B2BSources[$stage5B4C3B2B2BSourceFiles[10]]
 $stage5B4C3B2B2BRequiredSmokeScriptPatterns = @(
     'RealWindowsNotificationUserClick',
-    '$requiredAuditProfileVersion = 59',
+    '$requiredAuditProfileVersion = 62',
     '$requiredSummarySchemaVersion = 55',
     '[switch]$IncludeColdStart',
     '-AllowEarlyExit',

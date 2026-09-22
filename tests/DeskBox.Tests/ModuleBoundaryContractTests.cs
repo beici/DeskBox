@@ -31,6 +31,10 @@ public sealed class ModuleBoundaryContractTests
         ["src/DeskBox/Helpers/ShellClipboardHelper.cs"] = 12,
         ["src/DeskBox/Helpers/ShellDataObjectBuilder.cs"] = 5,
         ["src/DeskBox/Services/DesktopBlankHitTest.cs"] = 6,
+        // Fork-only DEF-062 (desktop icon geometry) predates this manifest's
+        // 2026-09-18 measurement, so the merged 1.5.5 tree legitimately carries
+        // one more offender than the upstream snapshot saw.
+        ["src/DeskBox/Services/DesktopIconGeometryService.cs"] = 7,
         ["src/DeskBox/Services/DragDropPermissionService.cs"] = 13,
         ["src/DeskBox/Services/FileService.ShellTransfer.cs"] = 5,
         ["src/DeskBox/Services/FileService.cs"] = 6,
