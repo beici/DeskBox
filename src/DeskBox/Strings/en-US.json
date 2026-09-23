@@ -1508,6 +1508,7 @@
     "Widget.Compact.QuickCaptureCount": "{0} notes",
     "Widget.Compact.TodoSummary": "{0} today · {1} overdue",
     "Widget.Compact.ExpansionSpaceInsufficient": "There isn't enough room to expand in the selected direction. Move the capsule and try again.",
+    "Widget.Compact.ExpansionSizeReduced": "Not enough room to expand fully. Panel shown at a reduced size.",
     "Widget.CollapseBehavior.Title": "Display mode",
     "Widget.CollapseBehavior.System": "Follow default",
     "Widget.CollapseBehavior.SystemWithDefault": "Follow default ({0})",

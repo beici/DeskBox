@@ -1520,6 +1520,7 @@
     "Widget.Compact.Collapse": "विजेट संक्षिप्त करें",
     "Widget.Compact.Expand": "विजेट का विस्तार करें",
     "Widget.Compact.ExpansionSpaceInsufficient": "चुनी गई दिशा में विस्तार करने के लिए पर्याप्त जगह नहीं है। कैप्सूल को स्थानांतरित करके फिर से प्रयास करें।",
+    "Widget.Compact.ExpansionSizeReduced": "पूरी तरह विस्तारित करने के लिए पर्याप्त जगह नहीं है। पैनल छोटे आकार में दिखाया गया है।",
     "Widget.Compact.ExpansionDirection.FollowGlobal": "ग्लोबल सेटिंग का पालन करें ({0})",
     "Widget.Compact.Move": "विजेट खींचें",
     "Widget.Compact.MoveOrCollapse": "विजेट खींचें; संक्षिप्त करने के लिए क्लिक करें",

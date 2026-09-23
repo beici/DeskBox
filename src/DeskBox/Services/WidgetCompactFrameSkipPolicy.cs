@@ -31,6 +31,7 @@ internal static class WidgetCompactFrameSkipPolicy
         return value switch
         {
             30 => 30,
+            60 => 60,
             90 => 90,
             120 => 120,
             _ => DefaultFrameRate

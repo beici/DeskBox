@@ -1505,6 +1505,7 @@
     "Widget.Compact.QuickCaptureCount": "{0} 件のメモ",
     "Widget.Compact.TodoSummary": "今日 {0} · 期限超過 {1}",
     "Widget.Compact.ExpansionSpaceInsufficient": "選択した展開方向に十分な空きがありません。カプセルを移動して再試行してください。",
+    "Widget.Compact.ExpansionSizeReduced": "展開するスペースが不足しています。パネルは縮小サイズで表示されます。",
     "Widget.CollapseBehavior.Title": "表示方法",
     "Widget.CollapseBehavior.System": "既定に従う",
     "Widget.CollapseBehavior.SystemWithDefault": "既定に従う（{0}）",

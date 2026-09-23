@@ -1520,6 +1520,7 @@
     "Widget.Compact.Collapse": "Contraer widget",
     "Widget.Compact.Expand": "Expandir widget",
     "Widget.Compact.ExpansionSpaceInsufficient": "No hay espacio suficiente para expandir en la dirección elegida. Mueve la cápsula e inténtalo de nuevo.",
+    "Widget.Compact.ExpansionSizeReduced": "No hay espacio suficiente para expandir por completo. Panel mostrado en tamanho reducido.",
     "Widget.Compact.ExpansionDirection.FollowGlobal": "Seguir el ajuste global ({0})",
     "Widget.Compact.Move": "Arrastrar widget",
     "Widget.Compact.MoveOrCollapse": "Arrastre el widget; haga clic para colapsar",

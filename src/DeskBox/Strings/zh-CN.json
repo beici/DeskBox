@@ -1823,6 +1823,7 @@
     "Settings.Update.Detail.Failed": "暂时无法完成更新，可稍后重试。",
     "Widget.Compact.Collapse": "收起格子",
     "Widget.Compact.ExpansionSpaceInsufficient": "所选展开方向的空间不足。请移动胶囊后重试。",
+    "Widget.Compact.ExpansionSizeReduced": "展开空间不足，面板已按缩小尺寸显示。",
     "Settings.DragDropPermission.OpenUacTooltip": "打开 Windows 安全通知设置；最底部“从不通知”代表关闭",
     "Settings.Todo.PageDescription": "调整待办格子的列表、日期和删除行为。",
     "Settings.FileStacks.Custom.Preview.None": "当前文件格子中没有匹配项",

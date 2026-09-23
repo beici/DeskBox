@@ -1520,6 +1520,7 @@
     "Widget.Compact.Collapse": "উইজেট সঙ্কুচিত করুন",
     "Widget.Compact.Expand": "উইজেট প্রসারিত করুন",
     "Widget.Compact.ExpansionSpaceInsufficient": "নির্বাচিত দিকে প্রসারিত করার জন্য পর্যাপ্ত জায়গা নেই। ক্যাপসুলটি সরিয়ে আবার চেষ্টা করুন।",
+    "Widget.Compact.ExpansionSizeReduced": "সম্পূর্ণ প্রসারিত করার জন্য পর্যাপ্ত জায়গা নেই। প্যানেল ছোট আকারে দেখানো হয়েছে।",
     "Widget.Compact.ExpansionDirection.FollowGlobal": "গ্লোবাল সেটিং অনুসরণ ({0})",
     "Widget.Compact.Move": "উইজেট টেনে আনুন",
     "Widget.Compact.MoveOrCollapse": "উইজেট টানুন; ভেঙে পড়তে ক্লিক করুন",

@@ -1520,6 +1520,7 @@
     "Widget.Compact.Collapse": "طي القطعة",
     "Widget.Compact.Expand": "قم بتوسيع القطعة",
     "Widget.Compact.ExpansionSpaceInsufficient": "لا توجد مساحة كافية للتوسّع في الاتجاه المحدد. انقل الكبسولة وحاول مرة أخرى.",
+    "Widget.Compact.ExpansionSizeReduced": "لا توجد مساحة كافية للتوسيع الكامل. يتم عرض اللوحة بحجم مخفض.",
     "Widget.Compact.ExpansionDirection.FollowGlobal": "اتباع الإعداد العام ({0})",
     "Widget.Compact.Move": "اسحب القطعة",
     "Widget.Compact.MoveOrCollapse": "اسحب القطعة؛ انقر لطي",

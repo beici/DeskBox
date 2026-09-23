@@ -3208,6 +3208,20 @@ public abstract partial class WidgetWindowBase
                 transitionAnchor = layout.Anchor;
                 transitionPivot = layout.Pivot;
                 to = layout.ExpandedBounds;
+
+                // 上游语义：空间不足时降级为「能展开多大就多大」。给一次用户
+                // 可见提示，避免用户把面板尺寸缩小误当成缺陷。此处不做工作区
+                // 查询，故留在过渡启动之前也不影响展开启动延迟。
+                if (preparedExpansionLayout is null && layout.IsSizeConstrained)
+                {
+                    App.LogVerbose(
+                        $"[Compact] Expansion size-constrained kind={Config.WidgetKind} id={Config.Id} " +
+                        $"requested=({layout.RequestedSize.Width},{layout.RequestedSize.Height})");
+                    WidgetShellControl.ShowFeedback(new(
+                        App.Current.LocalizationService.T("Widget.Compact.ExpansionSizeReduced"),
+                        WidgetFeedbackSeverity.Info,
+                        "compact-expansion-size-reduced"));
+                }
             }
         }
 

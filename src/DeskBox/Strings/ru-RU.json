@@ -1520,6 +1520,7 @@
     "Widget.Compact.Collapse": "Свернуть виджет",
     "Widget.Compact.Expand": "Развернуть виджет",
     "Widget.Compact.ExpansionSpaceInsufficient": "Недостаточно места для раскрытия в выбранном направлении. Переместите капсулу и попробуйте снова.",
+    "Widget.Compact.ExpansionSizeReduced": "Недостаточно места для полного развёртывания. Панель показана в уменьшенном размере.",
     "Widget.Compact.ExpansionDirection.FollowGlobal": "Как в общих настройках ({0})",
     "Widget.Compact.Move": "Перетащите виджет",
     "Widget.Compact.MoveOrCollapse": "Перетащите виджет; нажмите, чтобы свернуть",

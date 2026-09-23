@@ -1505,6 +1505,7 @@
     "Widget.Compact.QuickCaptureCount": "{0} Notizen",
     "Widget.Compact.TodoSummary": "{0} heute · {1} überfällig",
     "Widget.Compact.ExpansionSpaceInsufficient": "In der gewählten Richtung ist nicht genügend Platz zum Aufklappen. Verschiebe die Kapsel und versuche es erneut.",
+    "Widget.Compact.ExpansionSizeReduced": "Nicht genug Platz zum vollstaendigen Ausklappen. Panel wird verkleinert angezeigt.",
     "Widget.CollapseBehavior.Title": "Anzeigemodus",
     "Widget.CollapseBehavior.System": "Standard verwenden",
     "Widget.CollapseBehavior.SystemWithDefault": "Standard verwenden ({0})",

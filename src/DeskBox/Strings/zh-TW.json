@@ -483,6 +483,7 @@
     "Todo.DropTab.Completed": "松開以標記為已完成",
     "Widget.Compact.Expand": "展開格子",
     "Widget.Compact.ExpansionSpaceInsufficient": "所選展開方向的空間不足。請移動膠囊後重試。",
+    "Widget.Compact.ExpansionSizeReduced": "展開空間不足，面板已以縮小尺寸顯示。",
     "Widget.Compact.ExpansionDirection.FollowGlobal": "跟隨全域（{0}）",
     "Settings.Todo.ShowFooterStats.Title": "剩餘任務數量",
     "Settings.About.AboutMeTitle": "關於我",

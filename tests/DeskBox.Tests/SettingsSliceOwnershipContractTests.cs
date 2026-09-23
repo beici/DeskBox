@@ -261,7 +261,7 @@ public sealed class SettingsSliceOwnershipContractTests
         ["src/DeskBox/Services/SearchResultActionService.cs"] = 2,
         ["src/DeskBox/Services/SettingsMigrationService.cs"] = 38,
         ["src/DeskBox/Services/SettingsSearchCatalog.cs"] = 20,
-        ["src/DeskBox/Services/SettingsService.cs"] = 607,
+        ["src/DeskBox/Services/SettingsService.cs"] = 610,
         ["src/DeskBox/Services/ThemeService.cs"] = 11,
         ["src/DeskBox/Services/TodoReminderService.cs"] = 8,
         ["src/DeskBox/Services/WeatherService.cs"] = 1,

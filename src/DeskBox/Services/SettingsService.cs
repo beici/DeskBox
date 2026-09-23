@@ -1512,6 +1512,17 @@ settings.FocusClickedWidgetOnRaise = false;
 
         changed |= WidgetForegroundSettings.NormalizeGlobal(settings);
 
+        // Fork-only 字段：与相邻字段在同一时点归一化，避免脏值只靠读取点兜底。
+        changed |= WidgetTitleAppearanceSettings.NormalizeGlobal(settings);
+
+        int normalizedFrameRate = WidgetCompactFrameSkipPolicy.NormalizeFrameRate(
+            settings.WidgetAnimationFrameRate);
+        if (normalizedFrameRate != settings.WidgetAnimationFrameRate)
+        {
+            settings.WidgetAnimationFrameRate = normalizedFrameRate;
+            changed = true;
+        }
+
         if (settings.WidgetBorderColorMode is not (
             WidgetBorderColorModeNeutral or
             WidgetBorderColorModeAccent or

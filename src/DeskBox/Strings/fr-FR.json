@@ -1520,6 +1520,7 @@
     "Widget.Compact.Collapse": "Réduire le widget",
     "Widget.Compact.Expand": "Développer le widget",
     "Widget.Compact.ExpansionSpaceInsufficient": "Il n’y a pas assez de place pour développer dans la direction choisie. Déplacez la capsule et réessayez.",
+    "Widget.Compact.ExpansionSizeReduced": "Espace insuffisant pour une expansion complete. Le panneau est affiche en taille reduite.",
     "Widget.Compact.ExpansionDirection.FollowGlobal": "Suivre le paramètre global ({0})",
     "Widget.Compact.Move": "Faites glisser le widget",
     "Widget.Compact.MoveOrCollapse": "Faites glisser le widget ; cliquez pour réduire",
