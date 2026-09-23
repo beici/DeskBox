@@ -95,6 +95,10 @@ public sealed class ArchitectureContractTests
         {
             ["src/DeskBox/Views/SettingsSections/GlanceWidgetSettingsSection.xaml.cs"] = 9,
             ["src/DeskBox/ViewModels/QuickCaptureWidgetViewModel.Operations.cs"] = 1,
+            // AcceptedGrowth: SearchPopupWindow — upstream 1.5.5 引入，3 处均为
+            // App.Current.WidgetManager；fork 快照为 0。整改方向：改为注入 IWidgetManager。
+            // 追踪：docs/quality/known-issues.md 必须含 "SearchPopupWindow"
+            // （由 AcceptedGrowthEntries_AreRegisteredAsDebt 断言）。
             // Upstream 1.5.5 routes the search popup's committed-colour pushes
             // through the ambient manager (3 sites, all App.Current.WidgetManager;
             // the fork snapshot had none). The ratchet only shrinks, so this
@@ -304,6 +308,31 @@ public sealed class ArchitectureContractTests
                 string.Join('\n', unregisteredSubdirectoryFiles) +
                 "\nRegister the subdirectory in ArchitectureContractTests or move the files; " +
                 "unregistered trees are invisible to the feature boundary guards.");
+        }
+    }
+
+    /// <summary>
+    /// ratchet 只应收缩。标了 AcceptedGrowth 的条目是「已接受的增长债务」，
+    /// 必须在代码注释与 known-issues.md 双处登记；只写注释不登记的判红。
+    /// 目的：不让 AcceptedGrowth 这个标记本身变成绕过护栏的后门。
+    /// </summary>
+    [Fact]
+    public void AcceptedGrowthEntries_AreRegisteredAsDebt()
+    {
+        string testSource = File.ReadAllText(
+            TestPaths.FromRepository("tests/DeskBox.Tests/ArchitectureContractTests.cs"));
+        string knownIssues = File.ReadAllText(
+            TestPaths.FromRepository("docs/quality/known-issues.md"));
+
+        string[] markers = Regex.Matches(testSource, @"AcceptedGrowth: *([A-Za-z0-9_]+)")
+            .Select(match => match.Groups[1].Value)
+            .ToArray();
+
+        // 守卫：正则失配（或标记被删）时不要静默通过。
+        Assert.NotEmpty(markers);
+        foreach (string marker in markers)
+        {
+            Assert.Contains(marker, knownIssues, StringComparison.Ordinal);
         }
     }
 

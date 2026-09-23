@@ -6,6 +6,25 @@ namespace DeskBox.Tests;
 
 public sealed class WidgetCompactPerformancePolicyTests
 {
+    /// <summary>
+    /// DEF-E：取值集合必须与 WidgetShellSettingsSlice 的注释一致（30/60/90/120）。
+    /// 60 必须被显式命中，不能靠 default 分支兜底——否则将来 DefaultFrameRate
+    /// 一旦改动，已选 60fps 的用户设置会被静默改写。
+    /// </summary>
+    [Theory]
+    [InlineData(30, 30)]
+    [InlineData(60, 60)]
+    [InlineData(90, 90)]
+    [InlineData(120, 120)]
+    [InlineData(0, 60)]
+    [InlineData(45, 60)]
+    [InlineData(200, 60)]
+    public void NormalizeFrameRate_KeepsSupportedValuesAndFallsBackOtherwise(
+        int value, int expected)
+    {
+        Assert.Equal(expected, WidgetCompactFrameSkipPolicy.NormalizeFrameRate(value));
+    }
+
     [Fact]
     public void WarmupSchedule_PrioritizesColdBuiltInSurfaces()
     {

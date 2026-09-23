@@ -109,3 +109,18 @@
 - **杀毒软件**：360 曾拦截 dotnet 测试宿主导致回归中断（已由你临时关闭）。请①重新开启杀毒，②给 `C:\Users\scrip\Tools\dotnet10` 和 `E:\DeskBox` 的测试目录加白名单，否则以后跑测试还会被打断。
 - **应用当前未运行**：发布打包前停掉了 DeskBox.exe，之后没有重启。需要的话从规范路径 `src\DeskBox\bin\Debug\net10.0-windows10.0.22621.0\DeskBox.exe` 启动。
 - **数据备份残留**：`%LOCALAPPDATA%\DeskBox\data\settings.json.pre-def065-repair` 是修「下载」格子位置时留的配置备份。确认一切正常一周后可以删掉。
+
+---
+
+## 七、架构债务（契约护栏登记）
+
+> 本节条目由 `ArchitectureContractTests.AcceptedGrowthEntries_AreRegisteredAsDebt` 断言：
+> 测试里每处 `AcceptedGrowth: <标识>` 标记，都必须在本节登记，否则测试判红。
+
+### 1. SearchPopupWindow 走环境 WidgetManager 🕐
+
+- **登记标识**：`SearchPopupWindow`
+- **来源**：上游 v1.5.5 合并（2026-09-23）。`src/DeskBox/Views/SearchPopupWindow.xaml.cs` 有 3 处 `App.Current.WidgetManager` 环境访问，fork 合并前的快照为 0。
+- **为何是债务**：`ArchitectureContractTests.FrozenAmbientWidgetManagerAccess` 是「只减不增」的 ratchet，本条使它净增长，护栏单向性被打破。
+- **整改方向**：改为注入 `IWidgetManager`，使该文件回到 0；届时从 `FrozenAmbientWidgetManagerAccess` 移除该条目并删除本节登记。
+- **影响**：无功能影响，属架构整洁度债务。

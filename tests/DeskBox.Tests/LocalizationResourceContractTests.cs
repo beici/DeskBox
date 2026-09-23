@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using DeskBox.Models;
 
 namespace DeskBox.Tests;
 
@@ -21,6 +22,45 @@ public sealed partial class LocalizationResourceContractTests
         "bn-BD",
         "ru-RU"
     ];
+
+    /// <summary>
+    /// 动态拼接键（T("前缀." + reason)）无法被静态扫描覆盖——「12 语言键集一致」
+    /// 管的是语言之间，管不到「代码拼出来的键是否存在」。这里把两个枚举的取值域
+    /// 钉住：每个会被拼进键名的值，都必须在 12 个语言里存在。
+    /// </summary>
+    [Fact]
+    public void DynamicLocalizationKeys_CoverEveryEnumValueInAllLocales()
+    {
+        string stringsDirectory = Path.Combine(
+            FindRepositoryRoot(), "src", "DeskBox", "Strings");
+
+        // None 表示「未被排除」，按设计从不进入排除卡片，故不需要文案。
+        string[] exclusionSuffixes = Enum.GetValues<DesktopOrganizationExclusionReason>()
+            .Where(reason => reason != DesktopOrganizationExclusionReason.None)
+            .Select(reason => reason.ToString())
+            .ToArray();
+        string[] retentionSuffixes = Enum.GetValues<DesktopOrganizationRetentionReason>()
+            .Select(reason => reason.ToString())
+            .ToArray();
+
+        string[] required = exclusionSuffixes
+            .Select(suffix => "DesktopOrganization.Exclusion." + suffix)
+            .Concat(retentionSuffixes
+                .Select(suffix => "DesktopOrganization.Layout.RetentionHelp." + suffix))
+            .ToArray();
+
+        foreach (string locale in SupportedLocales)
+        {
+            IReadOnlyDictionary<string, string> localized = ReadJsonLocale(
+                Path.Combine(stringsDirectory, locale + ".json"));
+            foreach (string key in required)
+            {
+                Assert.True(
+                    localized.ContainsKey(key),
+                    $"{locale}.json 缺少动态键 {key}");
+            }
+        }
+    }
 
     [Fact]
     public void JsonLocales_HaveIdenticalKeysValuesAndPlaceholders()

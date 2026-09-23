@@ -23,6 +23,40 @@ public sealed class SettingsServiceTests : IDisposable
         _settingsRoot = Directory.CreateDirectory(Path.Combine(_tempRoot, "settings")).FullName;
     }
 
+    /// <summary>
+    /// 加载期归一化（DEF-B）：合法值必须零影响（changed=false），只有脏值才
+    /// 被改写。这条用例锁住「不影响现有用户设置」这一约束。
+    /// </summary>
+    [Theory]
+    [InlineData("Left", false, "Left")]
+    [InlineData("Center", false, "Center")]
+    [InlineData("Right", false, "Right")]
+    [InlineData("center", true, "Center")]
+    [InlineData("RIGHT", true, "Right")]
+    [InlineData("Justify", true, "Left")]
+    [InlineData("", true, "Left")]
+    public void WidgetTitleAlignment_NormalizeGlobal_KeepsValidValuesAndRepairsDirtyOnes(
+        string stored, bool expectChanged, string expectedValue)
+    {
+        var settings = new AppSettings { WidgetTitleAlignment = stored };
+
+        bool changed = WidgetTitleAppearanceSettings.NormalizeGlobal(settings);
+
+        Assert.Equal(expectChanged, changed);
+        Assert.Equal(expectedValue, settings.WidgetTitleAlignment);
+    }
+
+    [Fact]
+    public void WidgetTitleAlignment_NormalizeGlobal_RepairsNull()
+    {
+        var settings = new AppSettings { WidgetTitleAlignment = null! };
+
+        bool changed = WidgetTitleAppearanceSettings.NormalizeGlobal(settings);
+
+        Assert.True(changed);
+        Assert.Equal(WidgetTitleAppearanceSettings.AlignLeft, settings.WidgetTitleAlignment);
+    }
+
     [Fact]
     public async Task LoadAsync_MissingSettingsKeepsInitialFileWidgetSetupPending()
     {
