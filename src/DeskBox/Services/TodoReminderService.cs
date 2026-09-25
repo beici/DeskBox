@@ -468,6 +468,25 @@ public sealed class TodoReminderService : IDisposable
     }
 
     /// <summary>
+    /// FCFG-02: public notification for a store change persisted by a writer
+    /// outside this service (currently the search popup attaching a file to
+    /// a todo). Reuses the exact subscriber-isolation and dispatcher
+    /// marshalling of the background reminder path (DEF-043) so open todo
+    /// widgets merge the external change into their in-memory state before
+    /// their next whole-document save. Best-effort: no subscribers (widget
+    /// closed) is a no-op.
+    /// </summary>
+    public void NotifyExternalStoreChanged(string widgetId, TodoItem? changedItem, TodoItem? insertedItem)
+    {
+        if (_disposed || string.IsNullOrWhiteSpace(widgetId))
+        {
+            return;
+        }
+
+        PublishStoreChanged(widgetId, changedItem, insertedItem);
+    }
+
+    /// <summary>
     /// Notifies open todo widgets about a persisted store change (DEF-043).
     /// The event is raised on the UI thread so subscribers can touch their
     /// observable state directly. The service may outlive individual widgets,

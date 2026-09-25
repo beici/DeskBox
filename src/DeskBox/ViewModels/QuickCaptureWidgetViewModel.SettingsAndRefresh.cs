@@ -45,7 +45,6 @@ public sealed partial class QuickCaptureWidgetViewModel
         OnPropertyChanged(nameof(RecordsTabText));
         OnPropertyChanged(nameof(PinnedTabText));
         OnPropertyChanged(nameof(RecentTabText));
-        OnPropertyChanged(nameof(EnableRecentCaptureText));
         OnPropertyChanged(nameof(SearchPlaceholderText));
         OnPropertyChanged(nameof(CloseSearchText));
         OnPropertyChanged(nameof(SearchCancelText));
@@ -76,9 +75,6 @@ public sealed partial class QuickCaptureWidgetViewModel
         OnPropertyChanged(nameof(MaterialBlueText));
         OnPropertyChanged(nameof(SearchScopeText));
         OnPropertyChanged(nameof(SearchScopeVisibility));
-        OnPropertyChanged(nameof(RecentCaptureStatusText));
-        OnPropertyChanged(nameof(RecentCaptureStatusVisibility));
-        OnPropertyChanged(nameof(RecentCaptureActionVisibility));
         foreach (var item in Items)
         {
             item.Update(item.ToModel());
@@ -106,9 +102,6 @@ public sealed partial class QuickCaptureWidgetViewModel
         OnPropertyChanged(nameof(EditorEnterBehavior));
         OnPropertyChanged(nameof(EditorContentFormat));
         OnPropertyChanged(nameof(CreatedTimeVisibility));
-        OnPropertyChanged(nameof(RecentCaptureStatusText));
-        OnPropertyChanged(nameof(RecentCaptureStatusVisibility));
-        OnPropertyChanged(nameof(RecentCaptureActionVisibility));
     }
 
     private void RefreshAppearanceFromSettings()

@@ -1,7 +1,7 @@
 namespace DeskBox.Models;
 
 /// <summary>
-/// Quick Capture widget preferences, the shared attachment storage default, and the last-target file widget.
+/// Quick Capture widget preferences and the shared attachment storage default.
 /// </summary>
 public sealed class QuickCaptureSettingsSlice
 {
@@ -63,7 +63,4 @@ public sealed class QuickCaptureSettingsSlice
     public bool QuickCaptureShowPinnedTab { get; set; } = true;
 
     public bool QuickCaptureShowRecentTab { get; set; } = true;
-
-    /// <summary>Last file widget used as the target for saving Quick Capture content.</summary>
-    public string LastQuickCaptureFileWidgetId { get; set; } = string.Empty;
 }

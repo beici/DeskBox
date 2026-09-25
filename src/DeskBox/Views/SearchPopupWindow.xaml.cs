@@ -856,12 +856,32 @@ public sealed partial class SearchPopupWindow : Window
         SetPointerCursor(element, shape);
     }
 
+    // FARC-03: ProtectedCursor is a non-public WinRT projection property, so
+    // this reflection write is the only way to set it from a pointer-entered
+    // handler. Trimming can drop the property in Native AOT; when that
+    // happens the cursor silently stops changing, so log once (never per
+    // pointer move) and treat scripts/run-aot-*.ps1 as the gate before
+    // relying on this path in retail builds. Replacing the reflection with an
+    // AOT-safe alternative is deferred until measured there.
+    private static bool _loggedMissingProtectedCursorProperty;
+
     private static void SetPointerCursor(UIElement element, InputSystemCursorShape shape)
     {
         var property = typeof(UIElement).GetProperty(
             "ProtectedCursor",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        property?.SetValue(element, InputSystemCursor.Create(shape));
+        if (property is null)
+        {
+            if (!_loggedMissingProtectedCursorProperty)
+            {
+                _loggedMissingProtectedCursorProperty = true;
+                App.Log("[SearchPopup] UIElement.ProtectedCursor not resolvable (AOT trim?); resize cursor feedback disabled");
+            }
+
+            return;
+        }
+
+        property.SetValue(element, InputSystemCursor.Create(shape));
     }
 
     /// <summary>
@@ -4206,12 +4226,14 @@ public sealed partial class SearchPopupWindow : Window
 
     /// <summary>
     /// Shows a transient status message in the footer, auto-hiding after a delay.
+    /// Internal (FEXC-01) so the app-level search action handlers can surface
+    /// failures through the same channel as the popup's own failure prompts.
     /// </summary>
-    private void ShowTransientStatus(string message)
+    internal void ShowTransientStatus(string message, WidgetFeedbackSeverity severity = WidgetFeedbackSeverity.Info)
     {
         SearchFeedbackPresenter.Show(new WidgetFeedbackRequest(
             message,
-            WidgetFeedbackSeverity.Info,
+            severity,
             "search-status"));
     }
 

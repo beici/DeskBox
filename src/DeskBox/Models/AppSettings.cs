@@ -276,9 +276,6 @@ public class AppSettings
     /// <inheritdoc cref="MusicSettingsSlice.MusicDisplayMode"/>
     public string MusicDisplayMode { get => Music.MusicDisplayMode; set => Music.MusicDisplayMode = value; }
 
-    /// <inheritdoc cref="QuickCaptureSettingsSlice.LastQuickCaptureFileWidgetId"/>
-    public string LastQuickCaptureFileWidgetId { get => QuickCapture.LastQuickCaptureFileWidgetId; set => QuickCapture.LastQuickCaptureFileWidgetId = value; }
-
     /// <inheritdoc cref="CoreSettingsSlice.GlobalHotkeyEnabled"/>
     public bool GlobalHotkeyEnabled { get => Core.GlobalHotkeyEnabled; set => Core.GlobalHotkeyEnabled = value; }
 

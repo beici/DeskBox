@@ -253,7 +253,10 @@ public sealed partial class QuickCaptureSurfaceContent :
 
     private Windows.UI.Color ResolveClipboardThemeSecondaryTextColor()
     {
-        return TryGetThemeColor("TextFillColorSecondary", out Windows.UI.Color themeSecondary)
+        // FQC-04: resolve through this element's own theme (see
+        // TryGetElementThemeColor) — the previous App.Current.Resources lookup
+        // pinned the color to the app-wide startup theme.
+        return TryGetElementThemeColor("TextFillColorSecondary", out Windows.UI.Color themeSecondary)
             ? themeSecondary
             : Windows.UI.Color.FromArgb(0xCC, 0xFF, 0xFF, 0xFF);
     }
@@ -328,36 +331,31 @@ public sealed partial class QuickCaptureSurfaceContent :
                 "QuickCaptureClipboardItemForegroundBrush",
                 out object? textBrushObject) &&
             textBrushObject is SolidColorBrush textBrush &&
-            TryGetThemeColor("TextFillColorPrimary", out Windows.UI.Color themeText)
+            TryGetElementThemeColor("TextFillColorPrimary", out Windows.UI.Color themeText)
             ? themeText
-            : (ActualTheme == ElementTheme.Dark
-                ? Windows.UI.Color.FromArgb(0xFF, 0xF5, 0xF5, 0xF5)
-                : Windows.UI.Color.FromArgb(0xFF, 0x1A, 0x1A, 0x1A));
+            : QuickCaptureClipboardColorSettings.ResolveFollowThemeTextColor(
+                ActualTheme == ElementTheme.Dark);
     }
 
-    private static bool TryGetThemeColor(string resourceKey, out Windows.UI.Color color)
+    /// <summary>
+    /// FQC-04: element-theme-aware twin of the former App-level lookup. A
+    /// bare <c>App.Current.Resources</c> read resolves the theme dictionaries
+    /// against the application theme (the system theme captured at startup),
+    /// so after a light/dark flip the follow-theme channels kept the stale
+    /// color. <see cref="NeutralInteractionBrush.ResolveThemedResource"/>
+    /// picks the dictionary by this element's ActualTheme instead and accepts
+    /// both raw Color and Brush resources.
+    /// </summary>
+    private bool TryGetElementThemeColor(string resourceKey, out Windows.UI.Color color)
     {
         color = default;
-        if (App.Current.Resources.TryGetValue(resourceKey, out object? value) &&
-            value is Windows.UI.Color themeColor)
+        if (NeutralInteractionBrush.ResolveThemedResource(resourceKey, this) is not SolidColorBrush brush)
         {
-            color = themeColor;
-            return true;
+            return false;
         }
 
-        // Theme resources are often brushes rather than raw colors.
-        if (App.Current.Resources.TryGetValue(resourceKey + "Brush", out object? brushValue) &&
-            brushValue is SolidColorBrush themeBrush)
-        {
-            color = Windows.UI.Color.FromArgb(
-                themeBrush.Color.A,
-                themeBrush.Color.R,
-                themeBrush.Color.G,
-                themeBrush.Color.B);
-            return true;
-        }
-
-        return false;
+        color = brush.Color;
+        return true;
     }
 
     private Windows.UI.Color ResolveClipboardItemEffectiveTextColor()
@@ -563,9 +561,8 @@ public sealed partial class QuickCaptureSurfaceContent :
         }
     }
 
-    public void RestoreTransientState(string? inputText, string? searchText)
+    private void RestoreTransientState(string? searchText)
     {
-        ViewModel.InputText = inputText ?? string.Empty;
         ViewModel.SearchText = searchText ?? string.Empty;
         if (!string.IsNullOrWhiteSpace(searchText))
         {
@@ -581,7 +578,6 @@ public sealed partial class QuickCaptureSurfaceContent :
                 _showDetailInSinglePane,
                 _detailItem is not null);
         return new QuickCaptureWidgetTransientState(
-            ViewModel.InputText,
             ViewModel.SearchText,
             ViewModel.SelectedView,
             _lastFocusTarget,
@@ -597,9 +593,7 @@ public sealed partial class QuickCaptureSurfaceContent :
     {
         if (state is QuickCaptureWidgetTransientState quickState)
         {
-            RestoreTransientState(
-                quickState.InputText,
-                quickState.SearchText);
+            RestoreTransientState(quickState.SearchText);
             ViewModel.RestoreSelectedViewImmediately(quickState.SelectedView);
             _pendingFocusTarget = quickState.FocusTarget;
             _pendingDetailItemId = quickState.SelectedDetailItemId;
@@ -1203,37 +1197,6 @@ public sealed partial class QuickCaptureSurfaceContent :
         _segmentedCandidateWidth = 0;
     }
 
-    private async void AddButton_Click(object sender, RoutedEventArgs e)
-    {
-        await RunAsync(AddInputWithFeedbackAsync);
-        InputTextBox.Focus(FocusState.Programmatic);
-    }
-
-    private async void InputTextBox_KeyDown(object sender, KeyRoutedEventArgs e)
-    {
-        bool controlPressed = Win32Helper.IsKeyPressed(
-            Windows.System.VirtualKey.Control);
-        bool saveShortcut = TextBoxEditorShortcutHelper.IsCtrlSaveShortcut(
-            e.Key,
-            controlPressed,
-            Win32Helper.IsKeyPressed(Windows.System.VirtualKey.Shift));
-        if (e.Key != Windows.System.VirtualKey.Enter && !saveShortcut)
-        {
-            return;
-        }
-
-        e.Handled = true;
-        if (saveShortcut || SettingsService.ShouldSubmitEditorOnEnter(
-                _settingsService.Settings.QuickCaptureEditorEnterBehavior,
-                controlPressed))
-        {
-            await RunAsync(AddInputWithFeedbackAsync);
-            return;
-        }
-
-        TextBoxEditorShortcutHelper.InsertLineBreak(InputTextBox);
-    }
-
     private void SearchTextBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (e.Key == Windows.System.VirtualKey.Escape)
@@ -1253,17 +1216,6 @@ public sealed partial class QuickCaptureSurfaceContent :
         ViewModel.CollapseSearch();
         DispatcherQueue.TryEnqueue(() =>
             SearchButton.Focus(FocusState.Programmatic));
-    }
-
-    private async void ViewButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button { Tag: string tag } ||
-            !Enum.TryParse(tag, ignoreCase: true, out QuickCaptureViewMode mode))
-        {
-            return;
-        }
-
-        await SwitchViewAsync(mode);
     }
 
     private async void ItemsList_ItemClick(object sender, ItemClickEventArgs e)
@@ -1668,20 +1620,34 @@ public sealed partial class QuickCaptureSurfaceContent :
                     return false;
                 }
 
-                QuickCaptureWriteResult updateResult =
-                    await ViewModel.EditItemDetailsWithResultAsync(
-                        attached,
-                        null,
-                        body,
-                        _detailAppearance,
-                        _detailContentFormat);
-                if (!updateResult.Saved)
+                if (string.IsNullOrWhiteSpace(body))
                 {
-                    return false;
+                    // FQC-02: attachments alone are content — the service
+                    // treats the attachment set as the item body, so the item
+                    // is already persisted here. The former second
+                    // EditItemDetailsWithResultAsync call always failed its
+                    // empty-body validation on this path, which left the pane
+                    // stuck in creating mode while the item was already in
+                    // the store; a retry then created a duplicate entry.
+                    created = attached.ToModel();
                 }
+                else
+                {
+                    QuickCaptureWriteResult updateResult =
+                        await ViewModel.EditItemDetailsWithResultAsync(
+                            attached,
+                            null,
+                            body,
+                            _detailAppearance,
+                            _detailContentFormat);
+                    if (!updateResult.Saved)
+                    {
+                        return false;
+                    }
 
-                ReportBodyTruncation(updateResult);
-                created = updateResult.Item ?? attached.ToModel();
+                    ReportBodyTruncation(updateResult);
+                    created = updateResult.Item ?? attached.ToModel();
+                }
             }
             else if (!string.IsNullOrWhiteSpace(body))
             {
@@ -1991,14 +1957,29 @@ public sealed partial class QuickCaptureSurfaceContent :
         object? sender,
         AttachmentTileEventArgs e)
     {
-        TodoAttachmentViewModel attachment = e.Attachment;
-        if (!File.Exists(attachment.FilePath))
+        // FEXC-02: async void entry — StorageFile resolution and launch can
+        // both throw (file removed between the Exists check and the call is
+        // the classic TOCTOU case). Catch, log, and feed back instead of
+        // crashing the app.
+        try
         {
-            return;
-        }
+            TodoAttachmentViewModel attachment = e.Attachment;
+            if (!File.Exists(attachment.FilePath))
+            {
+                return;
+            }
 
-        StorageFile file = await StorageFile.GetFileFromPathAsync(attachment.FilePath);
-        await Windows.System.Launcher.LaunchFileAsync(file);
+            StorageFile file = await StorageFile.GetFileFromPathAsync(attachment.FilePath);
+            await Windows.System.Launcher.LaunchFileAsync(file);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[QuickCaptureSurface] Open attachment failed: {ex}");
+            RaiseFeedback(
+                T("Common.OperationFailedRetry"),
+                WidgetFeedbackSeverity.Error,
+                "quick-attachment-open-error");
+        }
     }
 
     private async void DetailAttachmentStrip_RemoveRequested(
@@ -2765,10 +2746,26 @@ public sealed partial class QuickCaptureSurfaceContent :
         {
             RequestedOperation = DataPackageOperation.Copy
         };
-        dataPackage.SetText(text);
-        DeskBoxClipboardWriteScope.MarkWrite(text: text);
-        Clipboard.SetContent(dataPackage);
-        Clipboard.Flush();
+        try
+        {
+            // DEF-097: clipboard writes can throw (clipboard in use by
+            // another process, locked by policy); the write scope is marked
+            // only for content that actually reached the clipboard.
+            dataPackage.SetText(text);
+            DeskBoxClipboardWriteScope.MarkWrite(text: text);
+            Clipboard.SetContent(dataPackage);
+            Clipboard.Flush();
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[QuickCaptureSurface] Copy selected items failed: {ex}");
+            RaiseFeedback(
+                T("Common.OperationFailedRetry"),
+                WidgetFeedbackSeverity.Error,
+                "quick-copy-selected-error");
+            return;
+        }
+
         RaiseFeedback(
             _localizationService.Format(
                 "QuickCapture.CopiedCount",
@@ -2780,10 +2777,11 @@ public sealed partial class QuickCaptureSurfaceContent :
     private async Task DeleteSelectedQuickCaptureItemsAsync(
         IReadOnlyList<QuickCaptureItemViewModel> selectedItems)
     {
+        // FQC-01: pass the view models so every item is deleted from its real
+        // store section — recent captures and records live in different
+        // lists, and a single All(IsRecent) bool misrouted a mixed selection.
         IReadOnlyList<QuickCaptureDeletedItemSnapshot> deletedItems =
-            await ViewModel.DeleteItemsAsync(
-                selectedItems.Select(item => item.Id),
-                selectedItems.All(item => item.IsRecent));
+            await ViewModel.DeleteItemsAsync(selectedItems);
         ItemsList.SelectedItems.Clear();
         if (deletedItems.Count > 0)
         {
@@ -3312,6 +3310,12 @@ public sealed partial class QuickCaptureSurfaceContent :
 
         ApplyDetailMaterialSurface();
         RefreshItemMaterialSurfaces();
+        // FQC-04: the record list's follow-theme channels (text/secondary
+        // text/hover/background) are snapshots resolved from the element
+        // theme, so they must be re-resolved after a light/dark flip just
+        // like the material surfaces; otherwise records keep the previous
+        // theme's colors until some other event reapplies them.
+        ApplyClipboardItemColors();
         // The segmented pointer states copy theme-dependent neutral colors at
         // apply time, so a light/dark flip must re-apply them (parity with the
         // standalone window's OnRootElementThemeChanged).
@@ -3512,10 +3516,6 @@ public sealed partial class QuickCaptureSurfaceContent :
         object? focused = XamlRoot is null
             ? null
             : FocusManager.GetFocusedElement(XamlRoot);
-        if (ReferenceEquals(focused, InputTextBox))
-        {
-            return "Input";
-        }
         if (ReferenceEquals(focused, SearchTextBox))
         {
             return "Search";
@@ -3534,7 +3534,6 @@ public sealed partial class QuickCaptureSurfaceContent :
         _pendingFocusTarget = null;
         FrameworkElement element = target switch
         {
-            "Input" => InputTextBox,
             "Search" => SearchTextBox,
             "Items" => ItemsList,
             _ => ResponsiveContentGrid
@@ -3556,12 +3555,6 @@ public sealed partial class QuickCaptureSurfaceContent :
                 WidgetFeedbackSeverity.Error,
                 "quick-action-error");
         }
-    }
-
-    private async Task AddInputWithFeedbackAsync()
-    {
-        QuickCaptureWriteResult result = await ViewModel.AddInputAsync();
-        ReportBodyTruncation(result);
     }
 
     private void ReportBodyTruncation(QuickCaptureWriteResult result)

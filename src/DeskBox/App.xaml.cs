@@ -1577,7 +1577,10 @@ public partial class App : Application
                 _lifecycleRecoveryWatcher = new AppLifecycleRecoveryWatcher(
                     trayHwnd,
                     UiDispatcherQueue,
-                    OnLifecycleRecoveryRequested,
+                    // DEF-087: the recovery chain awaits the hotkey services'
+                    // async handshakes, so the void callback wraps the async
+                    // body in the app-wide SafeFireAndForget backstop.
+                    reason => SafeFireAndForget(() => OnLifecycleRecoveryRequestedAsync(reason)),
                     FlushSettingsForEndSession);
             }
         }
@@ -1608,7 +1611,7 @@ public partial class App : Application
         }
     }
 
-    private void OnLifecycleRecoveryRequested(string reason)
+    private async Task OnLifecycleRecoveryRequestedAsync(string reason)
     {
         Log($"[Lifecycle] Recovery signal received: {reason}");
         _diagnosticsService?.RecordLifecycleEvent(reason);
@@ -1625,9 +1628,23 @@ public partial class App : Application
         {
             try
             {
-                GlobalHotkeyService?.RefreshRegistration();
-                DesktopDoubleClickActivationService?.RefreshRegistration();
-                _searchHotkeyService?.RefreshRegistration();
+                // DEF-087: the reserved-hook handshakes block for up to 1.5 s
+                // each on the synchronous path; await the async variants so a
+                // slow or failed hook restart cannot freeze the UI thread.
+                if (GlobalHotkeyService is not null)
+                {
+                    await GlobalHotkeyService.RefreshRegistrationAsync();
+                }
+
+                if (DesktopDoubleClickActivationService is not null)
+                {
+                    await DesktopDoubleClickActivationService.RefreshRegistrationAsync();
+                }
+
+                if (_searchHotkeyService is not null)
+                {
+                    await _searchHotkeyService.RefreshRegistrationAsync();
+                }
             }
             catch (Exception ex)
             {
@@ -1920,11 +1937,14 @@ public partial class App : Application
                 return;
             }
 
-            _ = RaiseTrayWidgetsAsync();
+            // FEXC-04: the tray-raise continuation runs on the UI dispatcher;
+            // a bare discard would turn any fault there into an unobserved
+            // task exception. Route it through the app-wide backstop.
+            SafeFireAndForget(RaiseTrayWidgetsAsync);
         }
         else
         {
-            _ = RaiseTrayWidgetsAsync();
+            SafeFireAndForget(RaiseTrayWidgetsAsync);
         }
     }
 
@@ -4878,7 +4898,15 @@ public partial class App : Application
                 LocalizationService,
                 _everythingSearchService,
                 QuickCaptureService);
-            _searchActionService = new SearchResultActionService(SettingsService);
+            // FCFG-01/02: the action service writes through the owning
+            // services now. The reminder service is resolved per call via
+            // accessor — RefreshTodoReminderService creates/disposes it on
+            // demand (feature enabled/disabled), so it cannot be captured
+            // once here.
+            _searchActionService = new SearchResultActionService(
+                SettingsService,
+                QuickCaptureService,
+                () => TodoReminderService);
 
             Log("[Search] Everything IPC provider initialized without a DeskBox file index");
         }
@@ -5128,81 +5156,113 @@ public partial class App : Application
 
     private void OnSearchActionRequested(object? sender, string actionId)
     {
-        _ = HandleSearchActionAsync(actionId);
+        // FEXC-01: a discarded task here turned any handler failure into an
+        // unobserved exception with a silent no-op. SafeFireAndForget keeps
+        // the backstop, and the handler itself surfaces the failure to the
+        // user.
+        SafeFireAndForget(() => HandleSearchActionAsync(actionId));
     }
 
     private void OnSearchContentRequested(object? sender, Models.SearchResultItem item)
     {
-        _ = HandleSearchContentAsync(item);
+        SafeFireAndForget(() => HandleSearchContentAsync(item));
     }
 
     private async Task HandleSearchContentAsync(Models.SearchResultItem item)
     {
-        if (WidgetManager is null)
+        try
         {
-            return;
+            if (WidgetManager is null)
+            {
+                return;
+            }
+
+            switch (item.Kind)
+            {
+                case Models.SearchResultKind.Todo:
+                    await WidgetManager.ShowTodoReminderTargetAsync(
+                        item.TodoWidgetId,
+                        item.TodoItemId,
+                        preferTodayFilter: false);
+                    break;
+
+                case Models.SearchResultKind.QuickCapture:
+                    var window = await WidgetManager.CreateOrShowQuickCaptureWidgetAsync();
+                    await window.RevealItemAsync(item.QuickCaptureItemId);
+                    break;
+            }
         }
-
-        switch (item.Kind)
+        catch (Exception ex)
         {
-            case Models.SearchResultKind.Todo:
-                await WidgetManager.ShowTodoReminderTargetAsync(
-                    item.TodoWidgetId,
-                    item.TodoItemId,
-                    preferTodayFilter: false);
-                break;
-
-            case Models.SearchResultKind.QuickCapture:
-                var window = await WidgetManager.CreateOrShowQuickCaptureWidgetAsync();
-                await window.RevealItemAsync(item.QuickCaptureItemId);
-                break;
+            Log($"[Search] Content navigation failed for kind={item.Kind}: {ex}");
+            ShowSearchActionFailureFeedback();
         }
     }
 
     private async Task HandleSearchActionAsync(string actionId)
     {
-        switch (actionId)
+        try
         {
-            case "new-todo":
-                if (WidgetManager is not null)
-                {
-                    await WidgetManager.CreateTodoWidgetAsync(focusNewInput: true);
-                }
-                break;
+            switch (actionId)
+            {
+                case "new-todo":
+                    if (WidgetManager is not null)
+                    {
+                        await WidgetManager.CreateTodoWidgetAsync(focusNewInput: true);
+                    }
+                    break;
 
-            case "new-note":
-                if (WidgetManager is not null)
-                {
-                    await WidgetManager.CreateOrShowQuickCaptureWidgetAsync(focusNewInput: true);
-                }
-                break;
+                case "new-note":
+                    if (WidgetManager is not null)
+                    {
+                        await WidgetManager.CreateOrShowQuickCaptureWidgetAsync(focusNewInput: true);
+                    }
+                    break;
 
-            case "open-settings":
-                ShowSettings("SearchSettings");
-                break;
+                case "open-settings":
+                    ShowSettings("SearchSettings");
+                    break;
 
-            case "toggle-widgets":
-                await ToggleTrayWidgetsAsync("action-command");
-                break;
+                case "toggle-widgets":
+                    await ToggleTrayWidgetsAsync("action-command");
+                    break;
 
-            case "toggle-theme":
-                ToggleTheme();
-                break;
+                case "toggle-theme":
+                    ToggleTheme();
+                    break;
 
-            case "open-todo":
-                if (WidgetManager is not null)
-                {
-                    await WidgetManager.CreateTodoWidgetAsync();
-                }
-                break;
+                case "open-todo":
+                    if (WidgetManager is not null)
+                    {
+                        await WidgetManager.CreateTodoWidgetAsync();
+                    }
+                    break;
 
-            case "open-quickcapture":
-                if (WidgetManager is not null)
-                {
-                    await WidgetManager.CreateOrShowQuickCaptureWidgetAsync();
-                }
-                break;
+                case "open-quickcapture":
+                    if (WidgetManager is not null)
+                    {
+                        await WidgetManager.CreateOrShowQuickCaptureWidgetAsync();
+                    }
+                    break;
+            }
         }
+        catch (Exception ex)
+        {
+            Log($"[Search] Action '{actionId}' failed: {ex}");
+            ShowSearchActionFailureFeedback();
+        }
+    }
+
+    /// <summary>
+    /// FEXC-01: surfaces a failed search action through the same footer
+    /// feedback presenter the popup's other failure prompts use, so the
+    /// feedback form stays consistent with the rest of the search actions.
+    /// </summary>
+    private void ShowSearchActionFailureFeedback()
+    {
+        _searchPopupWindow?.ShowTransientStatus(
+            LocalizationService.T("Common.OperationFailedRetry"),
+            WidgetFeedbackSeverity.Error);
     }
 
     private void ToggleTheme()

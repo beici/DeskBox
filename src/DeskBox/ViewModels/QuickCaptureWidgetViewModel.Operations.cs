@@ -38,8 +38,6 @@ public sealed partial class QuickCaptureWidgetViewModel
         OnPropertyChanged(nameof(IsPinnedView));
         OnPropertyChanged(nameof(IsRecentView));
         OnPropertyChanged(nameof(InputAreaVisibility));
-        OnPropertyChanged(nameof(RecentCaptureStatusVisibility));
-        OnPropertyChanged(nameof(RecentCaptureActionVisibility));
         OnPropertyChanged(nameof(CreatedTimeVisibility));
         await RefreshFromDataAsync(data);
         IsInitialized = true;
@@ -108,14 +106,6 @@ public sealed partial class QuickCaptureWidgetViewModel
         {
             SetViewSwitchLoading(false);
         }
-    }
-
-    public async Task<QuickCaptureWriteResult> AddInputAsync()
-    {
-        string body = InputText;
-        QuickCaptureWriteResult result = await AddTextAsync(body);
-        InputText = string.Empty;
-        return result;
     }
 
     public async Task<QuickCaptureWriteResult> AddTextAsync(string body)
@@ -328,11 +318,6 @@ public sealed partial class QuickCaptureWidgetViewModel
 
         await RefreshVisibleItemsAsync();
         return Items.FirstOrDefault(entry => string.Equals(entry.Id, item.Id, StringComparison.Ordinal));
-    }
-
-    public Task<string?> CreateImageExportFileAsync(QuickCaptureItemViewModel item, string fileNamePrefix)
-    {
-        return _quickCaptureService.CreateImageExportFileAsync(item.ToModel(), fileNamePrefix);
     }
 
     public async Task CopyItemAsync(QuickCaptureItemViewModel item)
@@ -612,11 +597,18 @@ public sealed partial class QuickCaptureWidgetViewModel
         return await _quickCaptureService.DeleteItemAsync(item.Id);
     }
 
+    /// <summary>
+    /// FQC-01: mixed multi-select delete. Each view model carries its real
+    /// recent/record ownership, which the service groups on so every item is
+    /// tombstoned in its own store section (the previous single
+    /// <c>isRecent</c> bool misrouted half of a mixed selection); deleted
+    /// counts and undo snapshots follow the same per-item ownership.
+    /// </summary>
     public Task<IReadOnlyList<QuickCaptureDeletedItemSnapshot>> DeleteItemsAsync(
-        IEnumerable<string> itemIds,
-        bool isRecent)
+        IEnumerable<QuickCaptureItemViewModel> items)
     {
-        return _quickCaptureService.DeleteItemsAsync(itemIds, isRecent);
+        return _quickCaptureService.DeleteItemsAsync(
+            items.Select(item => (item.Id, item.IsRecent)));
     }
 
     public Task<bool> RestoreDeletedItemAsync(QuickCaptureDeletedItemSnapshot? snapshot)

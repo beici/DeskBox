@@ -73,9 +73,6 @@ public sealed partial class QuickCaptureWidgetViewModel
         ListVisibility = hasItems || showEmptyAddSurface
             ? Visibility.Visible
             : Visibility.Collapsed;
-        OnPropertyChanged(nameof(RecentCaptureStatusText));
-        OnPropertyChanged(nameof(RecentCaptureStatusVisibility));
-        OnPropertyChanged(nameof(RecentCaptureActionVisibility));
         SetViewSwitchLoading(false);
         ItemsViewTransitionToken++;
         return Task.CompletedTask;

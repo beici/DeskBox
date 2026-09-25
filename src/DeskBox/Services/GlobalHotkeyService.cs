@@ -31,8 +31,10 @@ public sealed class GlobalHotkeyService : IDisposable, IHookHealthProbeTarget
     private readonly ReservedHotkeyHookService _reservedHotkeyHook = new();
     private IntPtr _windowHandle;
     private bool _isSubclassInstalled;
-    private bool _isRegistered;
-    private bool _usesReservedHook;
+    // FTHR-09: registration state is written on the UI thread and read from
+    // watchdog/diagnostics threads (IsRegistered, HookProbeWanted).
+    private volatile bool _isRegistered;
+    private volatile bool _usesReservedHook;
     private long _receivedSequence;
     private long _invocationSequence;
     private long _dispatchFailureSequence;
@@ -110,6 +112,29 @@ public sealed class GlobalHotkeyService : IDisposable, IHookHealthProbeTarget
 
     public void RefreshRegistration()
     {
+        // Blocking twin of RefreshRegistrationAsync. On this path the core's
+        // only await completes synchronously (the reserved hook is started
+        // with the blocking TryStart), so the result is always a completed
+        // task and the GetResult() wait can never deadlock the caller.
+        RefreshRegistrationCore(useAsyncHandshake: false).GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// DEF-087: non-blocking twin of <see cref="RefreshRegistration"/>. The
+    /// reserved low-level hook handshake (spawn thread + SetWindowsHookEx +
+    /// readiness wait) blocks for up to 1.5 s on the synchronous path, so
+    /// lifecycle recovery awaits this variant instead of freezing the UI
+    /// thread. Generation-safe semantics are identical: unregister, validate,
+    /// start; registration state is committed only after the handshake
+    /// reports success.
+    /// </summary>
+    public async Task RefreshRegistrationAsync()
+    {
+        await RefreshRegistrationCore(useAsyncHandshake: true).ConfigureAwait(true);
+    }
+
+    private async Task RefreshRegistrationCore(bool useAsyncHandshake)
+    {
         Unregister();
         LastError = null;
 
@@ -153,11 +178,22 @@ public sealed class GlobalHotkeyService : IDisposable, IHookHealthProbeTarget
             int hookError;
             try
             {
-                hookStarted = _reservedHotkeyHook.TryStart(
-                    _windowHandle,
-                    WmReservedHotkey,
-                    reservedMode,
-                    out hookError);
+                if (useAsyncHandshake)
+                {
+                    hookStarted = await _reservedHotkeyHook.TryStartAsync(
+                        _windowHandle,
+                        WmReservedHotkey,
+                        reservedMode).ConfigureAwait(true);
+                    hookError = hookStarted ? 0 : _reservedHotkeyHook.LastErrorCode;
+                }
+                else
+                {
+                    hookStarted = _reservedHotkeyHook.TryStart(
+                        _windowHandle,
+                        WmReservedHotkey,
+                        reservedMode,
+                        out hookError);
+                }
             }
             catch (Exception ex)
             {
@@ -250,13 +286,16 @@ public sealed class GlobalHotkeyService : IDisposable, IHookHealthProbeTarget
             return true;
         }
 
-        settings.GlobalHotkeyActivationKind = activation.Kind;
-        settings.GlobalHotkeyModifiers = (int)activation.Gesture.Modifiers;
-        settings.GlobalHotkeyKey = activation.Gesture.VirtualKey;
+        // FTHR-01: write the three gesture fields atomically under the
+        // settings lock (a torn write would briefly expose a mixed chord to
+        // readers) and debounce-save through the settings notification path.
+        _settingsService.UpdateGlobalHotkeySettings(
+            activation.Kind,
+            (int)activation.Gesture.Modifiers,
+            activation.Gesture.VirtualKey);
 
         if (!shouldBeActive)
         {
-            _settingsService.SaveDebounced();
             return true;
         }
 
@@ -266,15 +305,18 @@ public sealed class GlobalHotkeyService : IDisposable, IHookHealthProbeTarget
         RefreshRegistration();
         if (IsRegistered)
         {
-            _settingsService.SaveDebounced();
             return true;
         }
 
         string registrationError = LastError ??
             _localizationService.T("Settings.GlobalHotkey.Status.Unavailable");
-        settings.GlobalHotkeyActivationKind = previousKind;
-        settings.GlobalHotkeyModifiers = previousModifiers;
-        settings.GlobalHotkeyKey = previousVirtualKey;
+        // FTHR-01: the rollback restores all three fields under the same lock
+        // and persists them (the previous rollback left memory and disk
+        // disagreeing until the next unrelated save).
+        _settingsService.UpdateGlobalHotkeySettings(
+            previousKind,
+            previousModifiers,
+            previousVirtualKey);
         RefreshRegistration();
         if (!IsRegistered)
         {

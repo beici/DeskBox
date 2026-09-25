@@ -32,7 +32,6 @@ public sealed class QuickCaptureService
     public const int MaxRecentLimit = 100;
     public const int MaxItemBodyCharacters = MarkdownDocumentService.MaxCharacters;
     private const uint ThumbnailMaxPixelSize = 180;
-    private static readonly TimeSpan ExportCleanupAge = TimeSpan.FromDays(1);
 
     private readonly QuickCaptureStore _store;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -52,6 +51,15 @@ public sealed class QuickCaptureService
     /// protection self-expires even if a restore callback never fires.
     /// </summary>
     private readonly Dictionary<string, DateTime> _undoWindowImagePaths = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// FQC-13: item ids sitting inside the delete-undo window. Undo restores
+    /// the full snapshot (attachment list included), so the item's managed
+    /// attachment directory (attachments/{itemId}/) must survive a GC pass
+    /// while the delete is still undoable — same rationale as the image
+    /// retention above. All access happens under <see cref="_gate"/>.
+    /// </summary>
+    private readonly Dictionary<string, DateTime> _undoWindowItemIds = new(StringComparer.Ordinal);
 
     private static readonly TimeSpan UndoRetentionWindow = TimeSpan.FromSeconds(10);
 
@@ -363,27 +371,6 @@ public sealed class QuickCaptureService
         }
     }
 
-    public async Task<string?> CreateImageExportFileAsync(QuickCaptureItem item, string? fileNamePrefix = null)
-    {
-        if (item.Type != QuickCaptureItemType.Image ||
-            string.IsNullOrWhiteSpace(item.ImagePath) ||
-            !File.Exists(item.ImagePath))
-        {
-            return null;
-        }
-
-        Directory.CreateDirectory(_store.ExportDirectory);
-        CleanupOldExportFiles();
-
-        string exportFileName = BuildImageExportFileName(
-            fileNamePrefix,
-            item.UpdatedAt == default ? item.CreatedAt : item.UpdatedAt,
-            item.ImagePath);
-        string exportPath = FileService.GetAvailablePath(Path.Combine(_store.ExportDirectory, exportFileName));
-        await Task.Run(() => File.Copy(item.ImagePath, exportPath));
-        return exportPath;
-    }
-
     public async Task<QuickCaptureItem?> SaveRecentItemToRecordsAsync(string recentItemId, bool pin)
     {
         if (string.IsNullOrWhiteSpace(recentItemId))
@@ -621,6 +608,69 @@ public sealed class QuickCaptureService
         }
     }
 
+    /// <summary>
+    /// FCFG-01: persists the search popup's "save to quick capture" action
+    /// through the service cache instead of a raw store write. The item
+    /// mirrors the field semantics of the former bypass (Type=Text,
+    /// Title=fileName, Body=path, DragDrop source, one linked attachment
+    /// pointing at the original file — nothing is copied into managed
+    /// storage), but the change is made to the service's cached document
+    /// under <see cref="_gate"/> and saved via <see cref="SaveCoreAsync"/>,
+    /// so the entry can no longer be lost to a concurrent whole-document
+    /// save from the cached service.
+    /// </summary>
+    public async Task<QuickCaptureItem?> AddExternalLinkedFileItemAsync(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            return null;
+        }
+
+        await _gate.WaitAsync();
+        try
+        {
+            await EnsureLoadedCoreAsync();
+            var now = DateTimeOffset.UtcNow;
+            string fileName = Path.GetFileName(path);
+            var item = new QuickCaptureItem
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Type = QuickCaptureItemType.Text,
+                Title = fileName,
+                Body = path,
+                ContentFormat = TextContentFormat.PlainText,
+                SourceKind = QuickCaptureSourceKind.DragDrop,
+                IsRecent = false,
+                SortOrder = 0,
+                PinnedSortOrder = -1,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            item.Attachments.Add(new TodoAttachment
+            {
+                FilePath = path,
+                DisplayName = fileName,
+                Type = "file",
+                StorageMode = TodoAttachment.LinkedStorageMode,
+                AddedAt = now
+            });
+
+            foreach (QuickCaptureItem existing in _data!.Items)
+            {
+                existing.SortOrder++;
+            }
+
+            _data.Items.Insert(0, item);
+            NormalizePinnedSortOrders(_data.Items);
+            await SaveCoreAsync();
+            return Clone(item);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async Task<QuickCaptureItem?> AddAttachmentsAsync(
         string itemId,
         IEnumerable<string> filePaths,
@@ -801,6 +851,39 @@ public sealed class QuickCaptureService
         }
     }
 
+    /// <summary>
+    /// FQC-01: batch delete where every id carries its real recent/record
+    /// ownership. A single <c>isRecent</c> bool for a mixed multi-selection
+    /// routed recent items into the records list (or vice versa); here each
+    /// group is tombstoned in its own section and the returned snapshots
+    /// preserve the per-item ownership so undo restores into the right list.
+    /// </summary>
+    public async Task<IReadOnlyList<QuickCaptureDeletedItemSnapshot>> DeleteItemsAsync(
+        IEnumerable<(string ItemId, bool IsRecent)> itemOwnerships)
+    {
+        ArgumentNullException.ThrowIfNull(itemOwnerships);
+        List<QuickCaptureDeletedItemSnapshot> snapshots = [];
+        // Materialize once: the source is re-enumerated per ownership group.
+        List<(string ItemId, bool IsRecent)> ownerships = itemOwnerships.ToList();
+        foreach (bool isRecentGroup in new[] { true, false })
+        {
+            string[] groupIds = ownerships
+                .Where(entry => entry.IsRecent == isRecentGroup)
+                .Select(entry => entry.ItemId)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (groupIds.Length == 0)
+            {
+                continue;
+            }
+
+            snapshots.AddRange(await DeleteItemsAsync(groupIds, isRecentGroup));
+        }
+
+        return snapshots;
+    }
+
     public async Task<QuickCaptureDeletedItemSnapshot?> DeleteItemAsync(string itemId)
     {
         if (string.IsNullOrWhiteSpace(itemId))
@@ -829,7 +912,7 @@ public sealed class QuickCaptureService
             NormalizeSortOrders(_data.Items);
             NormalizePinnedSortOrders(_data.Items);
             await SaveCoreAsync();
-            RegisterUndoWindowImages([deletedItem]);
+            RegisterUndoWindowRetention([deletedItem]);
             CleanupUnusedImageCacheCore();
             return new QuickCaptureDeletedItemSnapshot(deletedItem, IsRecent: false);
         }
@@ -888,7 +971,7 @@ public sealed class QuickCaptureService
             }
 
             await SaveCoreAsync();
-            RegisterUndoWindowImages(snapshots.Select(snapshot => snapshot.Item));
+            RegisterUndoWindowRetention(snapshots.Select(snapshot => snapshot.Item));
             CleanupUnusedImageCacheCore();
             return snapshots;
         }
@@ -921,7 +1004,7 @@ public sealed class QuickCaptureService
             _data.RecentItems[recentIndex] = CreateTombstoneStub(item, DateTimeOffset.UtcNow, isRecent: true);
             NormalizeSortOrders(_data.RecentItems);
             await SaveCoreAsync();
-            RegisterUndoWindowImages([deletedItem]);
+            RegisterUndoWindowRetention([deletedItem]);
             CleanupUnusedImageCacheCore();
             return new QuickCaptureDeletedItemSnapshot(deletedItem, IsRecent: true);
         }
@@ -980,7 +1063,7 @@ public sealed class QuickCaptureService
             }
 
             await SaveCoreAsync();
-            UnregisterUndoWindowImages([item]);
+            UnregisterUndoWindowRetention([item]);
             CleanupUnusedImageCacheCore();
             return true;
         }
@@ -1600,11 +1683,24 @@ public sealed class QuickCaptureService
         return referenced;
     }
 
-    private void RegisterUndoWindowImages(IEnumerable<QuickCaptureItem> items)
+    /// <summary>
+    /// Retains the delete-undo artifacts of the given items for the undo
+    /// window: image paths (DEF-012) and — since FQC-13 — the item ids whose
+    /// managed attachment directories must survive a GC pass while undo is
+    /// still possible.
+    /// </summary>
+    private void RegisterUndoWindowRetention(IEnumerable<QuickCaptureItem> items)
     {
         DateTime nowUtc = DateTime.UtcNow;
         foreach (QuickCaptureItem item in items)
         {
+            if (!string.IsNullOrWhiteSpace(item.Id))
+            {
+                // Re-deleting the same item within the window refreshes the
+                // timestamp, keeping the retention window honest.
+                _undoWindowItemIds[item.Id] = nowUtc;
+            }
+
             if (item.Type != QuickCaptureItemType.Image ||
                 string.IsNullOrWhiteSpace(item.ImagePath))
             {
@@ -1621,10 +1717,15 @@ public sealed class QuickCaptureService
         }
     }
 
-    private void UnregisterUndoWindowImages(IEnumerable<QuickCaptureItem> items)
+    private void UnregisterUndoWindowRetention(IEnumerable<QuickCaptureItem> items)
     {
         foreach (QuickCaptureItem item in items)
         {
+            if (!string.IsNullOrWhiteSpace(item.Id))
+            {
+                _undoWindowItemIds.Remove(item.Id);
+            }
+
             if (item.Type != QuickCaptureItemType.Image ||
                 string.IsNullOrWhiteSpace(item.ImagePath))
             {
@@ -1676,7 +1777,9 @@ public sealed class QuickCaptureService
 
     private QuickCaptureImageCacheCleanupResult CleanupUnusedImageCacheCore(HashSet<string> referencedImagePaths)
     {
-        if (!Directory.Exists(_store.ImageDirectory) && !Directory.Exists(_store.ThumbnailDirectory))
+        if (!Directory.Exists(_store.ImageDirectory) &&
+            !Directory.Exists(_store.ThumbnailDirectory) &&
+            !Directory.Exists(_store.AttachmentDirectory))
         {
             return new QuickCaptureImageCacheCleanupResult(0, 0);
         }
@@ -1707,7 +1810,84 @@ public sealed class QuickCaptureService
             }
         }
 
+        // FQC-13: the same GC pass retires orphaned attachments/{itemId}/
+        // directories. Removals stay out of the reported image-cache result
+        // (the record is image-cache scoped) and are logged instead.
+        CleanupOrphanedAttachmentDirectoriesCore(GetReferencedAttachmentItemIdsCore());
+
         return new QuickCaptureImageCacheCleanupResult(deletedFileCount, deletedBytes);
+    }
+
+    /// <summary>
+    /// FQC-13: item ids that still own an attachments/{itemId}/ directory.
+    /// Live items and items inside the delete-undo window are protected;
+    /// expired retention entries are dropped lazily here — every caller
+    /// already holds <see cref="_gate"/>.
+    /// </summary>
+    private HashSet<string> GetReferencedAttachmentItemIdsCore()
+    {
+        var referenced = _data!.Items
+            .Concat(_data.RecentItems)
+            .Where(item => item is not null && !item.IsDeleted && !string.IsNullOrWhiteSpace(item.Id))
+            .Select(item => item.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (_undoWindowItemIds.Count > 0)
+        {
+            DateTime nowUtc = DateTime.UtcNow;
+            string[] expired = _undoWindowItemIds
+                .Where(entry => nowUtc - entry.Value > UndoRetentionWindow)
+                .Select(entry => entry.Key)
+                .ToArray();
+            foreach (string id in expired)
+            {
+                _undoWindowItemIds.Remove(id);
+            }
+
+            referenced.UnionWith(_undoWindowItemIds.Keys);
+        }
+
+        return referenced;
+    }
+
+    /// <summary>
+    /// FQC-13: removes orphaned attachments/{itemId}/ directories. Managed
+    /// copies are the only writers under the attachments root (linked
+    /// attachments keep the original file path — AttachmentStorageService
+    /// never copies for linked mode), so a directory whose id is referenced
+    /// by no live item and no undo-window snapshot is pure residue. Mirrors
+    /// the image-cache scan: bounded top-level enumeration, per-directory
+    /// try/catch with a log, whole directories only — linked source files
+    /// are never touched.
+    /// </summary>
+    private void CleanupOrphanedAttachmentDirectoriesCore(HashSet<string> referencedItemIds)
+    {
+        if (!Directory.Exists(_store.AttachmentDirectory))
+        {
+            return;
+        }
+
+        int removedDirectoryCount = 0;
+        foreach (string itemDirectory in Directory
+                     .EnumerateDirectories(_store.AttachmentDirectory, "*", SearchOption.TopDirectoryOnly)
+                     .ToList())
+        {
+            if (referencedItemIds.Contains(Path.GetFileName(itemDirectory)))
+            {
+                continue;
+            }
+
+            TryDeleteDirectory(itemDirectory);
+            if (!Directory.Exists(itemDirectory))
+            {
+                removedDirectoryCount++;
+            }
+        }
+
+        if (removedDirectoryCount > 0)
+        {
+            App.Log($"[QuickCaptureService] Removed {removedDirectoryCount} orphaned attachment directories.");
+        }
     }
 
     private static IEnumerable<string> EnumerateCacheFiles(string directory)
@@ -1860,7 +2040,7 @@ public sealed class QuickCaptureService
         }
         catch (Exception ex)
         {
-            App.Log($"[QuickCaptureService] Failed to clear attachment directory: {ex.Message}");
+            App.Log($"[QuickCaptureService] Failed to delete directory '{directory}': {ex.Message}");
         }
     }
 
@@ -1972,45 +2152,6 @@ public sealed class QuickCaptureService
     private static string ComputeContentHash(byte[] bytes)
     {
         return Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-    }
-
-    internal static string BuildImageExportFileName(
-        string? fileNamePrefix,
-        DateTimeOffset timestamp,
-        string sourceImagePath)
-    {
-        string prefix = FileService.SanitizeFileSystemName(fileNamePrefix);
-        if (string.IsNullOrWhiteSpace(prefix))
-        {
-            prefix = "Capture";
-        }
-
-        string extension = NormalizeImageExtension(sourceImagePath);
-        return $"{prefix} {timestamp.ToLocalTime():yyyy-MM-dd HH-mm-ss}{extension}";
-    }
-
-    private void CleanupOldExportFiles()
-    {
-        if (!Directory.Exists(_store.ExportDirectory))
-        {
-            return;
-        }
-
-        DateTime cutoffUtc = DateTime.UtcNow - ExportCleanupAge;
-        foreach (string filePath in Directory.EnumerateFiles(_store.ExportDirectory, "*", SearchOption.TopDirectoryOnly).ToList())
-        {
-            try
-            {
-                if (File.GetLastWriteTimeUtc(filePath) < cutoffUtc)
-                {
-                    File.Delete(filePath);
-                }
-            }
-            catch (Exception ex)
-            {
-                App.Log($"[QuickCaptureService] Failed to clean image export file: {ex}");
-            }
-        }
     }
 
     private static bool IsImageFile(string? path)

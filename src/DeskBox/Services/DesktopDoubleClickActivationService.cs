@@ -71,7 +71,15 @@ public sealed class DesktopDoubleClickActivationService : IDisposable, IHookHeal
         }
     }
 
-    public int LastErrorCode { get; private set; }
+    // FTHR-09: written from probe/startup paths and the hook thread, read by
+    // diagnostics from any thread — volatile-backed so the value is visible
+    // without a lock. (_thread/_threadId/_hookHandle stay lock-protected.)
+    private int _lastErrorCode;
+    public int LastErrorCode
+    {
+        get => Volatile.Read(ref _lastErrorCode);
+        private set => Volatile.Write(ref _lastErrorCode, value);
+    }
     public long TriggerCount => Interlocked.Read(ref _triggerCount);
     public long DispatchFailureCount => Interlocked.Read(ref _dispatchFailureCount);
     public long ProbeCount => Interlocked.Read(ref _probeCount);
@@ -171,6 +179,25 @@ public sealed class DesktopDoubleClickActivationService : IDisposable, IHookHeal
         if (!TryStart(out int errorCode))
         {
             App.Log($"[DesktopDoubleClick] Hook registration failed error={errorCode}");
+        }
+    }
+
+    /// <summary>
+    /// DEF-087: non-blocking twin of <see cref="RefreshRegistration"/>. The
+    /// hook handshake blocks the calling thread for up to 1.5 s on the
+    /// synchronous path, so lifecycle recovery awaits this variant instead.
+    /// </summary>
+    public async Task RefreshRegistrationAsync()
+    {
+        Stop();
+        if (!_settingsService.Settings.DesktopDoubleClickEnabled)
+        {
+            return;
+        }
+
+        if (!await TryStartAsync().ConfigureAwait(true))
+        {
+            App.Log($"[DesktopDoubleClick] Hook registration failed error={LastErrorCode}");
         }
     }
 

@@ -737,7 +737,6 @@ set => WidgetOpacity = Math.Clamp(1.0 - value / 100d, SettingsService.MinWidgetO
                     _settingsService.Settings.QuickCaptureShowRecordsTab = true;
                     _settingsService.Settings.QuickCaptureShowPinnedTab = true;
                     _settingsService.Settings.QuickCaptureShowRecentTab = true;
-                    _settingsService.Settings.LastQuickCaptureFileWidgetId = string.Empty;
                     App.Current?.RefreshQuickCaptureClipboardService();
                     RefreshQuickCaptureClipboardDiagnostics();
                     break;

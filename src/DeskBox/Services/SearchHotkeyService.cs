@@ -83,6 +83,24 @@ public sealed class SearchHotkeyService : IDisposable, IHookHealthProbeTarget
 
     public void RefreshRegistration()
     {
+        // Blocking twin of RefreshRegistrationAsync; see the async variant.
+        // The core's only await completes synchronously on this path.
+        RefreshRegistrationCore(useAsyncHandshake: false).GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// DEF-087: non-blocking twin of <see cref="RefreshRegistration"/>. The
+    /// reserved Alt+Space hook handshake blocks for up to 1.5 s on the
+    /// synchronous path, so lifecycle recovery awaits this variant instead.
+    /// Semantics are identical to the synchronous form.
+    /// </summary>
+    public async Task RefreshRegistrationAsync()
+    {
+        await RefreshRegistrationCore(useAsyncHandshake: true).ConfigureAwait(true);
+    }
+
+    private async Task RefreshRegistrationCore(bool useAsyncHandshake)
+    {
         Unregister();
 
         if (_windowHandle == IntPtr.Zero || !_settingsService.Settings.SearchHotkeyEnabled)
@@ -108,7 +126,7 @@ public sealed class SearchHotkeyService : IDisposable, IHookHealthProbeTarget
         var gesture = CurrentGesture;
         if (gesture.Equals(AltSpaceGesture))
         {
-            ApplyReservedAltSpaceGesture();
+            await ApplyReservedAltSpaceGestureCoreAsync(useAsyncHandshake).ConfigureAwait(true);
             return;
         }
 
@@ -129,7 +147,7 @@ public sealed class SearchHotkeyService : IDisposable, IHookHealthProbeTarget
         }
     }
 
-    private void ApplyReservedAltSpaceGesture()
+    private async Task ApplyReservedAltSpaceGestureCoreAsync(bool useAsyncHandshake)
     {
         if (IsGestureOwnedByMainHotkey())
         {
@@ -147,11 +165,22 @@ public sealed class SearchHotkeyService : IDisposable, IHookHealthProbeTarget
         int hookError;
         try
         {
-            hookStarted = _reservedHotkeyHook.TryStart(
-                _windowHandle,
-                WmReservedSearchHotkey,
-                ReservedHotkeyMode.AltSpace,
-                out hookError);
+            if (useAsyncHandshake)
+            {
+                hookStarted = await _reservedHotkeyHook.TryStartAsync(
+                    _windowHandle,
+                    WmReservedSearchHotkey,
+                    ReservedHotkeyMode.AltSpace).ConfigureAwait(true);
+                hookError = hookStarted ? 0 : _reservedHotkeyHook.LastErrorCode;
+            }
+            else
+            {
+                hookStarted = _reservedHotkeyHook.TryStart(
+                    _windowHandle,
+                    WmReservedSearchHotkey,
+                    ReservedHotkeyMode.AltSpace,
+                    out hookError);
+            }
         }
         catch (Exception ex)
         {

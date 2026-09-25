@@ -24,7 +24,6 @@ public sealed partial class QuickCaptureWidgetViewModel : ObservableObject, IDis
     private readonly DispatcherQueueTimer _currentViewSaveTimer;
     private readonly DispatcherQueueTimer _viewSwitchRefreshTimer;
 
-    private string _inputText = string.Empty;
     private string _searchText = string.Empty;
     private bool _isSearchExpanded;
     private QuickCaptureViewMode _selectedView = QuickCaptureViewMode.Records;
@@ -123,20 +122,6 @@ public sealed partial class QuickCaptureWidgetViewModel : ObservableObject, IDis
         ? _localizationService.T("QuickCapture.Name")
         : Config.Name;
 
-    public string InputText
-    {
-        get => _inputText;
-        set
-        {
-            if (SetProperty(ref _inputText, value))
-            {
-                OnPropertyChanged(nameof(CanAddInput));
-            }
-        }
-    }
-
-    public bool CanAddInput => !string.IsNullOrWhiteSpace(InputText);
-
     public string SearchText
     {
         get => _searchText;
@@ -148,8 +133,6 @@ public sealed partial class QuickCaptureWidgetViewModel : ObservableObject, IDis
                 OnPropertyChanged(nameof(SearchBoxVisibility));
                 OnPropertyChanged(nameof(SearchButtonVisibility));
                 OnPropertyChanged(nameof(SearchScopeVisibility));
-                OnPropertyChanged(nameof(RecentCaptureStatusVisibility));
-                OnPropertyChanged(nameof(RecentCaptureActionVisibility));
                 ScheduleVisibleItemsRefresh();
             }
         }
@@ -261,8 +244,6 @@ public sealed partial class QuickCaptureWidgetViewModel : ObservableObject, IDis
             OnPropertyChanged(nameof(IsPinnedView));
             OnPropertyChanged(nameof(IsRecentView));
             OnPropertyChanged(nameof(InputAreaVisibility));
-            OnPropertyChanged(nameof(RecentCaptureStatusVisibility));
-            OnPropertyChanged(nameof(RecentCaptureActionVisibility));
             ScheduleViewSwitchRefresh();
         }
     }
@@ -497,39 +478,6 @@ public sealed partial class QuickCaptureWidgetViewModel : ObservableObject, IDis
     public string PinnedTabText => _localizationService.Format("QuickCapture.Tab.Pinned", PinnedCount);
 
     public string RecentTabText => _localizationService.Format("QuickCapture.Tab.Recent", RecentCount);
-
-    public string EnableRecentCaptureText => _localizationService.T("QuickCapture.EnableRecentCapture");
-
-    public string RecentCaptureStatusText
-    {
-        get
-        {
-            var settings = _settingsService.Settings;
-            if (!settings.QuickCaptureEnabled)
-            {
-                return _localizationService.T("QuickCapture.RecentStatus.FeatureOff");
-            }
-
-            if (!settings.QuickCaptureClipboardEnabled)
-            {
-                return _localizationService.T("QuickCapture.RecentStatus.Off");
-            }
-
-            return settings.QuickCaptureImageClipboardEnabled
-                ? _localizationService.T("QuickCapture.RecentStatus.OnWithImages")
-                : _localizationService.T("QuickCapture.RecentStatus.On");
-        }
-    }
-
-    public Visibility RecentCaptureStatusVisibility => Visibility.Collapsed;
-
-    public Visibility RecentCaptureActionVisibility =>
-        SelectedView == QuickCaptureViewMode.Recent &&
-        !HasSearchText &&
-        Items.Count == 0 &&
-        !IsRecentCaptureEnabled()
-            ? Visibility.Visible
-            : Visibility.Collapsed;
 
     public string EmptyStateTitle
     {

@@ -494,7 +494,31 @@ internal sealed class ReservedHotkeyHookService : IDisposable
         }
     }
 
+    // FEXC-07: a throw inside a low-level hook callback would either crash
+    // the hook thread or escape into the OS input path. Swallow it, leave a
+    // diagnostic trail, and always fall through to CallNextHookEx so the
+    // input chain keeps flowing. CallNextHookEx ignores its handle argument,
+    // so IntPtr.Zero is a valid fallback before the real handle is read.
+    private static int s_keyboardHookFailureCount;
+
     private IntPtr KeyboardHookProc(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        try
+        {
+            return KeyboardHookProcCore(nCode, wParam, lParam);
+        }
+        catch (Exception ex)
+        {
+            if (Interlocked.Increment(ref s_keyboardHookFailureCount) <= 10)
+            {
+                App.Log($"[ReservedHotkey] Keyboard hook callback failed: {ex}");
+            }
+
+            return Win32Helper.CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam);
+        }
+    }
+
+    private IntPtr KeyboardHookProcCore(int nCode, IntPtr wParam, IntPtr lParam)
     {
         // A delivered callback is the only observable proof the hook is still
         // installed; Windows removes timed-out hooks without notification.

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DeskBox.Models;
@@ -23,6 +24,25 @@ public sealed class QuickCaptureStore
 {
     private const int CurrentVersion = 4;
 
+    // DEF-102: quick capture data is written by the widget service (cached
+    // document) and by store-level callers (settings maintenance, backup/
+    // restore staging). Every writer follows a load/modify/save-whole-
+    // document pattern, so interleaved file operations must be serialized
+    // against the same file. The gate is keyed by store path so every
+    // QuickCaptureStore instance targeting the same file shares one
+    // serialization point, mirroring the s_pathGates pattern in
+    // TodoWidgetStore.
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> s_pathGates =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim _gate;
+
+    // FMEM-01: backup/restore flows construct stores for staging directories
+    // whose names are Guids, so without a bound the gate dictionary would
+    // grow once per such store for the process lifetime. Once the dictionary
+    // exceeds this bound, entries that are currently unheld and not under the
+    // main storage root are removed. Same scheme as TodoWidgetStore.
+    internal const int MaxPathGateEntries = 64;
+
     private readonly string _storePath;
 
     public QuickCaptureStore()
@@ -36,6 +56,8 @@ public sealed class QuickCaptureStore
     {
         Directory.CreateDirectory(dataDir);
         _storePath = Path.Combine(dataDir, "quick-capture.json");
+        _gate = s_pathGates.GetOrAdd(_storePath, static _ => new SemaphoreSlim(1, 1));
+        TrimPathGates();
     }
 
     internal string StorePath => _storePath;
@@ -44,19 +66,90 @@ public sealed class QuickCaptureStore
 
     internal string ThumbnailDirectory => Path.Combine(Path.GetDirectoryName(_storePath)!, "thumbnails");
 
-    internal string ExportDirectory => Path.Combine(Path.GetDirectoryName(_storePath)!, "exports");
-
     internal string AttachmentDirectory => Path.Combine(Path.GetDirectoryName(_storePath)!, "attachments");
+
+    private static void TrimPathGates()
+    {
+        TrimPathGates(Path.Combine(
+            DeskBoxDataPathService.Current.DataDirectory,
+            "quick-capture"));
+    }
+
+    /// <summary>
+    /// FMEM-01: bounds <see cref="s_pathGates"/>. Entries are removed when
+    /// they are (a) currently unheld (<c>CurrentCount == 1</c>, the initial
+    /// value of every gate) and (b) not under <paramref name="protectedRoot"/>
+    /// — only backup/restore staging paths (Guid-named temp directories) are
+    /// removable; the main storage path's gate is never trimmed, so all
+    /// production writers for quick-capture.json always share one gate.
+    ///
+    /// The removal race is benign for the removable paths: a writer that
+    /// already fetched its semaphore keeps a live reference and completes its
+    /// gated section normally; only a store constructed for the same path
+    /// AFTER the removal gets a fresh gate, and each staging path belongs to
+    /// exactly one backup/restore flow, so no cross-flow interleaving is
+    /// possible.
+    /// </summary>
+    /// <returns>The number of entries removed.</returns>
+    internal static int TrimPathGates(string protectedRoot)
+    {
+        if (s_pathGates.Count <= MaxPathGateEntries)
+        {
+            return 0;
+        }
+
+        string protectedPrefix = GetProtectedRootPrefix(protectedRoot);
+        int removedCount = 0;
+        foreach (var entry in s_pathGates)
+        {
+            // The KeyValuePair overload removes only while the dictionary
+            // still maps the path to this exact gate.
+            if (entry.Value.CurrentCount == 1 &&
+                !Path.GetFullPath(entry.Key).StartsWith(protectedPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                removedCount += s_pathGates.TryRemove(entry) ? 1 : 0;
+            }
+        }
+
+        return removedCount;
+    }
+
+    /// <summary>
+    /// FMEM-01 classification seam (also used by tests): a store path's gate
+    /// entry is protected from trimming exactly when the path lives under
+    /// the main storage root; staging and temp paths are removable once
+    /// unheld.
+    /// </summary>
+    internal static bool IsProtectedMainStorePath(string storePath, string protectedRoot)
+    {
+        return Path.GetFullPath(storePath)
+            .StartsWith(GetProtectedRootPrefix(protectedRoot), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string GetProtectedRootPrefix(string protectedRoot)
+    {
+        return Path.GetFullPath(protectedRoot)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
+            Path.DirectorySeparatorChar;
+    }
 
     public async Task<QuickCaptureStoreData> LoadAsync()
     {
-        return await ResilientJsonStore.LoadAsync(
-            _storePath,
-            json => Normalize(JsonSerializer.Deserialize(
-                json,
-                QuickCaptureJsonContext.Default.StoreData)),
-            () => new QuickCaptureStoreData(),
-            nameof(QuickCaptureStore));
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            return await ResilientJsonStore.LoadAsync(
+                _storePath,
+                json => Normalize(JsonSerializer.Deserialize(
+                    json,
+                    QuickCaptureJsonContext.Default.StoreData)),
+                () => new QuickCaptureStoreData(),
+                nameof(QuickCaptureStore)).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     public async Task SaveAsync(QuickCaptureStoreData data)
@@ -65,7 +158,15 @@ public sealed class QuickCaptureStore
         string json = JsonSerializer.Serialize(
             data,
             QuickCaptureJsonContext.Default.StoreData);
-        await ResilientJsonStore.SaveAsync(_storePath, json);
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await ResilientJsonStore.SaveAsync(_storePath, json).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     private static QuickCaptureStoreData Normalize(QuickCaptureStoreData? data)

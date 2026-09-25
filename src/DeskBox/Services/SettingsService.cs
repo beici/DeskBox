@@ -390,7 +390,6 @@ public const int DefaultSearchMaxResults = 100;
                 [nameof(AppSettings.OnboardingStepIndex)] = DefaultPreferencePreservationReason.RuntimeState,
                 [nameof(AppSettings.CompletedOnboardingVersion)] = DefaultPreferencePreservationReason.RuntimeState,
                 [nameof(AppSettings.HasResolvedInitialFileWidgetSetup)] = DefaultPreferencePreservationReason.RuntimeState,
-                [nameof(AppSettings.LastQuickCaptureFileWidgetId)] = DefaultPreferencePreservationReason.RuntimeState,
                 [nameof(AppSettings.LastUpdateCheckAt)] = DefaultPreferencePreservationReason.RuntimeState,
                 [nameof(AppSettings.SchemaVersion)] = DefaultPreferencePreservationReason.RuntimeState
             };
@@ -420,6 +419,12 @@ public const int DefaultSearchMaxResults = 100;
     private CancellationTokenSource? _appearancePreviewCts;
     private long _debounceGeneration;
     private int _hasPendingSave;
+
+    // Schema version the settings file carried when it was loaded from disk
+    // (0 when this session created default settings or fell back to them). A
+    // profile stamped by a newer schema than this build understands keeps the
+    // writer read-only for the whole session — see SaveToFileOnlyAsync.
+    private int _loadedDiskSchemaVersion;
 
     public event Action? SettingsChanged;
     public event Action? AppearancePreviewChanged;
@@ -711,10 +716,7 @@ settings.FocusClickedWidgetOnRaise = false;
             ResilientJsonLoadResult<AppSettings> loadResult =
                 await ResilientJsonStore.LoadWithResultAsync(
                     _settingsPath,
-                    json => JsonSerializer.Deserialize(
-                                json,
-                                SettingsJsonContext.Default.AppSettings) ??
-                            throw new InvalidDataException("DeskBox settings JSON is empty."),
+                    DeserializeSettingsDocument,
                     () => new AppSettings(),
                     "SettingsService");
             bool loadedFromDisk = loadResult.Source is
@@ -727,6 +729,15 @@ settings.FocusClickedWidgetOnRaise = false;
                 ResilientJsonLoadSource.DefaultAfterFailure => SettingsLoadRecoveryState.DefaultsAfterFailure,
                 _ => SettingsLoadRecoveryState.DefaultsForMissingFile
             };
+
+            // Capture the schema version the disk profile carried before the
+            // migration pipeline rewrites the graph. A file stamped by a newer
+            // schema than this build understands must stay read-only for the
+            // whole session (see SaveToFileOnlyAsync); missing-file and
+            // recovery-default profiles record 0 and stay writable.
+            Volatile.Write(
+                ref _loadedDiskSchemaVersion,
+                loadedFromDisk ? loadResult.Value.SchemaVersion : 0);
 
             lock (_lock)
             {
@@ -847,8 +858,15 @@ settings.FocusClickedWidgetOnRaise = false;
         {
             App.Log($"[SettingsService] Failed to load settings: {ex}");
             LastLoadRecoveryState = SettingsLoadRecoveryState.DefaultsAfterFailure;
+            Volatile.Write(ref _loadedDiskSchemaVersion, 0);
             lock (_lock) _settings = new AppSettings();
             ApplyDefaultPreferences(_settings);
+            // DEF-075 (residual): a recovery-default profile already contains
+            // current-shaped defaults, so it must be stamped current exactly
+            // like the missing-file path is — leaving it at version 1 would
+            // replay historical migrations over the user's redone choices on
+            // the next startup.
+            _settings.SchemaVersion = SettingsMigrationPipeline.CurrentSchemaVersion;
             _settings.HasResolvedInitialFileWidgetSetup = true;
             try
             {
@@ -866,6 +884,42 @@ settings.FocusClickedWidgetOnRaise = false;
                     layoutEx.Message);
             }
         }
+    }
+
+    /// <summary>
+    /// Deserializes a settings document and repairs the pre-versioning legacy
+    /// case: a file that carries no "schemaVersion" property at all was
+    /// written before schema version 1, and deserialization would otherwise
+    /// fall back to the AppSettings constructor default (1) — which silently
+    /// turned Migration_0_To_1 into a dead step. Only the missing-property
+    /// path is rewritten to 0: documents that carry any schemaVersion value
+    /// are untouched, and a newly constructed <c>AppSettings()</c> keeps its
+    /// current default version.
+    /// </summary>
+    private static AppSettings DeserializeSettingsDocument(string json)
+    {
+        AppSettings? settings = JsonSerializer.Deserialize(
+            json,
+            SettingsJsonContext.Default.AppSettings) ??
+            throw new InvalidDataException("DeskBox settings JSON is empty.");
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                !document.RootElement.TryGetProperty("schemaVersion", out _))
+            {
+                settings.SchemaVersion = 0;
+            }
+        }
+        catch (JsonException)
+        {
+            // A document that fails this second parse also failed (or will
+            // fail) deserialization; never mask a real read failure as a
+            // pre-versioning profile.
+        }
+
+        return settings;
     }
 
     private async Task MigrateLegacySettingsIfNeededAsync()
@@ -944,6 +998,38 @@ settings.FocusClickedWidgetOnRaise = false;
         await FileWriteLock.WaitAsync();
         try
         {
+            // A settings file stamped by a NEWER schema than this build
+            // understands is never overwritten — the typed slice cannot
+            // represent its unknown fields, so any rewrite would silently
+            // drop them. That read-only stance must be honest: settings
+            // mutations made this session cannot persist anywhere, so the
+            // save reports failure (and keeps the on-disk profile) instead
+            // of a false success that silently discards the changes.
+            int loadedSchemaVersion = Volatile.Read(ref _loadedDiskSchemaVersion);
+            if (loadedSchemaVersion > SettingsMigrationPipeline.CurrentSchemaVersion)
+            {
+                string settingsFailureReason =
+                    $"settings.json schema {loadedSchemaVersion} is newer " +
+                    "than this build understands; settings changes cannot persist";
+                App.Log($"[SettingsService] Save refused: {settingsFailureReason}");
+                var readOnlyFailure = new SettingsPersistenceFailure(
+                    "save",
+                    settingsFailureReason,
+                    DateTimeOffset.UtcNow);
+                LastPersistenceFailure = readOnlyFailure;
+                try
+                {
+                    PersistenceFailed?.Invoke(readOnlyFailure);
+                }
+                catch (Exception notificationException)
+                {
+                    App.Log(
+                        $"[SettingsService] Persistence failure observer threw: " +
+                        notificationException);
+                }
+                return false;
+            }
+
             // Layout first when the device store is authoritative: it owns the
             // durable layout state, and a crash between the two commits still
             // leaves a consistent pair (newer layout file plus an older
@@ -1278,10 +1364,16 @@ settings.FocusClickedWidgetOnRaise = false;
                 await Task.Delay(66, token);
                 if (!token.IsCancellationRequested)
                 {
-                    AppearancePreviewChanged?.Invoke();
+                    NotifyAppearancePreviewChangedSafely();
                 }
             }
-            catch (TaskCanceledException) { }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                // The preview debounce task is unobserved; only cancellation
+                // used to be caught here, so any real failure vanished. Log it.
+                App.Log($"[SettingsService] Appearance preview broadcast failed: {ex}");
+            }
             // Do NOT dispose the CTS here — same rationale as SaveDebounced.
         });
     }
@@ -1289,7 +1381,52 @@ settings.FocusClickedWidgetOnRaise = false;
     public void NotifyAppearancePreviewNow()
     {
         _appearancePreviewCts?.Cancel();
-        AppearancePreviewChanged?.Invoke();
+        NotifyAppearancePreviewChangedSafely();
+    }
+
+    /// <summary>
+    /// Raises <see cref="AppearancePreviewChanged"/> one handler at a time so
+    /// a throwing observer cannot truncate the broadcast for the remaining
+    /// widgets and the search popup (same isolation contract as
+    /// <see cref="NotifySettingsChangedSafely"/>).
+    /// </summary>
+    private void NotifyAppearancePreviewChangedSafely()
+    {
+        Delegate[] handlers = AppearancePreviewChanged?.GetInvocationList() ?? [];
+        foreach (Action handler in handlers.Cast<Action>())
+        {
+            try
+            {
+                handler();
+            }
+            catch (Exception ex)
+            {
+                App.Log($"[SettingsService] AppearancePreviewChanged observer failed: {ex}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// FTHR-01: atomically updates the three global hotkey fields (kind,
+    /// modifiers, key) under the settings lock so a concurrent reader can
+    /// never observe a torn gesture (one field from the old chord and one
+    /// from the new one), then debounces a save through the existing
+    /// notification path — the same pattern as <see cref="UpdateWidget"/>.
+    /// </summary>
+    public void UpdateGlobalHotkeySettings(
+        HotkeyActivationKind kind,
+        int modifiers,
+        int key,
+        bool notifySubscribers = true)
+    {
+        lock (_lock)
+        {
+            _settings.GlobalHotkeyActivationKind = kind;
+            _settings.GlobalHotkeyModifiers = modifiers;
+            _settings.GlobalHotkeyKey = key;
+        }
+
+        SaveDebounced(notifySubscribers);
     }
 
     /// <summary>
@@ -3167,15 +3304,6 @@ settings.FocusClickedWidgetOnRaise = false;
         if (settings.QuickCaptureRecentLimit != normalizedLimit)
         {
             settings.QuickCaptureRecentLimit = normalizedLimit;
-            changed = true;
-        }
-
-        string normalizedLastFileWidgetId = string.IsNullOrWhiteSpace(settings.LastQuickCaptureFileWidgetId)
-            ? string.Empty
-            : settings.LastQuickCaptureFileWidgetId.Trim();
-        if (!string.Equals(settings.LastQuickCaptureFileWidgetId, normalizedLastFileWidgetId, StringComparison.Ordinal))
-        {
-            settings.LastQuickCaptureFileWidgetId = normalizedLastFileWidgetId;
             changed = true;
         }
 

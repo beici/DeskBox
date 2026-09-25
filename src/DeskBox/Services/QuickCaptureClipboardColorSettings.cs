@@ -98,6 +98,23 @@ public static class QuickCaptureClipboardColorSettings
     }
 
     /// <summary>
+    /// FQC-04/DEF-098: follow-theme baseline colors for the record list,
+    /// shared by the widget surface and the Settings entry so both entrances
+    /// resolve identical effective colors per theme (the contrast validation
+    /// baseline stays same-sourced). The dark pair is the palette the feature
+    /// shipped with; the light pair is its light-theme counterpart.
+    /// </summary>
+    public static Color ResolveFollowThemeTextColor(bool isDarkTheme) =>
+        isDarkTheme
+            ? Color.FromArgb(0xFF, 0xF5, 0xF5, 0xF5)
+            : Color.FromArgb(0xFF, 0x1A, 0x1A, 0x1A);
+
+    public static Color ResolveFollowThemeBackgroundColor(bool isDarkTheme) =>
+        isDarkTheme
+            ? Color.FromArgb(0xFF, 0x28, 0x28, 0x28)
+            : Color.FromArgb(0xFF, 0xFA, 0xFA, 0xFA);
+
+    /// <summary>
     /// WCAG relative-contrast ratio between two opaque colors. Returns 1.0
     /// (identical colors) when either input is fully transparent, so an
     /// unset channel never passes validation on its own.

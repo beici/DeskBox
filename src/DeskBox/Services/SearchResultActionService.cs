@@ -10,10 +10,20 @@ namespace DeskBox.Services;
 public sealed class SearchResultActionService
 {
     private readonly SettingsService _settingsService;
+    private readonly QuickCaptureService _quickCaptureService;
+    private readonly Func<TodoReminderService?> _todoReminderServiceAccessor;
+    private readonly Func<string, TodoWidgetStore> _todoStoreFactory;
 
-    public SearchResultActionService(SettingsService settingsService)
+    public SearchResultActionService(
+        SettingsService settingsService,
+        QuickCaptureService quickCaptureService,
+        Func<TodoReminderService?> todoReminderServiceAccessor,
+        Func<string, TodoWidgetStore>? todoStoreFactory = null)
     {
         _settingsService = settingsService;
+        _quickCaptureService = quickCaptureService;
+        _todoReminderServiceAccessor = todoReminderServiceAccessor;
+        _todoStoreFactory = todoStoreFactory ?? (widgetId => new TodoWidgetStore(widgetId));
     }
 
     /// <summary>
@@ -38,31 +48,49 @@ public sealed class SearchResultActionService
                 return false;
             }
 
-            var store = new TodoWidgetStore(todoWidget.Id);
-            var data = await store.LoadAsync();
+            var store = _todoStoreFactory(todoWidget.Id);
 
-            string fileName = Path.GetFileName(path);
-            var item = new TodoItem
+            // FCFG-02: mutate through the store gate (load/modify/save held
+            // atomically) instead of a separate Load/Save pair, so a
+            // concurrent widget or reminder whole-document save can neither
+            // overwrite this attachment nor be overwritten by it.
+            TodoItem? insertedItem = null;
+            await store.MutateAsync(current =>
             {
-                Text = fileName,
-                Notes = path,
-                SortOrder = data.Items.Count,
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow
-            };
-            item.Attachments.Add(new TodoAttachment
-            {
-                FilePath = path,
-                DisplayName = fileName,
-                Type = "file",
-                StorageMode = TodoAttachment.LinkedStorageMode,
-                AddedAt = DateTimeOffset.UtcNow
+                string fileName = Path.GetFileName(path);
+                var item = new TodoItem
+                {
+                    Text = fileName,
+                    Notes = path,
+                    SortOrder = current.Items.Count,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    UpdatedAt = DateTimeOffset.UtcNow
+                };
+                item.Attachments.Add(new TodoAttachment
+                {
+                    FilePath = path,
+                    DisplayName = fileName,
+                    Type = "file",
+                    StorageMode = TodoAttachment.LinkedStorageMode,
+                    AddedAt = DateTimeOffset.UtcNow
+                });
+
+                current.Items.Add(item);
+                insertedItem = item;
+                return true;
             });
 
-            data.Items.Add(item);
-            await store.SaveAsync(data);
+            // DEF-043 relay: merge the external insert into any open todo
+            // widget before its next whole-document save, or that save would
+            // drop the attachment again with its stale snapshot. The item is
+            // passed as insertedItem (not changedItem): open widgets ignore
+            // changed items that are absent from their in-memory list.
+            if (_todoReminderServiceAccessor() is { } reminderService)
+            {
+                reminderService.NotifyExternalStoreChanged(todoWidget.Id, changedItem: null, insertedItem);
+            }
 
-            App.Log($"[SearchAction] Attached '{fileName}' to todo widget '{todoWidget.Id}'.");
+            App.Log($"[SearchAction] Attached '{Path.GetFileName(path)}' to todo widget '{todoWidget.Id}'.");
             return true;
         }
         catch (Exception ex)
@@ -84,33 +112,17 @@ public sealed class SearchResultActionService
 
         try
         {
-            var store = new QuickCaptureStore();
-            var data = await store.LoadAsync();
-
-            string fileName = Path.GetFileName(path);
-            var item = new QuickCaptureItem
+            // FCFG-01: route through the service cache instead of a raw
+            // QuickCaptureStore write, so the search-written entry can no
+            // longer be lost to the service's own cached-document save.
+            QuickCaptureItem? created = await _quickCaptureService.AddExternalLinkedFileItemAsync(path);
+            if (created is null)
             {
-                Type = QuickCaptureItemType.Text,
-                Title = fileName,
-                Body = path,
-                SourceKind = QuickCaptureSourceKind.DragDrop,
-                SortOrder = data.Items.Count,
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow
-            };
-            item.Attachments.Add(new TodoAttachment
-            {
-                FilePath = path,
-                DisplayName = fileName,
-                Type = "file",
-                StorageMode = TodoAttachment.LinkedStorageMode,
-                AddedAt = DateTimeOffset.UtcNow
-            });
+                App.Log($"[SearchAction] Skipped saving '{Path.GetFileName(path)}' to quick capture: item was not created.");
+                return false;
+            }
 
-            data.Items.Insert(0, item);
-            await store.SaveAsync(data);
-
-            App.Log($"[SearchAction] Saved '{fileName}' to quick capture.");
+            App.Log($"[SearchAction] Saved '{Path.GetFileName(path)}' to quick capture.");
             return true;
         }
         catch (Exception ex)
