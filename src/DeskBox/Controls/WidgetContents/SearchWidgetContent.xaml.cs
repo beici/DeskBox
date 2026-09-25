@@ -40,8 +40,6 @@ public sealed partial class SearchWidgetContent : UserControl, IDisposable
         AttachExternalSubscriptions();
     }
 
-    public event EventHandler? SearchRequested;
-
     private void SearchWidgetContent_Loaded(object sender, RoutedEventArgs e)
     {
         AttachExternalSubscriptions();
@@ -289,7 +287,6 @@ public sealed partial class SearchWidgetContent : UserControl, IDisposable
 
     private void SearchBar_Click(object sender, RoutedEventArgs e)
     {
-        SearchRequested?.Invoke(this, EventArgs.Empty);
         App.Current.OpenSearchPopup();
     }
 
@@ -372,6 +369,5 @@ public sealed partial class SearchWidgetContent : UserControl, IDisposable
         Unloaded -= SearchWidgetContent_Unloaded;
         HistoryList.ItemsSource = null;
         _recentQueries.Clear();
-        SearchRequested = null;
     }
 }

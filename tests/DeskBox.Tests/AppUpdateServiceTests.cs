@@ -52,10 +52,17 @@ public sealed class AppUpdateServiceTests : IDisposable
             Arm64Size = 202
         };
 
-        Assert.True(AppUpdateService.TrySelectInstallerForArchitecture(manifest, "arm64"));
-        Assert.EndsWith("_arm64.exe", manifest.DownloadUrl, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(new string('B', 64), manifest.Sha256);
-        Assert.Equal(202, manifest.Size);
+        // FARC-05: the ARM64 promotion lands on a clone; the manifest instance
+        // that flows into the LastCheckResult cache keeps its original payload.
+        AppUpdateManifest selected =
+            AppUpdateService.SelectInstallerForArchitecture(manifest, "arm64")!;
+        Assert.EndsWith("_arm64.exe", selected.DownloadUrl, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(new string('B', 64), selected.Sha256);
+        Assert.Equal(202, selected.Size);
+        Assert.EndsWith("_x64.exe", manifest.DownloadUrl, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(new string('A', 64), manifest.Sha256);
+        Assert.Equal(101, manifest.Size);
+        Assert.NotSame(manifest, selected);
     }
 
     [Fact]
@@ -72,7 +79,9 @@ public sealed class AppUpdateServiceTests : IDisposable
             Arm64Size = 202
         };
 
-        Assert.True(AppUpdateService.TrySelectInstallerForArchitecture(manifest, "x64"));
+        AppUpdateManifest? selected =
+            AppUpdateService.SelectInstallerForArchitecture(manifest, "x64");
+        Assert.Same(manifest, selected);
         Assert.EndsWith("_x64.exe", manifest.DownloadUrl, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(new string('A', 64), manifest.Sha256);
         Assert.Equal(101, manifest.Size);

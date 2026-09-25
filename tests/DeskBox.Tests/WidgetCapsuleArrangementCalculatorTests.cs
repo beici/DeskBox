@@ -73,9 +73,13 @@ public sealed class WidgetCapsuleArrangementCalculatorTests
                 SettingsService.WidgetCapsuleBarDirectionVertical,
                 8);
 
-        Assert.Equal(new RectInt32(20, 0, 140, 62), result["one"]);
-        Assert.Equal(new RectInt32(20, 70, 140, 61), result["two"]);
-        Assert.Equal(new RectInt32(20, 139, 140, 61), result["three"]);
+        // FLAY-01: the overflow ladder gives up the spacing first (8 → 0) and
+        // compresses the capsule heights against the full work-area length
+        // (3 × 80 → 67/67/66, still proportional), instead of compressing
+        // harder against the spacing-reduced budget while keeping the gaps.
+        Assert.Equal(new RectInt32(20, 0, 140, 67), result["one"]);
+        Assert.Equal(new RectInt32(20, 67, 140, 67), result["two"]);
+        Assert.Equal(new RectInt32(20, 134, 140, 66), result["three"]);
     }
 
     [Fact]
@@ -115,6 +119,70 @@ public sealed class WidgetCapsuleArrangementCalculatorTests
                 8);
 
         Assert.Equal(new RectInt32(100, 50, 320, 180), result["one"]);
+    }
+
+    [Fact]
+    public void Horizontal_ModerateOverflow_SqueezesSpacingBeforeSizes()
+    {
+        // FLAY-01: on overflow the gaps give way before the capsule sizes —
+        // both capsules keep their requested width and the spacing collapses
+        // to zero instead of shrinking the capsules (the old order compressed
+        // the sizes first, the reverse of the documented ladder).
+        var items = new[]
+        {
+            new WidgetCapsuleArrangementItem("one", 120, 40),
+            new WidgetCapsuleArrangementItem("two", 120, 40)
+        };
+
+        IReadOnlyDictionary<string, RectInt32> result =
+            WidgetCapsuleArrangementCalculator.Calculate(
+                items,
+                new RectInt32(0, 0, 250, 200),
+                new PointInt32(0, 10),
+                WidgetPositionAnchors.LeftTop,
+                SettingsService.WidgetCapsuleBarDirectionHorizontal,
+                20);
+
+        Assert.Equal(new RectInt32(0, 10, 120, 40), result["one"]);
+        Assert.Equal(new RectInt32(120, 10, 120, 40), result["two"]);
+    }
+
+    [Fact]
+    public void Vertical_DeepOverflow_CompressesSizesToFillAfterSpacingIsGone()
+    {
+        // FLAY-01 ladder, step ③: after the spacing is gone the sizes are
+        // compressed proportionally toward the floor. The arranged sizes must
+        // still sum to exactly what the work area holds (caller-visible
+        // invariant), and no capsule may be dropped for a solvable overload.
+        var items = new[]
+        {
+            new WidgetCapsuleArrangementItem("one", 100, 200),
+            new WidgetCapsuleArrangementItem("two", 100, 200),
+            new WidgetCapsuleArrangementItem("three", 100, 200)
+        };
+
+        IReadOnlyDictionary<string, RectInt32> result =
+            WidgetCapsuleArrangementCalculator.Calculate(
+                items,
+                new RectInt32(0, 0, 300, 400),
+                new PointInt32(10, 0),
+                WidgetPositionAnchors.LeftTop,
+                SettingsService.WidgetCapsuleBarDirectionVertical,
+                10);
+
+        Assert.True(result.ContainsKey("one") && result.ContainsKey("two") && result.ContainsKey("three"),
+            "a mid-size overload must compress sizes, not drop capsules");
+        RectInt32[] ordered = result.Values.OrderBy(bounds => bounds.Y).ToArray();
+        int totalHeight = ordered.Sum(bounds => bounds.Height);
+        Assert.True(totalHeight <= 400, $"arranged sizes must fit the work area, got {totalHeight}");
+        Assert.True(totalHeight >= 399,
+            "sizes must be compressed to fill the work area, not shrunk arbitrarily");
+        for (int index = 1; index < ordered.Length; index++)
+        {
+            Assert.Equal(
+                ordered[index - 1].Y + ordered[index - 1].Height,
+                ordered[index].Y);
+        }
     }
 
     [Fact]

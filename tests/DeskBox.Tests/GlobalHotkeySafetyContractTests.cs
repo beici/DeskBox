@@ -146,9 +146,13 @@ public sealed class GlobalHotkeySafetyContractTests
         Assert.Contains("int previousModifiers", apply, StringComparison.Ordinal);
         Assert.Contains("int previousVirtualKey", apply, StringComparison.Ordinal);
         Assert.Contains("RefreshRegistration();", apply, StringComparison.Ordinal);
-        Assert.Contains("settings.GlobalHotkeyActivationKind = previousKind", apply, StringComparison.Ordinal);
-        Assert.Contains("settings.GlobalHotkeyModifiers = previousModifiers", apply, StringComparison.Ordinal);
-        Assert.Contains("settings.GlobalHotkeyKey = previousVirtualKey", apply, StringComparison.Ordinal);
+        // R8-AB/FTHR-01: the rollback restores the previous activation through
+        // the locked multi-field settings mutator instead of bare field writes,
+        // so the restore itself cannot tear across the serialized save.
+        Assert.Contains("_settingsService.UpdateGlobalHotkeySettings(", apply, StringComparison.Ordinal);
+        Assert.Contains("previousKind", apply, StringComparison.Ordinal);
+        Assert.Contains("previousModifiers", apply, StringComparison.Ordinal);
+        Assert.Contains("previousVirtualKey", apply, StringComparison.Ordinal);
         Assert.Contains("if (IsRegistered)", apply, StringComparison.Ordinal);
     }
 
@@ -215,11 +219,13 @@ public sealed class GlobalHotkeySafetyContractTests
         string app = Read("src/DeskBox/App.xaml.cs");
         string recovery = Slice(
             app,
-            "private void OnLifecycleRecoveryRequested",
+            "private async Task OnLifecycleRecoveryRequestedAsync",
             "private void FlushSettingsForEndSession");
 
-        Assert.Contains("GlobalHotkeyService?.RefreshRegistration();", recovery, StringComparison.Ordinal);
-        Assert.Contains("DesktopDoubleClickActivationService?.RefreshRegistration();", recovery, StringComparison.Ordinal);
+        // R8-AB/DEF-087: the recovery chain awaits the async handshake variants
+        // so a stalled hook thread can no longer freeze the UI thread.
+        Assert.Contains("await GlobalHotkeyService.RefreshRegistrationAsync();", recovery, StringComparison.Ordinal);
+        Assert.Contains("await DesktopDoubleClickActivationService.RefreshRegistrationAsync();", recovery, StringComparison.Ordinal);
         Assert.Contains("requiresExternalRecovery", recovery, StringComparison.Ordinal);
     }
 

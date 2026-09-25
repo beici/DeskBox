@@ -682,17 +682,6 @@ public sealed partial class WidgetManager
         return WidgetLayerService.TryReturnToRestingBandBelow(windowHandle, anchor);
     }
 
-    public void BringAllVisibleWidgetsToFront(IntPtr exceptHwnd = default)
-    {
-        foreach (var window in GetLoadedDesktopWindows())
-        {
-            if (window.Visible && window.WindowHandle != exceptHwnd)
-            {
-                WidgetLayerService.BringToFront(window.WindowHandle);
-            }
-        }
-    }
-
     private void RaiseVisibleWidgetsTemporarily(string reason)
     {
         if (WidgetLayerService.UsesDesktopPinnedMode())

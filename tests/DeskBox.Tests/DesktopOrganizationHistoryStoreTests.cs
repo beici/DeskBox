@@ -215,6 +215,21 @@ public sealed class DesktopOrganizationHistoryStoreTests : IDisposable
     }
 
     [Fact]
+    public void SaveChecked_PoolRelayStillPersistsAndReturnsTrue()
+    {
+        // FTHR-07: SaveChecked relays the async write protocol through
+        // Task.Run (like DesktopOrganizationRecoveryStore.Save) so the
+        // synchronous wait cannot deadlock on a caller's sync context —
+        // the checked semantics (true + durable file) must survive the relay.
+        Directory.CreateDirectory(_tempRoot);
+        var store = new DesktopOrganizationHistoryStore(StorePath);
+        store.Entries.Add(CreateEntry("checked"));
+
+        Assert.True(store.SaveChecked());
+        Assert.True(File.Exists(StorePath));
+    }
+
+    [Fact]
     public async Task SettingsService_LoadAsync_MigratesHistoryOutOfSettingsJson()
     {
         // Seed a legacy settings.json carrying history.

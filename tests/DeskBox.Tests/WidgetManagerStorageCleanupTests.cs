@@ -605,68 +605,6 @@ public sealed class WidgetManagerStorageCleanupTests : IDisposable
     }
 
     [Fact]
-    public async Task SaveQuickCaptureItemToFileWidgetAsync_WritesRealFiles()
-    {
-        string managedFolder = Directory.CreateDirectory(Path.Combine(_storageRoot, "Target")).FullName;
-        var widget = CreateManagedWidget("Target", managedFolder);
-        _settingsService.Settings.Widgets.Add(widget);
-
-        string? textPath = await _widgetManager.SaveQuickCaptureItemToFileWidgetAsync(
-            new QuickCaptureItem
-            {
-                Type = QuickCaptureItemType.Text,
-                Body = "hello world"
-            },
-            widget.Id,
-            "Capture");
-
-        string? linkPath = await _widgetManager.SaveQuickCaptureItemToFileWidgetAsync(
-            new QuickCaptureItem
-            {
-                Type = QuickCaptureItemType.Link,
-                Body = "https://example.com/docs",
-                Url = "https://example.com/docs"
-            },
-            widget.Id,
-            "Capture");
-
-        string sourceImagePath = Path.Combine(_tempRoot, "source.png");
-        await File.WriteAllBytesAsync(sourceImagePath, [1, 2, 3, 4]);
-        string? imagePath = await _widgetManager.SaveQuickCaptureItemToFileWidgetAsync(
-            new QuickCaptureItem
-            {
-                Type = QuickCaptureItemType.Image,
-                Body = "Image",
-                ImagePath = sourceImagePath,
-                UpdatedAt = new DateTimeOffset(2026, 6, 21, 14, 32, 0, TimeSpan.Zero)
-            },
-            widget.Id,
-            "Capture");
-
-        Assert.NotNull(textPath);
-        Assert.Equal("hello world", await File.ReadAllTextAsync(textPath));
-        Assert.EndsWith(".txt", textPath, StringComparison.OrdinalIgnoreCase);
-
-        Assert.NotNull(linkPath);
-        Assert.Contains("URL=https://example.com/docs", await File.ReadAllTextAsync(linkPath));
-        Assert.EndsWith(".url", linkPath, StringComparison.OrdinalIgnoreCase);
-
-        Assert.NotNull(imagePath);
-        Assert.Equal([1, 2, 3, 4], await File.ReadAllBytesAsync(imagePath));
-        Assert.StartsWith("Capture ", Path.GetFileName(imagePath), StringComparison.Ordinal);
-        Assert.EndsWith(".png", imagePath, StringComparison.OrdinalIgnoreCase);
-
-        var target = Assert.Single(_widgetManager.GetQuickCaptureFileWidgetTargets());
-        Assert.Equal(widget.Id, target.WidgetId);
-        Assert.Equal(managedFolder, target.FolderPath);
-        Assert.Equal(widget.Id, _settingsService.Settings.LastQuickCaptureFileWidgetId);
-
-        var lastTarget = _widgetManager.GetLastQuickCaptureFileWidgetTarget();
-        Assert.NotNull(lastTarget);
-        Assert.Equal(widget.Id, lastTarget.WidgetId);
-    }
-
-    [Fact]
     public void TryGetFileWidgetPathConflict_ReportsManagedStorageRootOverlap()
     {
         Assert.True(_widgetManager.TryGetFileWidgetPathConflict(

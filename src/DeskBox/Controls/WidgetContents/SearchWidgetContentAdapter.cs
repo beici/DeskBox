@@ -45,27 +45,6 @@ public sealed class SearchWidgetContentAdapter : IWidgetContent, IWidgetResponsi
         }
     }
 
-    /// <summary>
-    /// Raised when the user clicks the widget to open the search popup.
-    /// </summary>
-    public event EventHandler? SearchRequested
-    {
-        add
-        {
-            if (View is SearchWidgetContent content)
-            {
-                content.SearchRequested += value;
-            }
-        }
-        remove
-        {
-            if (View is SearchWidgetContent content)
-            {
-                content.SearchRequested -= value;
-            }
-        }
-    }
-
     public Task InitializeAsync()
     {
         return Task.CompletedTask;

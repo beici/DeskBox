@@ -22,25 +22,6 @@ internal static class QuickCaptureClipboardColorEditor
         LocalizationService localization,
         bool isBackground,
         Windows.UI.Color effectiveTextColor,
-        Windows.UI.Color effectiveBackgroundColor) =>
-        await ShowAsync(
-            config,
-            settingsService,
-            xamlRoot,
-            localization,
-            isBackground,
-            effectiveTextColor,
-            effectiveBackgroundColor,
-            isHoverText: false,
-            effectiveHoverTextColor: effectiveTextColor);
-
-    public static async Task ShowAsync(
-        WidgetConfig config,
-        SettingsService settingsService,
-        XamlRoot xamlRoot,
-        LocalizationService localization,
-        bool isBackground,
-        Windows.UI.Color effectiveTextColor,
         Windows.UI.Color effectiveBackgroundColor,
         bool isHoverText,
         Windows.UI.Color effectiveHoverTextColor)

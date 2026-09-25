@@ -146,6 +146,73 @@ public sealed class SettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SaveCheckedAsync_NewerSchemaProfileIsRefusedAndFileUntouched()
+    {
+        // DEF-086: a settings.json stamped by a newer schema than this build
+        // understands puts the writer into a read-only stance (mirroring the
+        // widget-layout.json CanWrite refusal) — no rewrite, no backup
+        // rotation, nothing that could drop fields this build cannot model.
+        const string newerProfileJson = """
+            {
+              "schemaVersion": 999,
+              "language": "ja-JP",
+              "searchMaxResults": 100
+            }
+            """;
+        string settingsPath = Path.Combine(_settingsRoot, "settings.json");
+        await File.WriteAllTextAsync(settingsPath, newerProfileJson);
+
+        var service = new SettingsService(_settingsRoot);
+        await service.LoadAsync();
+
+        Assert.Equal(SettingsLoadRecoveryState.Primary, service.LastLoadRecoveryState);
+        // The pipeline must not stamp its current version over the newer file.
+        Assert.Equal(999, service.Settings.SchemaVersion);
+
+        service.Settings.SearchMaxResults = 25;
+        bool saved = await service.SaveCheckedAsync();
+
+        Assert.False(saved);
+        Assert.NotNull(service.LastPersistenceFailure);
+        Assert.Equal("save", service.LastPersistenceFailure!.Operation);
+        Assert.Contains(
+            "settings.json schema 999 is newer than this build understands",
+            service.LastPersistenceFailure.Message,
+            StringComparison.Ordinal);
+
+        // Byte-identical profile: the save was refused before any write.
+        Assert.Equal(newerProfileJson, await File.ReadAllTextAsync(settingsPath));
+        Assert.Empty(Directory.EnumerateFiles(_settingsRoot, "settings.json.bak"));
+    }
+
+    [Fact]
+    public async Task LoadAsync_MissingSchemaVersionRunsVersionZeroMigration()
+    {
+        // FCFG-07: a pre-versioning profile (no "schemaVersion" property) used
+        // to deserialize into the AppSettings constructor default (1) and skip
+        // Migration_0_To_1 as a dead step. The probe must treat the missing
+        // property as version 0. DeletedWidgetIds is the discriminator: only
+        // Migration_0_To_1 initializes it (no later step or normalize pass).
+        await File.WriteAllTextAsync(
+            Path.Combine(_settingsRoot, "settings.json"),
+            """
+            {
+              "language": "en-US",
+              "deletedWidgetIds": null
+            }
+            """);
+
+        var service = new SettingsService(_settingsRoot);
+        await service.LoadAsync();
+
+        Assert.Equal(SettingsLoadRecoveryState.Primary, service.LastLoadRecoveryState);
+        Assert.NotNull(service.Settings.DeletedWidgetIds);
+        Assert.Equal(
+            SettingsMigrationPipeline.CurrentSchemaVersion,
+            service.Settings.SchemaVersion);
+    }
+
+    [Fact]
     public async Task LoadAsync_CurrentSchemaRepairsRetiredNeverCleanupValues()
     {
         string settingsPath = Path.Combine(_settingsRoot, "settings.json");
@@ -1714,6 +1781,32 @@ public sealed class SettingsServiceTests : IDisposable
     private static string SerializeSettingValue(object? value, Type type)
     {
         return JsonSerializer.Serialize(value, type, s_jsonOptions);
+    }
+
+    [Fact]
+    public void LoadFailureRecovery_StampsCurrentSchemaVersion()
+    {
+        // DEF-075 residual: the outer load-failure catch builds a
+        // recovery-default profile; it must be stamped current exactly like
+        // the missing-file path is, or the next startup replays historical
+        // migrations over the user's redone choices.
+        string source = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Services/SettingsService.cs"));
+        int recovery = source.IndexOf(
+            "SettingsLoadRecoveryState.DefaultsAfterFailure",
+            StringComparison.Ordinal);
+        Assert.True(recovery > 0, "the outer load-failure recovery block was not found");
+        string block = source[recovery..];
+        int nextCatch = block.IndexOf("catch (", StringComparison.Ordinal);
+        if (nextCatch > 0)
+        {
+            block = block[..nextCatch];
+        }
+
+        Assert.Contains(
+            "_settings.SchemaVersion = SettingsMigrationPipeline.CurrentSchemaVersion;",
+            block,
+            StringComparison.Ordinal);
     }
 
     public void Dispose()

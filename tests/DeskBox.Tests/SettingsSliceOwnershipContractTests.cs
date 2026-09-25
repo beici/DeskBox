@@ -39,7 +39,9 @@ public sealed class SettingsSliceOwnershipContractTests
     [Fact]
     public void EveryFacadeProperty_MapsToExactlyOneSliceProperty()
     {
-        Assert.Equal(222, FacadeProperties.Length);
+        // R8-AB: 222→221 — the dead LastQuickCaptureFileWidgetId facade
+        // property was removed with its slice member (FQC-05).
+        Assert.Equal(221, FacadeProperties.Length);
 
         foreach (PropertyInfo facade in FacadeProperties)
         {
@@ -231,7 +233,6 @@ public sealed class SettingsSliceOwnershipContractTests
         ["src/DeskBox/Controls/WidgetContents/TodoWidgetContent.Menus.cs"] = 1,
         ["src/DeskBox/Controls/WidgetContents/TodoWidgetContent.xaml.cs"] = 1,
         ["src/DeskBox/Controls/WidgetShell.xaml.cs"] = 2,
-        ["src/DeskBox/Helpers/QuickCaptureClipboardActivationHelper.cs"] = 1,
         ["src/DeskBox/Services/AutoStartDefaultPolicy.cs"] = 1,
         ["src/DeskBox/Services/DataBackupSettingsPolicy.cs"] = 15,
         ["src/DeskBox/Services/DesktopAutoOrganizationWatcher.cs"] = 13,
@@ -239,7 +240,9 @@ public sealed class SettingsSliceOwnershipContractTests
         // read). The fork keeps the enabled-state read/write/rollback triple in
         // both toggle paths, which is 8 facade reads of
         // DesktopDoubleClickEnabled; the merge preserved the fork's 8.
-        ["src/DeskBox/Services/DesktopDoubleClickActivationService.cs"] = 8,
+        // R8-AB: +1 — RefreshRegistrationAsync reads the enabled slice for the
+        // async handshake decision (DEF-087).
+        ["src/DeskBox/Services/DesktopDoubleClickActivationService.cs"] = 9,
         ["src/DeskBox/Services/DesktopOrganizationCoordinator.cs"] = 13,
         ["src/DeskBox/Services/DesktopOrganizationTransaction.Restore.cs"] = 3,
         ["src/DeskBox/Services/DesktopOrganizationTransaction.cs"] = 9,
@@ -261,7 +264,10 @@ public sealed class SettingsSliceOwnershipContractTests
         ["src/DeskBox/Services/SearchResultActionService.cs"] = 2,
         ["src/DeskBox/Services/SettingsMigrationService.cs"] = 38,
         ["src/DeskBox/Services/SettingsSearchCatalog.cs"] = 20,
-        ["src/DeskBox/Services/SettingsService.cs"] = 610,
+        // R8-AB: +3 — the read-only save guard reads the loaded schema state,
+        // and UpdateGlobalHotkeySettings reads/writes the hotkey slice fields
+        // under the lock (DEF-086 / FTHR-01).
+        ["src/DeskBox/Services/SettingsService.cs"] = 613,
         ["src/DeskBox/Services/ThemeService.cs"] = 11,
         ["src/DeskBox/Services/TodoReminderService.cs"] = 8,
         ["src/DeskBox/Services/WeatherService.cs"] = 1,

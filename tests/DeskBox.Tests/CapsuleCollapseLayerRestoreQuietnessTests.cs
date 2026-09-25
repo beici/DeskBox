@@ -82,7 +82,7 @@ public sealed class CapsuleCollapseLayerRestoreQuietnessTests
         string anchor = SliceMethod(
             manager,
             "    internal bool TryReturnWidgetToRestingBand(",
-            "    public void BringAllVisibleWidgetsToFront(");
+            "    private void RaiseVisibleWidgetsTemporarily(");
 
         // Landing in the final slot is what keeps the peer normalization that
         // runs next from issuing a second move on the same window.

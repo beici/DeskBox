@@ -87,7 +87,9 @@ public sealed class ArchitectureContractTests
             // (Services), the shared editor (re-homed into WidgetContents) and
             // the host settings code-behind. Net +3 over the frozen 22.
             // 1.5.5 adds Models/QuickCaptureSettingsSlice.cs (+1).
-            ["QuickCapture"] = 26,
+            // R8-AB: -1 — the dead QuickCaptureClipboardActivationHelper.cs was
+            // deleted (FQC-09), deliberately shrinking the frozen inventory.
+            ["QuickCapture"] = 25,
         };
 
     private static readonly Dictionary<string, int> FrozenAmbientWidgetManagerAccess =

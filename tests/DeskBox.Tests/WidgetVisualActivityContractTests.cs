@@ -441,7 +441,11 @@ public sealed class WidgetVisualActivityContractTests
         Assert.Contains("midpoint: 0.6f, amplitude: 0.2f", compactLive, StringComparison.Ordinal);
         Assert.Contains("!SystemAnimationsEnabled()", compactLive, StringComparison.Ordinal);
         Assert.Contains("CompactLiveProgressTransform.ScaleX = 1", compactLive, StringComparison.Ordinal);
-        Assert.Contains("WidgetAnimationTemplate.CompactLiveTranslation", compactLive, StringComparison.Ordinal);
+        // DEF-089/FANI-01: the translation's end value follows the track
+        // width, so it is a fresh per-start animation; the opacity pulse keeps
+        // the shared seeded template.
+        Assert.Contains("_compositionResources.CreateScalar(", compactLive, StringComparison.Ordinal);
+        Assert.Contains("InsertKeyFrame(1, (float)maxTranslate)", compactLive, StringComparison.Ordinal);
         Assert.Contains("WidgetAnimationTemplate.CompactLiveOpacity", compactLive, StringComparison.Ordinal);
         Assert.DoesNotContain("CreateTimer()", compactLive, StringComparison.Ordinal);
 

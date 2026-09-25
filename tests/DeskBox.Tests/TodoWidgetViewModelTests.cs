@@ -1280,6 +1280,33 @@ public sealed class TodoWidgetViewModelTests : IDisposable
         Assert.Null(Assert.Single(reloaded.Items).SnoozedUntil);
     }
 
+    [Fact]
+    public async Task SaveAsync_StoreFailure_KeepsVmStateAndRaisesSaveFailed()
+    {
+        // FEXC-03: a persistence failure must not escape the VM (it used to
+        // fly into fire-and-forget/async void callers), the in-memory state
+        // must stay consistent with what the user sees, and the failure must
+        // be raised so the hosting surface can give user-visible feedback.
+        CreateStore("todo-widget");
+        // Force the store's save path to fail: a directory occupying the
+        // todo.json path makes ResilientJsonStore's File.Move throw after
+        // every temp-file write, while LoadAsync still returns defaults.
+        Directory.CreateDirectory(Path.Combine(_widgetsDataRoot, "todo-widget", "todo.json"));
+
+        var viewModel = CreateViewModel("todo-widget");
+        await viewModel.InitializeAsync();
+
+        int saveFailedCount = 0;
+        viewModel.SaveFailed += (_, _) => saveFailedCount++;
+
+        var exception = await Record.ExceptionAsync(() => viewModel.AddItemAsync("persisted-in-memory"));
+
+        Assert.Null(exception);
+        Assert.NotNull(viewModel.Items.FirstOrDefault(item => item.Text == "persisted-in-memory"));
+        Assert.Equal(1, viewModel.TotalCount);
+        Assert.Equal(1, saveFailedCount);
+    }
+
     public void Dispose()
     {
         try

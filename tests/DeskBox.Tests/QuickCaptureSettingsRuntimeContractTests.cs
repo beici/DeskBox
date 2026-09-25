@@ -170,13 +170,29 @@ public sealed class QuickCaptureSettingsRuntimeContractTests
     [Fact]
     public void QuickCaptureTextInputs_UseTheConfiguredSubmitHelper()
     {
-        // DEF-027: standalone window inputs were removed with the dead host.
-        string shared = File.ReadAllText(TestPaths.FromRepository(
-            "src/DeskBox/Controls/WidgetContents/QuickCaptureSurfaceContent.xaml.cs"));
+        // DEF-027 removed the standalone-window inputs with the dead host;
+        // R8-AB/FQC-07 removed the leftover legacy input pipeline, so the
+        // configured submit helper now lives in the shared MarkdownSourceEditor
+        // that the surface binds its live detail editor to.
+        string surfaceXaml = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Controls/WidgetContents/QuickCaptureSurfaceContent.xaml"));
+        string editor = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Controls/MarkdownSourceEditor.xaml.cs"));
+        string viewModel = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/ViewModels/QuickCaptureWidgetViewModel.cs"));
 
-        Assert.Contains("QuickCaptureEditorEnterBehavior", shared, StringComparison.Ordinal);
-        Assert.Contains("SettingsService.ShouldSubmitEditorOnEnter", shared, StringComparison.Ordinal);
-        Assert.Contains("TextBoxEditorShortcutHelper.IsCtrlSaveShortcut", shared, StringComparison.Ordinal);
+        Assert.Contains(
+            "EditorEnterBehavior=\"{Binding EditorEnterBehavior}\"",
+            surfaceXaml,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "SettingsService.ShouldSubmitEditorOnEnter(",
+            editor,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "SettingsService.NormalizeEditorEnterBehavior(",
+            viewModel,
+            StringComparison.Ordinal);
     }
 
     [Fact]

@@ -338,8 +338,9 @@ public sealed class WidgetMarginDialogHostFitContractTests
         string body = editor[apply..];
 
         // A capsule-subject move must translate the capsule placement itself:
-        // the generic refresh is a no-op for peeks since DEF-065.
-        int branch = body.IndexOf("if (ReferenceEquals(subject, live))", StringComparison.Ordinal);
+        // the generic refresh is a no-op for peeks since DEF-065. DEF-095
+        // replaced the boxed ReferenceEquals with a field-wise comparison.
+        int branch = body.IndexOf("bool subjectIsLive =", StringComparison.Ordinal);
         Assert.True(branch > 0, "the subject kind must decide the placement update path");
         int refresh = body.IndexOf("RefreshCompactPlacementAfterBoundsMove();", branch, StringComparison.Ordinal);
         int capture = body.IndexOf("CaptureCompactPlacement(target, persist: true);", branch, StringComparison.Ordinal);

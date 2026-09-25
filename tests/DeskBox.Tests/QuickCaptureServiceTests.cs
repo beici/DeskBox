@@ -511,6 +511,45 @@ public sealed class QuickCaptureServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DeleteItemsAsync_MixedOwnershipTombstonesEachSectionSeparately()
+    {
+        // FQC-01: a mixed multi-selection must delete every item from its
+        // real store section. The former single All(IsRecent) bool routed the
+        // whole batch into one section, silently dropping the other half.
+        var service = CreateService();
+        var first = await service.AddItemAsync("first");
+        var second = await service.AddItemAsync("second");
+        var recent = await service.AddRecentClipboardItemAsync("recent", QuickCaptureService.DefaultRecentLimit);
+        Assert.NotNull(recent);
+        string recentId = recent.Id;
+        await Task.Delay(5);
+
+        IReadOnlyList<QuickCaptureDeletedItemSnapshot> deleted = await service.DeleteItemsAsync(
+        [
+            (first.Id, false),
+            (recentId, true)
+        ]);
+        QuickCaptureStoreData data = await service.GetDataAsync();
+
+        // Count and ownership of the undo snapshots follow the real per-item
+        // ownership: one record + one recent, each flagged correctly.
+        Assert.Equal(2, deleted.Count);
+        Assert.Single(deleted, snapshot => snapshot.IsRecent == false && snapshot.Item.Id == first.Id);
+        Assert.Single(deleted, snapshot => snapshot.IsRecent == true && snapshot.Item.Id == recentId);
+
+        // Each section keeps only its untouched entry live; the deleted ones
+        // are tombstoned inside their own section.
+        Assert.Single(data.Items.Where(item => !item.IsDeleted), item => item.Id == second.Id);
+        Assert.Empty(data.RecentItems.Where(item => !item.IsDeleted));
+
+        // The store file shows both tombstones in their own sections.
+        QuickCaptureStoreData persisted = await new QuickCaptureStore(_storeRoot).LoadAsync();
+        Assert.True(persisted.Items.Single(item => item.Id == first.Id).IsDeleted);
+        Assert.False(persisted.Items.Single(item => item.Id == second.Id).IsDeleted);
+        Assert.True(persisted.RecentItems.Single(item => item.Id == recentId).IsDeleted);
+    }
+
+    [Fact]
     public async Task RestoreDeletedItemAsync_RestoresDeletedRecord()
     {
         var service = CreateService();
@@ -756,14 +795,13 @@ public sealed class QuickCaptureServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task AddImageFileItemAsync_CachesImageAndExportsFriendlyFile()
+    public async Task AddImageFileItemAsync_CachesImage()
     {
         var service = CreateService();
         string sourceImagePath = Path.Combine(_tempRoot, "source.png");
         await File.WriteAllBytesAsync(sourceImagePath, [1, 2, 3, 4]);
 
         var item = await service.AddImageFileItemAsync(sourceImagePath);
-        string? exportPath = await service.CreateImageExportFileAsync(item!, "Capture");
         var data = await service.GetDataAsync();
 
         Assert.NotNull(item);
@@ -771,12 +809,6 @@ public sealed class QuickCaptureServiceTests : IDisposable
         Assert.True(File.Exists(item.ImagePath));
         Assert.NotEqual(sourceImagePath, item.ImagePath);
         Assert.Single(data.Items);
-
-        Assert.NotNull(exportPath);
-        Assert.True(File.Exists(exportPath));
-        Assert.StartsWith("Capture ", Path.GetFileName(exportPath), StringComparison.Ordinal);
-        Assert.EndsWith(".png", exportPath, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal([1, 2, 3, 4], await File.ReadAllBytesAsync(exportPath));
     }
 
     [Fact]
@@ -1255,6 +1287,51 @@ public sealed class QuickCaptureServiceTests : IDisposable
         Assert.Single(updated!.Attachments);
         Assert.Equal(Path.GetFullPath(secondPath), updated.ImagePath);
         Assert.Equal(QuickCaptureItemType.Image, updated.Type);
+    }
+
+    [Fact]
+    public async Task CleanupUnusedImageCacheAsync_RemovesOrphanedAttachmentDirectories()
+    {
+        // FQC-13: a GC pass must retire attachments/{itemId}/ directories
+        // that no live item owns (legacy residue, import failures), while a
+        // live item's managed copies stay untouched.
+        var service = CreateService();
+        var item = await service.AddItemAsync("keeper");
+        string keeperDirectory = Path.Combine(_storeRoot, "attachments", item.Id);
+        string orphanDirectory = Path.Combine(_storeRoot, "attachments", "bogus-item");
+        Directory.CreateDirectory(keeperDirectory);
+        Directory.CreateDirectory(orphanDirectory);
+        await File.WriteAllTextAsync(Path.Combine(keeperDirectory, "managed.bin"), "x");
+        await File.WriteAllTextAsync(Path.Combine(orphanDirectory, "stale.bin"), "x");
+
+        await service.CleanupUnusedImageCacheAsync();
+
+        Assert.True(Directory.Exists(keeperDirectory));
+        Assert.True(File.Exists(Path.Combine(keeperDirectory, "managed.bin")));
+        Assert.False(Directory.Exists(orphanDirectory));
+    }
+
+    [Fact]
+    public async Task DeleteItemAsync_KeepsAttachmentDirectoryAliveDuringUndoWindow()
+    {
+        // FQC-13 (mirroring DEF-012): the GC pass that runs right after a
+        // delete must not physically remove the record's managed attachment
+        // directory while undo is still possible — restoring the record
+        // afterwards would resurrect dead file paths.
+        string documentPath = Path.Combine(_tempRoot, "undo.pdf");
+        await File.WriteAllBytesAsync(documentPath, [1, 2, 3]);
+        var service = CreateService();
+        var item = (await service.AddItemWithAttachmentsAsync([documentPath], copyToManagedStorage: true))!;
+        string attachmentDirectory = Path.Combine(_storeRoot, "attachments", item.Id);
+        Assert.True(Directory.Exists(attachmentDirectory));
+
+        await service.DeleteItemAsync(item.Id);
+        // Deferred GC pass (the UI layer dispatches it after the delete).
+        await service.AddRecentClipboardItemAsync("gc trigger", QuickCaptureService.DefaultRecentLimit);
+        Assert.True(Directory.Exists(attachmentDirectory),
+            "attachment directory of a record inside the delete-undo window must survive a GC pass");
+        // Linked source files are never touched by the attachment GC.
+        Assert.True(File.Exists(documentPath));
     }
 
     private QuickCaptureService CreateService()

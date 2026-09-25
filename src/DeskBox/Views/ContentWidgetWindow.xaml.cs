@@ -430,18 +430,6 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
         };
     }
 
-    private static double? GetMusicCompactProgress(MusicWidgetContentAdapter music)
-    {
-        double duration = music.ViewModel.Duration.TotalSeconds;
-        // Return 0 (not null) when Duration is unknown so the determinate branch
-        // keeps the track visible — matching the expanded view, which always
-        // shows the track even at 0% fill. Returning null would hit the hide
-        // branch and make the whole bar disappear until Duration arrives.
-        return duration > 0
-            ? Math.Clamp(music.ViewModel.Position.TotalSeconds / duration, 0, 1)
-            : 0;
-    }
-
     private static bool IsCompactWeatherAttentionRequired(WeatherWidgetContentAdapter weather)
     {
         int code = weather.ViewModel.CurrentWeatherCode;
@@ -1368,11 +1356,6 @@ IsHideAnimationRunning = true;
     }
 
     // ── Drag handlers (delegate to base) ───────────────────────
-
-    private static Windows.UI.Color WithAlpha(Windows.UI.Color color, byte alpha)
-    {
-        return Windows.UI.Color.FromArgb(alpha, color.R, color.G, color.B);
-    }
 
     // ── Nested: title view model ───────────────────────────────
 

@@ -56,21 +56,27 @@ public sealed class QuickCaptureDataIntegrityContractTests
 
         // Register on all three delete exits (single item / recent item /
         // batch) and release on restore (DEF-012 / QC-03). The lookbehind
-        // excludes the method definition line itself.
+        // excludes the method definition line itself. FQC-13 renamed the
+        // methods to ...Retention (they now retain item ids as well).
         Assert.Equal(
             3,
             Regex.Matches(
                 source,
-                "(?<!void )RegisterUndoWindowImages\\(",
+                "(?<!void )RegisterUndoWindowRetention\\(",
                 RegexOptions.None).Count);
         Assert.Contains(
-            "UnregisterUndoWindowImages([item]);",
+            "UnregisterUndoWindowRetention([item]);",
             source,
             StringComparison.Ordinal);
 
         // The retention feeds the GC reference set and self-expires.
         Assert.Contains(
             "referenced.UnionWith(_undoWindowImagePaths.Keys);",
+            source,
+            StringComparison.Ordinal);
+        // FQC-13: the item-id retention feeds the attachment-directory GC.
+        Assert.Contains(
+            "referenced.UnionWith(_undoWindowItemIds.Keys);",
             source,
             StringComparison.Ordinal);
         Assert.Contains(

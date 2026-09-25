@@ -632,6 +632,39 @@ public sealed class DeskBoxDataBackupServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task PrepareRestoreAsync_RejectsDuplicateManifestEntriesWithReadableMessage()
+    {
+        // DEF-104: duplicate manifest.json entries used to escape the manifest
+        // validation as a bare InvalidOperationException from SingleOrDefault;
+        // they must surface as InvalidDataException carrying the backup
+        // manifest invalid-data key so the restore UI shows the readable
+        // "invalid manifest" message.
+        string archivePath = Path.Combine(_exportRoot, "duplicate-manifest.zip");
+        using (ZipArchive archive = ZipFile.Open(archivePath, ZipArchiveMode.Create))
+        {
+            WriteEntry(
+                archive,
+                "manifest.json",
+                "{\"schemaVersion\":1,\"kind\":\"manual\",\"createdAtUtc\":\"2026-07-01T00:00:00Z\",\"appVersion\":\"1.2.9\"}");
+            WriteEntry(
+                archive,
+                "manifest.json",
+                "{\"schemaVersion\":1,\"kind\":\"manual\",\"createdAtUtc\":\"2026-07-02T00:00:00Z\",\"appVersion\":\"1.2.9\"}");
+            WriteEntry(archive, "data/settings.json", "{}");
+        }
+
+        var service = new DeskBoxDataBackupService(_appDataRoot);
+
+        InvalidDataException failure = await Assert.ThrowsAsync<InvalidDataException>(
+            () => service.PrepareRestoreAsync(archivePath));
+
+        Assert.True(
+            failure.Data.Contains(DeskBoxDataBackupService.BackupManifestInvalidDataKey),
+            "the duplicate-entry failure must carry the readable-message data key");
+        Assert.False(File.Exists(service.PendingRestoreMarkerPath));
+    }
+
+    [Fact]
     public async Task PrepareRestoreAsync_RejectsPathTraversalWithoutLeavingPendingRestore()
     {
         string archivePath = Path.Combine(_exportRoot, "unsafe.zip");
