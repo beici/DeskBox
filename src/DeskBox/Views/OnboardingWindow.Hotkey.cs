@@ -78,10 +78,13 @@ public sealed partial class OnboardingWindow
 
     private void Step4HotkeyChange_Click(object sender, RoutedEventArgs e)
     {
-        BeginHotkeyRecording();
+        // DEF-087: the reserved-hook handshake blocks for up to 1.5 s on the
+        // synchronous path; run it off the UI thread instead of freezing the
+        // onboarding window while the recording hook starts.
+        App.SafeFireAndForget(BeginHotkeyRecordingAsync);
     }
 
-    private void BeginHotkeyRecording()
+    private async Task BeginHotkeyRecordingAsync()
     {
         if (_isRecordingHotkey)
         {
@@ -89,16 +92,27 @@ public sealed partial class OnboardingWindow
         }
 
         _isRecordingHotkey = true;
-        int captureError = 0;
-        if (!_isSubclassInstalled ||
-            !_hotkeyRecordingHook.TryStart(
+        if (!_isSubclassInstalled)
+        {
+            App.Log(
+                "[GlobalHotkey] Onboarding recording hook unavailable: window subclass not installed; " +
+                "ordinary gestures remain available");
+        }
+        else if (!await _hotkeyRecordingHook.TryStartAsync(
                 _hWnd,
-                WmReservedHotkeyCapture,
-                out captureError))
+                WmReservedHotkeyCapture))
         {
             App.Log(
                 $"[GlobalHotkey] Onboarding recording hook unavailable; " +
-                $"ordinary gestures remain available error={captureError}");
+                $"ordinary gestures remain available error={_hotkeyRecordingHook.LastErrorCode}");
+        }
+
+        if (!_isRecordingHotkey)
+        {
+            // The recording already ended while the handshake was in flight
+            // (Escape/LostFocus) — the stale continuation must not resurrect
+            // the recording caption.
+            return;
         }
 
         Step4HotkeyChangeButton.Content = _localizationService.T("Onboarding.Step4.HotkeyRecording");

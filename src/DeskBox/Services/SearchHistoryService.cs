@@ -249,61 +249,63 @@ public sealed partial class SearchHistoryService
 
     private void Load()
     {
-        try
-        {
-            if (!File.Exists(_storePath))
-            {
-                return;
-            }
+        // Shared persistence path: primary read, corrupt-file quarantine and
+        // .bak recovery with defaults as the last resort. The constructor
+        // contract stays synchronous, so the tiny bootstrap read is bridged
+        // on a pool thread — its continuations never depend on the caller's
+        // context, and blocking matches the previous synchronous file read.
+        _data = Task.Run(
+                () => ResilientJsonStore.LoadAsync(
+                    _storePath,
+                    DeserializeStore,
+                    () => new PersistedData(),
+                    "SearchHistory"))
+            .GetAwaiter()
+            .GetResult();
+    }
 
-            string json = File.ReadAllText(_storePath);
-            PersistedData? data = JsonSerializer.Deserialize(
-                json,
-                SearchHistoryJsonContext.Default.PersistedData);
-            if (data is not null)
-            {
-                data.Recent ??= [];
-                data.Favorites ??= [];
-                data.RecentResults ??= [];
-                _data = data;
-            }
-        }
-        catch (Exception ex)
-        {
-            App.Log($"[SearchHistory] Failed to load history: {ex.Message}");
-        }
+    private static PersistedData DeserializeStore(string json)
+    {
+        PersistedData? data = JsonSerializer.Deserialize(
+            json,
+            SearchHistoryJsonContext.Default.PersistedData) ??
+            throw new InvalidDataException("DeskBox search history JSON is empty.");
+        data.Recent ??= [];
+        data.Favorites ??= [];
+        data.RecentResults ??= [];
+        return data;
     }
 
     private void Save()
     {
-        try
+        string json;
+        lock (_gate)
         {
-            PersistedData snapshot;
-            lock (_gate)
-            {
-                snapshot = new PersistedData
+            json = JsonSerializer.Serialize(
+                new PersistedData
                 {
                     Recent = [.. _data.Recent],
                     Favorites = [.. _data.Favorites],
                     RecentResults = [.. _data.RecentResults]
-                };
-            }
-
-            string? directory = Path.GetDirectoryName(_storePath);
-            if (!string.IsNullOrWhiteSpace(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            string json = JsonSerializer.Serialize(
-                snapshot,
+                },
                 SearchHistoryJsonContext.Default.PersistedData);
-            File.WriteAllText(_storePath, json);
         }
-        catch (Exception ex)
+
+        // Atomic replace + backup through the shared resilient store instead
+        // of the bare write. The async pipeline is bridged on a pool thread so
+        // the save keeps its previous synchronous completion contract without
+        // ever deadlocking on the caller's (UI) context.
+        Task.Run(async () =>
         {
-            App.Log($"[SearchHistory] Failed to save history: {ex.Message}");
-        }
+            try
+            {
+                await ResilientJsonStore.SaveAsync(_storePath, json);
+            }
+            catch (Exception ex)
+            {
+                App.Log($"[SearchHistory] Failed to save history: {ex.Message}");
+            }
+        }).GetAwaiter().GetResult();
     }
 
     private sealed class PersistedData

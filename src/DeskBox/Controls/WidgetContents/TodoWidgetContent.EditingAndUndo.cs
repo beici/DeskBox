@@ -565,6 +565,46 @@ public sealed partial class TodoWidgetContent
             return;
         }
 
-        _ = ViewModel.ClearAllAsync();
+        // FEXC-03: the discard is now backstopped (SaveAsync reports its own
+        // failures) and the app-wide SafeFireAndForget keeps the logging
+        // safety net for anything that still escapes.
+        EnsureSaveFailedFeedbackWiring();
+        TodoWidgetViewModel viewModel = ViewModel;
+        App.SafeFireAndForget(() => viewModel.ClearAllAsync());
+    }
+
+    // FEXC-03: the todo VM reports persistence failures through SaveFailed;
+    // surface them via the content's existing feedback channel so a failed
+    // save is never silent (state: memory kept, disk not updated).
+    private TodoWidgetViewModel? _saveFailedFeedbackViewModel;
+
+    private void EnsureSaveFailedFeedbackWiring()
+    {
+        if (ReferenceEquals(_saveFailedFeedbackViewModel, ViewModel))
+        {
+            return;
+        }
+
+        if (_saveFailedFeedbackViewModel is not null)
+        {
+            _saveFailedFeedbackViewModel.SaveFailed -= TodoViewModel_SaveFailed;
+        }
+
+        _saveFailedFeedbackViewModel = ViewModel;
+        if (ViewModel is not null)
+        {
+            ViewModel.SaveFailed += TodoViewModel_SaveFailed;
+        }
+    }
+
+    private void TodoViewModel_SaveFailed(object? sender, EventArgs e)
+    {
+        FeedbackRequested?.Invoke(
+            this,
+            new WidgetFeedbackRequestedEventArgs(
+                new WidgetFeedbackRequest(
+                    App.Current.LocalizationService.T("Common.OperationFailedRetry"),
+                    WidgetFeedbackSeverity.Error,
+                    "todo-save-failed")));
     }
 }

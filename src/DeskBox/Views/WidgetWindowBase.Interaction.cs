@@ -738,8 +738,16 @@ public abstract partial class WidgetWindowBase
         _deferTitleBarDragConfigUpdates = false;
         IsDragging = false;
         bool hasMoved = HasMovedTitleBarDrag;
+        // DEF-094: mirror the pointer-released path's wasEngaged gate — a
+        // capture loss without an engaged drag (system gesture, focus steal)
+        // must not churn the desktop-layer restore state.
+        bool wasEngaged = _isWindowDragEngaged;
+        _isWindowDragEngaged = false;
         DragCaptureElement = null;
-        App.Current?.ResizeGuideOverlay.EndDrag();
+        if (wasEngaged)
+        {
+            App.Current?.ResizeGuideOverlay.EndDrag();
+        }
 
         if (_isCoordinatedMoveDrag &&
             App.Current?.WidgetManager?.CompleteCoordinatedMove(HWnd, hasMoved) == true)
@@ -779,9 +787,16 @@ public abstract partial class WidgetWindowBase
         DisplayChangeWatcher?.ResumeRestore();
         HasMovedTitleBarDrag = false;
         RestoreBackdropAfterInteraction();
-        QueueBackdropRefresh();
-        App.Current?.WidgetManager?.RestoreTemporarilyRaisedWidgetsToDesktopLayer(
-            "drag-capture-lost");
+        // DEF-094: same wasEngaged gate as the pointer-released path — a
+        // capture loss during a click that never engaged the drag must not
+        // churn the desktop-layer restore state.
+        if (wasEngaged)
+        {
+            QueueBackdropRefresh();
+            App.Current?.WidgetManager?.RestoreTemporarilyRaisedWidgetsToDesktopLayer(
+                "drag-capture-lost");
+        }
+
         e.Handled = true;
     }
 

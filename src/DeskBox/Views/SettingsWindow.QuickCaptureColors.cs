@@ -41,9 +41,21 @@ public sealed partial class SettingsWindow
     /// <summary>
     /// Loaded handler for the record-colors expander: fills both button
     /// captions from the effective colors so the entry always reflects the
-    /// current state (follow-theme vs. custom).
+    /// current state (follow-theme vs. custom), and re-fills them when the
+    /// theme flips because the follow-theme baselines are theme-aware.
     /// </summary>
     private void QuickCaptureRecordColors_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement host)
+        {
+            host.ActualThemeChanged -= QuickCaptureRecordColorsHost_ThemeChanged;
+            host.ActualThemeChanged += QuickCaptureRecordColorsHost_ThemeChanged;
+        }
+
+        RefreshQuickCaptureRecordColorButtonText();
+    }
+
+    private void QuickCaptureRecordColorsHost_ThemeChanged(FrameworkElement sender, object args)
     {
         RefreshQuickCaptureRecordColorButtonText();
     }
@@ -84,13 +96,21 @@ public sealed partial class SettingsWindow
         RefreshQuickCaptureRecordColorButtonText();
     }
 
+    /// <summary>
+    /// DEF-098: the follow-theme baselines are theme-aware and shared with
+    /// the widget surface entry, so the effective colors and the contrast
+    /// validation baseline stay identical in both entrances per theme.
+    /// </summary>
+    private bool IsQuickCaptureDarkBaselineTheme =>
+        SettingsRoot.ActualTheme == ElementTheme.Dark;
+
     private Windows.UI.Color ResolveQuickCaptureEffectiveTextColor(WidgetConfig config)
     {
         return QuickCaptureClipboardColorSettings.GetTextModeOverride(config) ==
                 QuickCaptureClipboardColorSettings.ModeCustom &&
             QuickCaptureClipboardColorSettings.TryGetTextColorOverride(config, out Windows.UI.Color textOverride)
             ? textOverride
-            : Windows.UI.Color.FromArgb(0xFF, 0xF5, 0xF5, 0xF5);
+            : QuickCaptureClipboardColorSettings.ResolveFollowThemeTextColor(IsQuickCaptureDarkBaselineTheme);
     }
 
     private Windows.UI.Color ResolveQuickCaptureEffectiveBackgroundColor(WidgetConfig config)
@@ -99,7 +119,7 @@ public sealed partial class SettingsWindow
                 QuickCaptureClipboardColorSettings.ModeCustom &&
             QuickCaptureClipboardColorSettings.TryGetBackgroundColorOverride(config, out Windows.UI.Color backgroundOverride)
             ? backgroundOverride
-            : Windows.UI.Color.FromArgb(0xFF, 0x28, 0x28, 0x28);
+            : QuickCaptureClipboardColorSettings.ResolveFollowThemeBackgroundColor(IsQuickCaptureDarkBaselineTheme);
     }
 
     private Windows.UI.Color ResolveQuickCaptureEffectiveHoverTextColor(WidgetConfig config)

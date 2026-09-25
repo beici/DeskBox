@@ -96,7 +96,10 @@ public sealed partial class SettingsWindow
 
     private void ChangeGlobalHotkeyButton_Click(object sender, RoutedEventArgs e)
     {
-        BeginHotkeyRecording();
+        // DEF-087: the reserved-hook handshake blocks for up to 1.5 s on the
+        // synchronous path; run it off the UI thread instead of freezing the
+        // settings window while the recording hook starts.
+        App.SafeFireAndForget(BeginHotkeyRecordingAsync);
     }
 
     private async void GlobalHotkeyPresetButton_Click(object sender, RoutedEventArgs e)
@@ -348,7 +351,7 @@ public sealed partial class SettingsWindow
         _pressedAppearanceSliders.Clear();
     }
 
-    private void BeginHotkeyRecording()
+    private async Task BeginHotkeyRecordingAsync()
     {
         if (_isRecordingHotkey)
         {
@@ -356,16 +359,27 @@ public sealed partial class SettingsWindow
         }
 
         _isRecordingHotkey = true;
-        int captureError = 0;
-        if (!_isSubclassInstalled ||
-            !_hotkeyRecordingHook.TryStart(
+        if (!_isSubclassInstalled)
+        {
+            App.Log(
+                "[GlobalHotkey] Recording hook unavailable: window subclass not installed; " +
+                "ordinary gestures remain available");
+        }
+        else if (!await _hotkeyRecordingHook.TryStartAsync(
                 _hWnd,
-                WmReservedHotkeyCapture,
-                out captureError))
+                WmReservedHotkeyCapture))
         {
             App.Log(
                 $"[GlobalHotkey] Recording hook unavailable; ordinary gestures remain available " +
-                $"error={captureError}");
+                $"error={_hotkeyRecordingHook.LastErrorCode}");
+        }
+
+        if (!_isRecordingHotkey)
+        {
+            // The recording already ended while the handshake was in flight
+            // (Escape/LostFocus) — the stale continuation must not resurrect
+            // the recording caption.
+            return;
         }
 
         GlobalHotkeyCaptureButton.Content = _localizationService.T("Settings.GlobalHotkey.Recording");

@@ -424,10 +424,12 @@ internal sealed class Migration_9_To_10 : ISettingsMigration
 
     /// <summary>
     /// Synchronous pipeline step. The pipeline contract is synchronous, so this
-    /// goes through the store's UI-safe update path: the cache is updated
-    /// synchronously and the file is persisted in the background, exactly like
-    /// a user edit from the music widget. The async overload below is kept for
-    /// the store-level tests that assert the file right after the call.
+    /// goes through the store's UI-safe update path (the cache is updated
+    /// synchronously, the file is persisted on pool threads via the store's
+    /// write chain) and then blocks on that chain before returning: the
+    /// checkpoint may only advance once the migrated file is durable, or a
+    /// crash in the window between the background write and the
+    /// schema-version stamping would lose the store entirely.
     /// </summary>
     public void Migrate(AppSettings settings)
     {
@@ -439,6 +441,9 @@ internal sealed class Migration_9_To_10 : ISettingsMigration
 
         var store = new MusicSettingsStore(musicDataDirectory);
         store.Update(target => ApplyLegacyFields(target, settings));
+        // The chain runs on pool threads, so blocking here cannot deadlock on
+        // the caller's synchronization context.
+        store.WaitForPendingPersist();
     }
 
     private static void ApplyLegacyFields(MusicWidgetSettings target, AppSettings settings)

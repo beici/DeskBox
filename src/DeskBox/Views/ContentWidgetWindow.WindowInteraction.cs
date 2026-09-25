@@ -323,6 +323,15 @@ public sealed partial class ContentWidgetWindow
         }
     }
 
+    // FARC-03: ProtectedCursor is a non-public WinRT projection property, so
+    // this reflection write is the only way to set it from a pointer-entered
+    // handler. Trimming can drop the property in Native AOT; when that
+    // happens the cursor silently stops changing, so log once (never per
+    // pointer move) and treat scripts/run-aot-*.ps1 as the gate before
+    // relying on this path in retail builds. Replacing the reflection with an
+    // AOT-safe alternative is deferred until measured there.
+    private static bool _loggedMissingProtectedCursorProperty;
+
     private void ResizeBorder_PointerEntered(object sender, PointerRoutedEventArgs e)
     {
         if (sender is not UIElement element)
@@ -337,7 +346,18 @@ public sealed partial class ContentWidgetWindow
         var property = typeof(UIElement).GetProperty(
             "ProtectedCursor",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        property?.SetValue(element, InputSystemCursor.Create(shape));
+        if (property is null)
+        {
+            if (!_loggedMissingProtectedCursorProperty)
+            {
+                _loggedMissingProtectedCursorProperty = true;
+                App.Log("[ContentWidgetWindow] UIElement.ProtectedCursor not resolvable (AOT trim?); resize cursor feedback disabled");
+            }
+
+            return;
+        }
+
+        property.SetValue(element, InputSystemCursor.Create(shape));
     }
 
     // ── Activation ─────────────────────────────────────────────

@@ -27,7 +27,10 @@ internal sealed partial class MusicSettingsJsonContext : JsonSerializerContext
 /// Write-path design (batch E fix): the cache lock is a plain monitor lock
 /// held only for in-memory operations, so UI-thread callers can never
 /// deadlock on a pending disk write. Disk persistence happens outside the
-/// lock as a fire-and-forget task with exception observation; the legacy
+/// lock, chained behind the previous write (FCFG-05: concurrent Updates must
+/// reach the disk in the order they mutated the cache) and on pool threads,
+/// so no write ever depends on the caller's synchronization context;
+/// exceptions are observed and logged without breaking the chain. The legacy
 /// AppSettings mirror is persisted through the global SaveDebounced by the
 /// caller so both stores converge.
 /// </summary>
@@ -36,6 +39,12 @@ public sealed class MusicSettingsStore
     private readonly object _lock = new();
     private readonly string _storePath;
     private MusicWidgetSettings? _cached;
+
+    // Tail of the persistence chain. Reads and appends happen under _lock so
+    // concurrent Updates enqueue in cache-mutation order; the chain itself
+    // runs on pool threads and never faults (PersistAsync logs its own
+    // failures and the link re-observes its predecessor).
+    private Task _writeChain = Task.CompletedTask;
 
     public MusicSettingsStore()
         : this(Path.Combine(
@@ -70,21 +79,56 @@ public sealed class MusicSettingsStore
     /// <summary>
     /// Updates the cached settings synchronously (UI-safe), then persists
     /// asynchronously with exception logging. The update action runs under
-    /// the lock so concurrent updates serialize against each other; disk
-    /// writes run outside the lock so they never block callers.
+    /// the lock so concurrent updates serialize against each other, and the
+    /// disk write is appended to the persistence chain under the same lock so
+    /// concurrent Updates hit the disk in exactly the order they mutated the
+    /// cache (FCFG-05). Writes run on pool threads so they never block
+    /// callers.
     /// </summary>
     public void Update(Action<MusicWidgetSettings> update)
     {
         ArgumentNullException.ThrowIfNull(update);
-        MusicWidgetSettings snapshot;
         lock (_lock)
         {
             _cached ??= LoadFromDisk();
             update(_cached);
-            snapshot = Clone(_cached);
+            MusicWidgetSettings snapshot = Clone(_cached);
+
+            Task predecessor = _writeChain;
+            _writeChain = Task.Run(async () =>
+            {
+                try
+                {
+                    await predecessor;
+                    await PersistAsync(snapshot);
+                }
+                catch (Exception ex)
+                {
+                    // PersistAsync already observes its own failures; this
+                    // link-level guard keeps the chain unbroken even if the
+                    // await on a predecessor ever surfaces one.
+                    App.Log($"[MusicSettingsStore] Persist chain failed: {ex.Message}");
+                }
+            });
+        }
+    }
+
+    /// <summary>
+    /// Blocks until every write enqueued so far has finished. The chain runs
+    /// on pool threads (Task.Run), so a caller on any thread — including the
+    /// UI thread during the synchronous migration step — waits without
+    /// deadlock. The chain never faults (failures are logged by the links),
+    /// so this rethrows nothing.
+    /// </summary>
+    internal void WaitForPendingPersist()
+    {
+        Task chain;
+        lock (_lock)
+        {
+            chain = _writeChain;
         }
 
-        _ = PersistAsync(snapshot);
+        chain.GetAwaiter().GetResult();
     }
 
     public async Task SaveAsync(MusicWidgetSettings settings)

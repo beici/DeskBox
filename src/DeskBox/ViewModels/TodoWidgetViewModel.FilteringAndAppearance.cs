@@ -68,6 +68,13 @@ public sealed partial class TodoWidgetViewModel
             : FindItem(item.Item.GeneratedNextItemId);
     }
 
+    /// <summary>
+    /// FEXC-03: raised when persisting the todo list fails, so the hosting
+    /// surface can surface the failure through its feedback channel instead
+    /// of the loss disappearing into a fire-and-forget caller.
+    /// </summary>
+    public event EventHandler? SaveFailed;
+
     private async Task SaveAsync()
     {
         NormalizeSortOrders();
@@ -83,10 +90,22 @@ public sealed partial class TodoWidgetViewModel
             .ToList();
         _tombstones.Clear();
         _tombstones.AddRange(persistedTombstones);
-        await _store.SaveAsync(new TodoWidgetData
+        try
         {
-            Items = Items.Select(item => item.Item).Concat(persistedTombstones).ToList()
-        });
+            await _store.SaveAsync(new TodoWidgetData
+            {
+                Items = Items.Select(item => item.Item).Concat(persistedTombstones).ToList()
+            });
+        }
+        catch (Exception ex)
+        {
+            // The in-memory state is what the user already sees and stays
+            // authoritative — the next successful save persists the same
+            // state. Report the failure instead of letting it escape into a
+            // fire-and-forget/async void caller where it would be lost.
+            App.Log($"[Todo] Save failed: {ex}");
+            SaveFailed?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     private void RefreshVisibleItems(TodoItemViewModel? preferredMovedItem = null)
