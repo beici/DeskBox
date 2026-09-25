@@ -130,3 +130,94 @@
 - **挂账 P3**：约 25 项（详见台账）
 - **本轮新增**：4 项（1 P1 + 3 P2）
 - **2026-09-13 全面深度代码审查新增**：16 项（5 P2 + 11 P3，无 P0/P1，全部经主线逐条亲验后入账），详见「2026-09-13 全面深度代码审查」分节；其中 DEF-072（本地化键缺失）为唯一已发布版本用户可见项，修复成本极低
+- **round-08（2026-09-25）全量并行代码缺陷深度审查新增**：23 项（3 P2 + 20 P3，无 P0/P1），详见下节；raw 立案 30 条经去重合并（10 专项报告见 `docs/quality/rounds/round-08/`，总报告同目录）
+
+---
+
+## round-08 全量并行代码缺陷深度审查（2026-09-25，10 路并行）
+
+> 代码基线 `wip/fix-bug` @ `77f2b4b4`（含 upstream v1.5.5 合并）。纯静态审查，未运行测试。每条均经主流程对当前树二次核验（总报告 §7）。
+> 历史结论复核：round-06/07 存量 79 条 = 维持 36 / 改形复发 1 / 已消除 42，无已修复项回退。
+
+### 新增缺陷
+
+| 编号 | 标题 | 优先级 | 位置 | 根因/机制 | 状态 |
+|---|---|---|---|---|---|
+| **DEF-085** | 边距对话框打开期间胶囊自动折叠后取消恢复：把打开时捕获的展开面板矩形套回已折叠窗口，折叠态绕过 DEF-065 面板重推导守卫，取消的预览位移在下次收起/重启回弹 | P2 | `src/DeskBox/Views/WidgetWindowBase.TitleAppearance.cs:573,593-619`（配合 `Collapse.cs:553-569,4295-4321,4753-4771`、`Bounds.cs:519-523`、`WidgetCompactInteractionPolicy.cs:168-177`） | 取消恢复无条件 SetWindowPos+`RefreshCompactPlacementAfterBoundsMove`，无 `RestsCollapsed` 重推导；DEF-065 家族复发向量 | 📌 挂账（S04/round-08） |
+| **DEF-086** | settings.json 全仓唯一缺「新架构档案只读」防护：降级/交叉构建后首次保存静默丢弃未知字段（widget-layout/revisions/weather-cache 三处均有此防护，唯独最大 store 缺席） | P2 | `src/DeskBox/Services/SettingsService.cs:705-868,942-1058`（对照 `WidgetLayoutStore.cs:98`、`SyncRevisionsStore.cs:105-115`、`WeatherCacheStore.cs:192-196`） | typed slice 无法表示新 schema 字段，覆写即丢弃 | 📌 挂账（S07/round-08） |
+| **DEF-087** | 钩子线程同步握手 Wait(1500)+Join(650) 占 UI 线程主路径，钩子线程假死可冻结约 2.15s（r06-THR-02 维持 + S03-WIN-13 同型并入，调用面 6 处） | P2 | `ReservedHotkeyHookService.cs:187,325,363`；`DesktopDoubleClickActivationService.cs:251,352,368`；`GlobalHotkeyService.cs:156`；`SearchHotkeyService.cs:150`；`OnboardingWindow.Hotkey.cs:94`；`SettingsWindow.HotkeyAndAppearance.cs:361` | hook 线程 handshake 用同步 Wait/Join 阻塞调用线程（UI） | 📌 挂账（S08+S03/round-08） |
+| **DEF-088** | 拖出看门狗 Timer `using var` 声明于同步方法内，方法返回即 Dispose，15s 饥饿看门狗永不触发（诊断失效，无泄漏） | P3 | `src/DeskBox/Helpers/NativeFileDragOut.cs:255-271` | `using var` 生命周期=方法体 | 📌 挂账（S01/round-08） |
+| **DEF-089** | 共享 Composition 动画模板每次启动重灌关键帧，依赖未文档化重复进度语义；KeyFrameAnimation 无清除 API，最坏会话级缓慢劣化 | P3 | `WidgetShell.xaml.cs:2135-2199,3067-3078,3273-3278,986-993`；`WidgetTrayAnimationController.cs:423-440,542-558`；`WidgetCompositionResources.cs:32-60` | 每次启动重灌关键帧 | 📌 挂账（S02/round-08） |
+| **DEF-090** | 帧率档位上线后自适应 ladder 成死代码（NormalizeFrameRate 恒>0 → cap 恒激活、escalation 不可达）；cap 注释与地板除实现相反 | P3 | `WidgetWindowBase.Collapse.cs:3419-3440,3651-3691`；`WidgetCompactFrameSkipPolicy.cs:54-118` | 档位与旧自适应机制并存，前者恒短路后者 | 📌 挂账（S02/round-08） |
+| **DEF-091** | `WidgetShellSettingsSlice` 帧率字段注释残留上游「always at or under the target」旧语义，与 DEF-056 修复后「永不低于所选档位」相反，有诱导复发风险 | P3 | `src/DeskBox/Models/WidgetShellSettingsSlice.cs:47-57` | 上游注释未随 fork 行为校正 | 📌 挂账（S10/round-08） |
+| **DEF-092** | 两处死代码：无人调用的三参确认队列重载 + 无引用的音乐进度私有方法 | P3 | `WidgetManager.cs:2200`；`ContentWidgetWindow.xaml.cs:433` | 演进残留 | 📌 挂账（S03/round-08） |
+| **DEF-093** | [重要勿删] 手册三处失同步：热键 LL 兜底/去重描述过时、QuickReveal 第三层级模式未记载、监视器间隔写死 200ms（实际 50ms） | P3 | `docs/architecture/[重要勿删]widget_zorder_lifecycle.md` §3.1/§1/§4 vs `SettingsService.cs:134`、`WidgetManager.ZOrder.cs:1086`、`GlobalHotkeyService.cs` | 1.5.5 演进后手册未跟（不触碰 z-order 核心约定） | 📌 挂账（S03/round-08） |
+| **DEF-094** | capture-lost 路径无条件释放临时唤起租约，缺 `wasEngaged` 门，可提前拆台他人手势的 2.3s 展示窗（外观级） | P3 | `WidgetWindowBase.Interaction.cs:783`（对照 `:501-506`） | 捕获丢失分支漏加同款门 | 📌 挂账（S03/round-08） |
+| **DEF-095** | `ReferenceEquals(subject, live)` 对两个 `RectInt32` 结构体装箱比较恒 false，DEF-065 通用刷新分支成死代码，恒走 `CaptureCompactPlacement` | P3 | `WidgetWindowBase.TitleAppearance.cs:805-817`（声明 `:777,785`） | 结构体经 ReferenceEquals 必然分别装箱 | 📌 挂账（S04/round-08，主流程核验实锤） |
+| **DEF-096** | 批量边距对 Smart/Peek 折叠源静默跳过、对 Click 持久展开源按活动面板矩形测量，与单格 DEF-064「静止几何」语义不一致 | P3 | `WidgetManager.BulkAppearance.cs:132-137`；`WidgetWindowBase.TitleAppearance.cs:699-731` | DEF-064 未覆盖批量分支 | 📌 挂账（S04/round-08） |
+| **DEF-097** | 多选复制剪贴板写入无重试无 try/catch，经 async void KeyDown 静默失败（DEF-078 同族新位点） | P3 | `QuickCaptureSurfaceContent.xaml.cs:2764-2771`（调用链 `:2689-2704`） | 剪贴板占用时复制无反馈 | 📌 挂账（S05/round-08） |
+| **DEF-098** | 设置入口配色编辑器初始值/对比度基线硬编码深色常量（0xF5F5F5/0x282828），浅色主题误拒误放行 | P3 | `SettingsWindow.QuickCaptureColors.cs:87-103`（消费 `:61-70`） | 有效色解析未感知主题 | 📌 挂账（S05/round-08） |
+| **DEF-099** | `WidgetRemoved` 事件全仓库零订阅者，死通知路径 | P3 | `WidgetManager.cs:456,1901` | 声明+触发，无消费方 | 📌 挂账（S06/round-08） |
+| **DEF-100** | `SearchRequested` 通知链无消费方，语义已被 `OpenSearchPopup` 直调取代 | P3 | `SearchWidgetContent.xaml.cs:43,292`、`SearchWidgetContentAdapter.cs:51-64` | 同上 | 📌 挂账（S06/round-08） |
+| **DEF-101** | 除三条主干（DEF-019）外约 20 个 Services 广播源仍为裸 `?.Invoke`，无逐处理器隔离（EVT-01 泛化） | P3 | `MusicSessionService.cs:463-512`、`SearchHistoryService.cs:93-247`、`WidgetManager.ZOrder.cs:1329` 等（全表见 S06 报告 §3） | 单订阅者异常中断后续通知 | 📌 挂账（S06/round-08） |
+| **DEF-102** | QuickCaptureStore 无 per-path 门控，与 TodoWidgetStore（DEF-043 修复）门控不对称，属规范缺口 | P3 | `QuickCaptureStore.cs:51-62`（对照 `TodoWidgetStore.cs:33-35`） | 双写者并发窗口 | 📌 挂账（S08/round-08） |
+| **DEF-103** | EverythingSearchService.Dispose `_isDisposed` 裸字段 + `_nativeGate.Wait(1s)` 阻塞调用线程、超时静默跳过 CleanUp | P3 | `EverythingSearchService.cs:641-671` | 退出/重建路径 | 📌 挂账（S08/round-08） |
+| **DEF-104** | 恢复归档重复 manifest.json 条目抛 `InvalidOperationException`（SingleOrDefault），逃出 `InvalidDataException` 归一化，恢复对话框显示英文运行时消息 | P3 | `DeskBoxDataBackupService.cs:1684,1724-1726`；`SettingsWindow.CloudBackup.cs:469` | catch 过滤器不含 InvalidOperationException | 📌 挂账（S09/round-08） |
+| **DEF-105** | WebDAV PROPFIND 畸形 href（http 前缀但非法 URI）抛未分类 `UriFormatException`，破坏列表验证/保留清理/快照列表 | P3 | `WebDavBackupTransport.cs:243-246,228-231` | 服务器畸形 href 未归一化 | 📌 挂账（S09/round-08） |
+| **DEF-106** | 合并模式恢复遇 `"id": null` 条目抛 `ArgumentNullException`（`TryGetValue(null)`），该域恢复确定性失败至放弃（有安全 zip 兜底，但无坏数据归因） | P3 | `DeskBoxDataBackupService.cs:1538-1541,1606-1609` | `item is null` 有防、`item.Id is null` 无防 | 📌 挂账（S09/round-08） |
+| **DEF-107** | 同步投影/存储层（SyncEnvelope/Projection/Outbox/Revisions/State）已入库含测试但生产零消费方，而 sync-protocol 契约文档头仍标「未立项实现」——文档与代码互为滞后 | P3 | `src/DeskBox/Sync/SyncProjection.cs`、`SyncOutboxStore.cs:17` 等；`docs/architecture/sync-protocol-contract-20260918.md:3` | 1.5.5 合并带入未接线层 | 📌 挂账（S10/round-08） |
+
+### 存量条目状态变更（round-08 复核）
+
+| 编号 | 变更 | 依据 |
+|---|---|---|
+| ANI-03 | **改形复发**：`MoveWindowWithoutPersisting` 三回调已缓存（DEF-060/066 有效），但 `CommitCollapseAnimationBounds` 每帧新建 OnCommitted/OnCommitFailed 闭包（DEF-066 e2f09d9 引入，约 3 次分配/帧/窗） | `WidgetWindowBase.Collapse.cs:3699-3739`（S02） |
+| DEF-070 | 维持 + 新读侧实例：`DesktopAutoOrganizationWatcher.cs:592-603` 后台无锁枚举同一活列表 | S08 |
+| DEF-071 | 维持：群组拖出预览 lock 内跨线程 SetWindowPos/ShowWindow 双死等机制未变 | `WidgetWindowBase.Grouping.cs:516-545`（S08） |
+| THR-06 | 维持：QuickCaptureClipboardService 诊断/生命周期字段跨线程裸读写 | `QuickCaptureClipboardService.cs:13-19,55-63,126-145`（S08） |
+| EXC-06 | 维持 + 补充维度：双检锁无 volatile 发布（原 r08-THR-07 并入） | `CitySearchService.cs:53-75`（S08/S09） |
+| DEF-075 | 残余收窄后维持：内层 `SettingsService.cs:741-750` 盖戳有效；外层 catch `:846-868` 仍以 SchemaVersion=1 落盘（`Models/AppSettings.cs:18` 默认 1） | S07 + 主流程核验 |
+| DEF-067 / DEF-074 | **闭环确认（R8 复核）**：两专项一致确认已随迁移管线/测试收紧消除 | S07/S10 |
+| ANI-04 | **闭环确认（R8 复核）**：FeedbackPresenter 依赖动画标志已移除 | S02 |
+| MEM-02 | 维持（3 处中 1 处随死宿主删除） | S01 |
+| MEM-01 / DEF-040 / DEF-051 / DEF-052 / WIN-07 / WIN-08 / WIN-09 / LAY-05~07 / QC-06~09,12,14 / EVT-02 / EVT-03（改善）/ CFG-03 / CFG-04 / EXC-03（改善）/ EXC-04 / EXC-05 / ARC-02~05 / DEF-016 / DEF-072 / DEF-076~084 相关挂账 | 维持（各专项报告 §2 有逐条当前树证据；DEF-078 面积扩大并新增 DEF-097 同族位点） | S01~S10 |
+
+### round-08 统计
+
+- **新增**：23 项（P2×3：DEF-085/086/087；P3×20：DEF-088~107）
+- **历史复核**：维持 36 / 改形复发 1（ANI-03）/ 已消除 42（复核基数 79，无已修复项回退）
+- **正面结论**：1.5.5 合并干净（无冲突标记残留、ABI 十导出一致、死宿主无复活）；VERIFY-1/2/3 未回退；连续两轮 P0/P1 = 0
+- **待整改排期**：P2×3 + 存量 P2（DEF-070/071/072）优先；P3 按「速赢批/恢复健壮性批/线程卫生批/广播隔离批」归并（总报告 §4）
+
+---
+
+## R8-AB 整改批次（2026-09-25，随 A/B 双轮审查执行）
+
+> 方案 `rectify/R8-AB-remediation-plan.md`（独立完善性审查 NO-GO→按指令修订→GO）；整改报告 `rectify/R8-AB-remediation-report.md`。
+> 门禁：构建 0 错误；x64 全量回归 **4285/4285**（净增 59 用例）；12 语言 2895 键 parity；新实例 PID 4652 @ 规范 Debug 路径。改动位于工作树未提交。
+
+### 新增缺陷（B 轮 P1×2，本批已修复）
+
+| 编号 | 标题 | 优先级 | 位置 | 状态 |
+|---|---|---|---|---|
+| **DEF-108** | 搜索「保存到随记」`new QuickCaptureStore()` 绕过 QuickCaptureService 缓存直写，后续任一随记操作整文档覆盖丢条目 | P1 | `SearchResultActionService.cs:87-111`（原位点） | ✅ 已修复（R8-AB：新增 `AddExternalLinkedFileItemAsync` 走服务门控/缓存/落盘；注入改造；端到端用例钉死） |
+| **DEF-109** | 搜索「附加到 Todo」分离 Load/Save 直写 todo.json，常驻 VM 整文档保存丢弃外部条目 | P1 | `SearchResultActionService.cs:41-63`（原位点） | ✅ 已修复（R8-AB：`MutateAsync` 原子变更＋`NotifyExternalStoreChanged` 复用 PublishStoreChanged 中继合并；端到端用例钉死） |
+
+### round-08（DEF-085~107）状态更新
+
+- **✅ 已修复（R8-AB 批次）20 条**：DEF-085、086、087、088、089、091、092、093（手册三处勘误）、094、095、097、098、099、100、102、103、104、105、106、107。
+- **📌 部分修复**：DEF-090（注释矛盾已更正；自适应阶梯死代码删除延后至卫生批次）。
+- **📌 延后维持**：DEF-096（批量边距「静止几何」语义——需 GUI 对照）；DEF-101（广播隔离泛化——高危实例 FEVT-01 已随批修复，泛化改造待 SafeBroadcast 助手立项）。
+
+### B 轮编号发现处置（未重复编号，随批修复/延后）
+
+- **✅ 随批修复**：FQC-01/02/04、FWIN-01、FLAY-01（96/36 DPI 化子项延后）、FLAY-03、FTHR-01、FEXC-01/02/03、FCFG-04/05/06/07/08、FTHR-03~09、FANI-03/04、FMEM-01/02、FEXC-04/05（含 FEVT-06）、FEVT-02/04/05、FQC-05~10/13/14、FARC-01/02/05、FARC-03（硬化；完整替代待 AOT 实测）。
+- **📌 延后维持**：FLAY-02、FQC-11/12/15、FARC-03 完整替代。
+- 明细与逐条落点见 `rectify/R8-AB-remediation-report.md` §2。
+
+### 遗留观察（下波裁决）
+
+1. `QuickCapture.TextFileNamePrefix/LinkFileNamePrefix` 孤儿键（helper 删除连带，未删）。
+2. `WidgetShell.xaml.cs:1836` 预热的三个缓存模板经 DEF-089 per-start 改造后不再被消费。
+3. `FolderWatcherService.LastEventAt` 改 UTC ticks 存储（仅诊断消费方）。
+4. `scripts/extract_widgetmanager.ps1` 名单含已删方法名（脚本告警继续）。

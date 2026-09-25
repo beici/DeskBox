@@ -1,6 +1,6 @@
 # DeskBox Current Architecture
 
-Last updated: 2026-07-20
+Last updated: 2026-09-25 (R8-AB: added the shipped Search and Glance kinds to the kind, registry, provider, feature, and routing lists)
 
 This document describes the current architecture after the 1.2.0 widget foundation work. It is intended as the short, current-state handoff for future maintenance. Historical plans and checkpoints live under the archive folders.
 
@@ -25,6 +25,8 @@ Current production widget categories:
 - `Todo`: content-type feature widget using `ContentWidgetWindow`.
 - `Music`: content-type feature widget using `ContentWidgetWindow` and Windows media sessions.
 - `Weather`: content-type feature widget using `ContentWidgetWindow`, Open-Meteo API, and adaptive responsive layouts.
+- `Search`: global search feature widget (unified file and content search, Everything-backed) hosted by `ContentWidgetWindow`. (R8-AB)
+- `Glance`: at-a-glance background, time and date feature widget hosted by `ContentWidgetWindow`; multiple Glance widgets can coexist. (R8-AB)
 
 Planned placeholder kinds:
 
@@ -66,7 +68,7 @@ Core widget foundation:
 Window creation routing:
 
 - `WidgetWindowProvider` inside `WidgetManager`: maps a creatable `WidgetKind` to the correct host-window creation path.
-- Current providers: File/Todo/Music/Weather/Search/QuickCapture -> `ContentWidgetWindow` (DEF-027: the dedicated `QuickCaptureWidgetWindow` host was removed; QuickCapture runs on the unified content path).
+- Current providers: File/Todo/Music/Weather/Search/Glance/QuickCapture -> `ContentWidgetWindow` (DEF-027: the dedicated `QuickCaptureWidgetWindow` host was removed; QuickCapture runs on the unified content path).
 - File widgets use `FileSurfaceContent` inside the unified content host. The legacy `WidgetWindow` host has been removed.
 
 Shared shell and window helpers:
@@ -80,7 +82,7 @@ Shared shell and window helpers:
 
 Current windows:
 
-- `src/DeskBox/Views/ContentWidgetWindow.xaml.cs`: File, Todo, Music, Weather, Search, QuickCapture, and future content widgets.
+- `src/DeskBox/Views/ContentWidgetWindow.xaml.cs`: File, Todo, Music, Weather, Search, Glance, QuickCapture, and future content widgets.
 - DEF-027: `QuickCaptureWidgetWindow` was removed (13 files / ~7,800 lines, zero instantiation since the B2 color migration).
 
 Current Todo implementation:
@@ -121,7 +123,7 @@ Current Weather implementation:
 
 Current behavior:
 
-- `File`, `QuickCapture`, `Todo`, `Music`, and `Weather` are creatable/implemented.
+- `File`, `QuickCapture`, `Todo`, `Music`, `Weather`, `Search`, and `Glance` are creatable/implemented.
 - `Tags` and `SystemMonitor` are known but not user-creatable.
 - Feature widget availability is checked through `FeatureWidgetSettings`.
 
@@ -156,6 +158,8 @@ Current providers:
 - `TodoWidgetContentProvider`: creates real Todo content.
 - `MusicWidgetContentProvider`: creates real Music content.
 - `WeatherWidgetContentProvider`: creates real Weather content.
+- `GlanceWidgetContentProvider`: creates real Glance content. (R8-AB)
+- `SearchWidgetContentProvider`: creates real Search content. (R8-AB)
 - `PlaceholderWidgetContentProvider`: creates placeholder content for planned kinds.
 
 Current contract:
@@ -226,6 +230,7 @@ Current production users:
 - Music
 - Weather
 - Search
+- Glance
 - QuickCapture
 
 Future likely users:
@@ -318,6 +323,8 @@ Current feature kinds:
 - `Todo`
 - `Music`
 - `Weather`
+- `Search`
+- `Glance`
 
 Settings are stored in:
 
@@ -344,6 +351,8 @@ Current handlers:
 - Todo: content window path.
 - Music: content window path.
 - Weather: content window path.
+- Search: content window path (singleton feature widget). (R8-AB)
+- Glance: content window path (multiple widgets). (R8-AB)
 
 Still intentionally present:
 

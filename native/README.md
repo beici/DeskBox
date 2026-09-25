@@ -148,9 +148,9 @@ cargo fmt --manifest-path .\native\Cargo.toml --all -- --check
 cargo clippy --manifest-path .\native\Cargo.toml --workspace --all-targets --target x86_64-pc-windows-msvc --locked -- -D warnings
 cargo test --manifest-path .\native\Cargo.toml --workspace --target x86_64-pc-windows-msvc --locked
 .\scripts\build-rust-native.ps1 -Platform x64 -Configuration Release -OutputDirectory .\.artifacts\rust-native-check
-.\scripts\build-rust-search-core.ps1 -Platform x64 -Configuration Release -OutputDirectory .\.artifacts\rust-search-core-check
+# （R8-AB 勘误）.\scripts\build-rust-search-core.ps1 的 x64/ARM64 SearchCore 校验命令已随
+# commit 82cd480f 失效——deskbox-search-core 模块已删除，命令仅存档，勿再执行。
 .\scripts\build-rust-native.ps1 -Platform ARM64 -Configuration Release -OutputDirectory .\.artifacts\rust-native-arm64-check
-.\scripts\build-rust-search-core.ps1 -Platform ARM64 -Configuration Release -OutputDirectory .\.artifacts\rust-search-core-arm64-check
 .\scripts\publish-aot-audit.ps1 -Platform x64
 .\scripts\publish-arm64-aot-static-audit.ps1
 ```

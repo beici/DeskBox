@@ -5,7 +5,7 @@
 - 目标：`x86_64-pc-windows-msvc`
 - ABI：3
 - 结构版本：1
-- 产品状态：Direct x64 原生模块构建默认启用；运行期自动回退；Store 与 ARM64 不打包且默认关闭
+- 产品状态：（R8-AB 勘误）**模块已移除——`native/deskbox-search-core/`、`native/include/deskbox_search_core.h` 及其构建/冒烟脚本（`scripts/build-rust-search-core.ps1` 等）已随 commit 82cd480f 从仓库删除，原生桌面搜索现由 Everything 集成（`Services/EverythingSearchService.cs`）承担，本文仅作 ABI v3 存档保留**。移除前状态：Direct x64 原生模块构建默认启用；运行期自动回退；Store 与 ARM64 不打包且默认关闭
 
 ## 1. v3 增量
 
@@ -16,7 +16,7 @@ ABI v3 保留 v2 的 DBIX v1 直载、构建、查询、复制、统计、取消
 - `deskbox_search_core_save_dbix_v1`：把当前 live entries 原子保存为 DBIX v1。
 
 当前 SearchCore 必需导出为 14 个。它仍是独立模块，不改变生产 `deskbox_native.dll` 的 ABI 2、
-能力 511 和十个导出。
+能力 511 和十个导出。（R8-AB 勘误：SearchCore 独立模块已随 commit 82cd480f 移除，本节导出清单仅存档，当前原生层实际契约见 `native/README.md` 与 `docs/architecture/*-native-abi-*.md` 的生产模块文档。）
 
 ## 2. 增量 mutation 契约
 

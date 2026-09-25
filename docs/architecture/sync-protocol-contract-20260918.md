@@ -1,7 +1,7 @@
-# DeskBox 云同步协议契约（第 2C 刀前置）—— 契约文档，非实现
+# DeskBox 云同步协议契约（第 2C 刀前置）—— 契约文档（客户端侧本地层已入库，R8-AB 勘误）
 
 - 日期：2026-09-18
-- 状态：**契约定稿，未立项实现**。后端选型（自建薄 REST + OSS / 其他）是本契约的填空项，不是前提——契约按"任何满足协议的后端"写。
+- 状态：**契约定稿；客户端侧本地层已入库，生产链路零消费方（R8-AB 勘误，替代旧「未立项实现」表述）**。已入库部分：`SyncEnvelope`/`SyncProjection`/`SyncJsonContext`（`src/DeskBox/Sync/`）与 outbox/revisions/state 三个 store（`src/DeskBox/Services/SyncOutboxStore.cs`、`SyncRevisionsStore.cs`、`SyncStateStore.cs`），测试覆盖见 `tests/DeskBox.Tests/SyncProtocolContractTests.cs`、`SyncProjectionTests.cs`、`SyncOutboxStoreTests.cs`；**尚未立项**的是 `ISyncTransport`/`IAuthSession` 与同步引擎（App 无任何装配点，现有 store 均为预留接线）。后端选型（自建薄 REST + OSS / 其他）是本契约的填空项，不是前提——契约按"任何满足协议的后端"写。
 - 上游：`module-boundary-roadmap-20260918.md` §4 第 2C 刀、§10 云备份立项（PR-1/2/3 已合并 #398/#399/#400）
 - 边界：本文只钉**协议与客户端侧契约**（envelope/revision/cursor/三个接口）；服务端 API 形状、存储引擎、部署区域均不在本文射程。
 
@@ -172,6 +172,7 @@ data/sync/
   blobs/                 # 下行 blob 暂存（投影前）
 ```
 
+- **备份排除（显式契约，R8-AB 勘误）**：「`data/sync/` 永不进备份」不是隐式成立，而是备份白名单谓词的显式排除——`DeskBoxDataBackupService.ShouldIncludeInBackup`（`Services/DeskBoxDataBackupService.cs:3021`）对 `relativePath.StartsWith("sync/")` 的条目直接返回 false（排除判定在 :3042，附有"device-local protocol state，无备份语义"的注释）；`CreateDataSnapshotAsync` 的快照枚举（:2611）据此过滤，故自动快照与手动备份的 ZIP 内永远不含 outbox/游标/revision/冲突记录。
 - 与恢复管线关系：scoped restore 覆盖三域数据文件但**不覆盖 data/sync/**——恢复后 sync store 的 revision 视图与新数据不符 → 下次同步按 base_revision 自然产生冲突或 epoch 全量替换收敛，语义诚实（恢复=用户明示的本地覆盖意图）。
 
 ## 9. v1 明确不做

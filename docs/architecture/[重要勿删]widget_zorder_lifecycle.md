@@ -3,7 +3,7 @@
 > 文档性质：技术实现手册 + 故障复盘指南。
 > 适用场景：F7 / 托盘唤起格子后出现的层级类问题（压屏、不回落、闪烁、不收起等）。
 > 关联文档：`docs/architecture/widget_layer_workspace_plan.md`（产品规则口径）、`docs/architecture/current_architecture.md`（整体架构）。
-> 最后更新：2026-08-12（按现行代码校正回落策略、组恢复与空闲排序规则）。
+> 最后更新：2026-09-25（R8-AB 事实性勘误：恢复监视器双档间隔、热键预留钩子现状、QuickReveal 第三层级模式补记；2026-08-12 曾按现行代码校正回落策略、组恢复与空闲排序规则）。
 
 ---
 
@@ -22,6 +22,7 @@
 
 1. **动态层级（默认）**：本文档主要描述的模式。F7 唤起时浮起，交互结束/点击外部后回落。
 2. **桌面固定层（DesktopPinned，实验）**：格子 attach 到 WorkerW 桌面容器，所有"置顶/回落"操作都改为桌面图标层内的兄弟排序。**注意：几乎所有 Z-order 入口函数都有 `UsesDesktopPinnedMode()` 分支，修改任何一条路径时必须两种模式都过一遍。**
+3. **快速唤出（QuickReveal，第三层级模式，R8-AB 勘误补记）**：设置值 `SettingsService.WidgetLayerModeQuickReveal`（`SettingsService.cs:134`），判定入口 `WidgetLayerService.UsesQuickRevealMode()`（`WidgetLayerService.cs:1125`）。**进入**：F7/托盘唤起复用同一 raise 管线，先激活最高空闲格子，再由唤起确认段 `HoldGroupTopMostWithoutActivation` 给整组格子持有**持久 WS_EX_TOPMOST**（系统弹出层语义：保持在新激活应用之上、不夺焦点；`WidgetManager.TrayAnimation.cs` 确认回调），已打开的 DeskBox 辅助窗口（搜索弹窗/设置/桌面整理）作为 raised-band guests 经 `HoldRaisedBandGuest`（`WidgetManager.ZOrder.cs`）加入格子组上方的置顶带，按会话代际登记与释放。**层级归属**：会话存续期间格子组驻留 TopMost 带，guest 在格子组之上。**退出**：不走 TEMPORARY 脉冲回落，而是外部交互/任务栏前台/采样器外按下沿触发 `QueueQuickRevealDismiss`（隐藏全部格子），TOPMOST 由每个窗口自身的隐藏动画完成路径清除；guest 由 `ReleaseRaisedBandGuest`/`SweepRaisedBandGuests` 释放（外部前台时落位到该前台窗口之下，否则回普通带顶部）；桌面双击 dismiss 经 `ConsumeQuickRevealDesktopDoubleClickDismiss`（`QuickRevealDesktopDismissTracker`）识别。恢复监视器在该模式下间隔为 50ms（见 §4）；托盘图标发起的唤起在前台为任务栏时保持唤起态（`QuickRevealTrayRaisePolicy.KeepsRaisedStateOnTaskbarForeground`）。
 
 现行代码还把“逻辑状态”和“物理落点”分开处理。`DesktopResting` 只表示格子已经退出临时唤起/交互状态，不再等同于“绝对底层”。动态模式回落时由 `RelativeLayerRestorePolicy` 选择物理落点：
 
@@ -67,11 +68,12 @@ SetWindowPos(hwnd, HWND_NOTOPMOST, ..., SWP_NOACTIVATE | SWP_SHOWWINDOW);
 
 ### 3.1 热键入口
 
-`src/DeskBox/Services/GlobalHotkeyService.cs`
+`src/DeskBox/Services/GlobalHotkeyService.cs`（R8-AB 勘误：按现行代码校正）
 
-- 主路径：`RegisterHotKey` + 窗口子类化（`SetWindowSubclass`）接 `WM_HOTKEY`。
-- 兜底路径：`WH_KEYBOARD_LL` 低级键盘钩子（`KeyboardHookProc`）。**当前台窗口是提权进程时，UIPI 会拦截 WM_HOTKEY 投递，只有钩子路径能收到 F7**——这就是"热键时而灵时而不灵"的来源，不是注册失败。
-- 两条路径都去重（`_hookGestureIsDown` / `_isInvoking`），最终调 `App.Tray.cs` 的 `ToggleTrayWidgetsAsync()`。
+- 主路径：`RegisterHotKey`（带 `MOD_NOREPEAT`）+ 窗口子类化（`SetWindowSubclass`）接 `WM_HOTKEY`；默认热键为无修饰的 F7（`SettingsService.cs:277-280`）。
+- 预留手势钩子路径（R8-AB 勘误，替代旧的"通用 F7 兜底"描述）：`WH_KEYBOARD_LL` 低级键盘钩子（`KeyboardHookProc`）现由 `ReservedHotkeyHookService` 专用承载（`GlobalHotkeyService.cs:31` 持有实例），在自己的消息泵线程上装钩子（`ReservedHotkeyHookService.cs:424-425`），仅服务 `RegisterHotKey` 无法捕获的激活方式：双击 Ctrl、单击 Win、Win+Space、Alt+Space（`TryGetReservedHookMode`，`GlobalHotkeyService.cs:612-646`）；命中后向主窗口投递私有消息 `WM_RESERVED_HOTKEY (0x8442)`，由子类过程以 `source=reserved-hook` 路由（`GlobalHotkeyService.cs:521-524`）。
+- UIPI 结论相应更正（R8-AB 勘误）：**普通组合键没有钩子兜底**——注册仍成功，但当前台窗口是提权进程时 WM_HOTKEY 投递会被 UIPI 拦截，此时普通 F7 组合键无法触发（来源不是注册失败）；只有上述预留手势经专用钩子不受前台提权影响。
+- 去重现状（R8-AB 勘误）：旧 `_hookGestureIsDown` / `_isInvoking` 字段已不存在——替代机制为 `MOD_NOREPEAT`（主路径防按键重复）、钩子服务内三台状态机的按下/抬起边沿判定（并过滤 `LLKHF_INJECTED` 与注入标记事件，`ReservedHotkeyHookService.cs` `KeyboardHookProcCore`）、接收/触发序号计数（`ReceivedCount`/`InvocationCount`）。两条路径最终仍调 `App.Tray.cs` 的 `ToggleTrayWidgetsAsync()`（`App.xaml.cs:1450-1453` 构造注入）。
 
 ### 3.2 Toggle 决策（三态）
 
@@ -96,8 +98,8 @@ SetWindowPos(hwnd, HWND_NOTOPMOST, ..., SWP_NOACTIVATE | SWP_SHOWWINDOW);
    - （WIN-05 校正）`EnsureRaisedFromTrayTopMost` 的 `_isAtDesktopLayer` 短路已随实现演进消失：现行实现是 `!Visible` 早退，已可见的格子每次都会执行 `BringToFront` + `HoldTemporaryTopMost`，随后组操作再全员脉冲——托盘重复唤起的多次带迁移是已知且**有意保留**的行为（台账 DEF-006 结论）。
 4. 记录 `_foregroundAtRaiseTime = GetForegroundWindow()`；设置 `_suppressTrayLayerRestoreUntilUtc = now + 160ms`（防止唤起动画期间的瞬时事件误触发回落）。
 5. `SetWidgetsRaisedFromTray(true)` 进入唤起态。
-6. `QueueTrayRaiseTopMostConfirmation` → `BringGroupTemporarilyToFront`（瞬态置顶再清除，见 §2）。
-7. **`StartTrayLayerRestoreMonitor`：启动 200ms 恢复监视器 + 50ms 鼠标边沿采样器（见 §4）。**
+6. `QueueTrayRaiseTopMostConfirmation` → `BringGroupTemporarilyToFront`（瞬态置顶再清除，见 §2）。QuickReveal 模式改为激活后由 `HoldGroupTopMostWithoutActivation` 持久持有整组（见 §1 第 3 条，R8-AB 勘误补记）。
+7. **`StartTrayLayerRestoreMonitor`：启动恢复监视器 + 50ms 鼠标边沿采样器（见 §4）。监视器间隔为双档：`WidgetLayerService.UsesQuickRevealMode() ? 50 : 200`（`WidgetManager.ZOrder.cs:1075`，QuickReveal 50ms / 其余 200ms）。（R8-AB 勘误）**
 8. `ActivateLastRaisedWindow` → `ContentWidgetWindow.ActivateRaisedFromTrayBatch()`（DEF-027 后唯一宿主）：`base.Activate()` + `SetForegroundWindow(hwnd)`。
    - **`SetForegroundWindow` 经常失败**（Windows 前台锁：只有"收到最后一次输入事件"的进程才能抢前台；热键经异步队列 + 窗口准备耗时后，输入事件归属可能已不是 DeskBox；前台是提权进程时 UIPI 也会拒绝）。**返回值必须检查并记日志**（2026-07-24 起已加，日志前缀 `[ZOrder] ... SetForegroundWindow FAILED`）。失败是合法的，系统必须能在"DeskBox 从未获得前台"的情况下正确回落。
 
@@ -105,7 +107,7 @@ SetWindowPos(hwnd, HWND_NOTOPMOST, ..., SWP_NOACTIVATE | SWP_SHOWWINDOW);
 
 ## 4. 回落（Restore）信号体系
 
-**唤起态期间，单窗口的所有自救路径都被显式禁用**（`WidgetWindowBase.Interaction.cs` 与 `ContentWidgetWindow.WindowInteraction.cs` 的 Deactivated/安全定时器路径都检查 `WidgetsRaisedFromTray: true` 后跳过）。唯一生效的回落路径是管理器侧的 **200ms 恢复监视器**：
+**唤起态期间，单窗口的所有自救路径都被显式禁用**（`WidgetWindowBase.Interaction.cs` 与 `ContentWidgetWindow.WindowInteraction.cs` 的 Deactivated/安全定时器路径都检查 `WidgetsRaisedFromTray: true` 后跳过）。唯一生效的回落路径是管理器侧的**恢复监视器**——间隔为双档 `UsesQuickRevealMode() ? 50 : 200`（`WidgetManager.ZOrder.cs:1075`；Dynamic 200ms / QuickReveal 50ms）（R8-AB 勘误）：
 
 `src/DeskBox/Services/WidgetManager.ZOrder.cs` 的 `TrayLayerRestoreTimer_Tick` → `TryRestoreRaisedWidgetsAfterInteraction`（约 93-152 行）。
 
@@ -130,7 +132,7 @@ SetWindowPos(hwnd, HWND_NOTOPMOST, ..., SWP_NOACTIVATE | SWP_SHOWWINDOW);
 
 - 50ms 轮询 `Win32Helper.IsAnyMouseButtonDown()`（`GetAsyncKeyState` **高位**，全局物理状态，与目标进程是否提权无关）。
 - 检测 up→down 跳变，**在按下瞬间**判断光标不在 DeskBox/任务栏上 → 置 `_outsideMousePressObserved = true`。
-- 200ms 监视器消费该标志触发回落。
+- 恢复监视器消费该标志触发回落（Dynamic 200ms / QuickReveal 50ms 双档；QuickReveal 模式下采样器检测到格子外按下沿改为直接排队 dismiss，不走该标志）。（R8-AB 勘误）
 - 启动时预充当前按键状态（`_lastMouseButtonsDown = IsAnyMouseButtonDown()`），防止用户按住触发热键的那次点击被误判为新按下。
 
 > **历史教训（坑 #1）**：旧实现用 `GetAsyncKeyState & 0x0001` 低位（"自上次查询以来是否按下"）。低位只对**派发到本线程消息队列**的输入可靠，点击其他进程窗口时经常不置位——这就是"点同一窗口 1 次不回落"的根因。代码注释里早就写了 *"GetAsyncKeyState (which only sees presses posted to our own thread)"*，但仍被用作唯一兜底信号。**检测跨进程点击，只能用高位轮询 + 自己记边沿，或 WH_MOUSE_LL 钩子。**
@@ -151,11 +153,11 @@ SetWindowPos(hwnd, HWND_NOTOPMOST, ..., SWP_NOACTIVATE | SWP_SHOWWINDOW);
 
 | 文件 | 职责 |
 |---|---|
-| `src/DeskBox/Services/GlobalHotkeyService.cs` | F7 注册（RegisterHotKey + WH_KEYBOARD_LL 双路径）、去重、触发 |
+| `src/DeskBox/Services/GlobalHotkeyService.cs` | F7 注册（RegisterHotKey 主路径 + 预留手势专用 WH_KEYBOARD_LL 钩子，钩子由 `ReservedHotkeyHookService` 承载）、序号计数、触发（R8-AB 勘误） |
 | `src/DeskBox/App.Tray.cs` | `ToggleTrayWidgetsAsync`（551 行）：toggle 总入口 |
 | `src/DeskBox/Services/WidgetManager.cs` | `ShouldHideWidgetsForTrayToggle`（231）、`RestoreRaisedWidgetsToDesktopLayer`（1141）、`IsWidgetInteractionActive`（112） |
 | `src/DeskBox/Services/WidgetManager.TrayAnimation.cs` | `RaiseWidgetsFromTrayAsync` 唤起序列、`_foregroundAtRaiseTime`、抑制窗、`ActivateLastRaisedWindow` |
-| `src/DeskBox/Services/WidgetManager.ZOrder.cs` | **恢复监视器（200ms）+ 鼠标采样器（50ms）+ 交互泄漏看门狗**，前台/任务栏/桌面壳判定 |
+| `src/DeskBox/Services/WidgetManager.ZOrder.cs` | **恢复监视器（双档：Dynamic 200ms / QuickReveal 50ms）+ 鼠标采样器（50ms）+ 交互泄漏看门狗 + raised-band guests**，前台/任务栏/桌面壳判定（R8-AB 勘误） |
 | `src/DeskBox/Services/WidgetLayerService.cs` | Z-order 原语：`BringWindowTemporarilyToFront`、`BringGroupTemporarilyToFront`、`RestoreGroupPreservingForeground`、相对前台组排序、DesktopPinned attach/detach |
 | `src/DeskBox/Services/WidgetSessionManager.cs` | 会话状态机 + 交互深度计数（`BeginInteraction`/`EndInteraction`/`ForceResetInteractions`） |
 | `src/DeskBox/Helpers/Win32Helper.cs` | `BringWindowTemporarilyToFront`（556）、`SetWindowTopMost`（575）、`ClearWindowTopMost`（590）、`IsAnyMouseButtonDown`（约 344）、`GetAsyncKeyState` 封装 |
@@ -218,13 +220,13 @@ SetWindowPos(hwnd, HWND_NOTOPMOST, ..., SWP_NOACTIVATE | SWP_SHOWWINDOW);
 | 点**不同**窗口能回落，点**同一**窗口不回落 | 激活失败 + 鼠标检测失效（坑 #1/#3） | 搜 `SetForegroundWindow FAILED` |
 | 点击外部页面后格子直接掉到所有页面后面 | 回落后又被空闲排序绝对置底（坑 #2） | 搜 `Group restore ... disposition=BehindForeground` 后是否又出现 `SetWindowToBottom` |
 | 交互过一次格子后永远压屏 | 交互深度泄漏（坑 #4） | 搜 `Interaction watchdog` |
-| 只有前台是提权应用时出问题 | UIPI：热键走钩子兜底、激活必失败 | 同第 2 行 |
-| F7 时灵时不灵 | 同上（钩子路径在干活，主路径被 UIPI 拦） | `GlobalHotkeyService` 日志 `source=hook/registered` |
+| 只有前台是提权应用时出问题 | UIPI：热键被拦（普通组合键无钩子兜底；预留手势走专用钩子）、激活必失败 | 同第 2 行（R8-AB 勘误） |
+| F7 时灵时不灵 | 同上（前台为提权进程时主路径 WM_HOTKEY 被 UIPI 拦） | `GlobalHotkeyService` 日志 `source=registered/reserved-hook`（R8-AB 勘误） |
 
 ### 7.2 关键日志标记（App.Log / App.LogVerbose）
 
 ```
-[GlobalHotkey] Triggered source=registered|hook     热键触发及路径
+[GlobalHotkey] Triggered id=... source=registered|reserved-hook   热键触发及路径（R8-AB 勘误）
 [TrayBatch] Raise requested / completed             唤起开始与结束
 [TrayBatch] RaisedStateMonitor started/stopped      监视器生命周期
 [TrayBatch] RaisedState released reason=...         回落触发及依据
