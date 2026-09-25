@@ -7,6 +7,18 @@ namespace DeskBox.Services;
 public sealed partial class WidgetManager
 {
     /// <summary>
+    /// FWIN-01: DWMWA_CLOAK is a bit mask rather than a boolean — 0 visible,
+    /// 1 cloaked by its owner app, 2 cloaked by the shell, 4 cloak inherited
+    /// from the owner. "Cloaked in any way" is therefore any value above
+    /// zero; -1 is the dwmapi-unavailable failure sentinel and must never be
+    /// treated as cloaked (it would also fail the &gt; 0 test).
+    /// </summary>
+    internal static bool IsDwmCloakStateCloaked(int cloakState)
+    {
+        return cloakState > 0;
+    }
+
+    /// <summary>
     /// Restores resting widgets that the shell hid behind our back during a
     /// Show Desktop / Win+D minimize storm.
     ///
@@ -79,7 +91,11 @@ public sealed partial class WidgetManager
                 continue;
             }
 
-            if (Win32Helper.TryGetDwmCloakState(hwnd) == 1)
+            // FWIN-01: DWMWA_CLOAK is a bit mask, not a boolean — see
+            // IsDwmCloakStateCloaked. -1 is the dwmapi failure sentinel and
+            // must not uncloak.
+            int cloakState = Win32Helper.TryGetDwmCloakState(hwnd);
+            if (IsDwmCloakStateCloaked(cloakState))
             {
                 int visible = 0;
                 Win32Helper.TrySetDwmWindowAttribute(hwnd, Win32Helper.DWMWA_CLOAK, ref visible);

@@ -150,12 +150,29 @@ public static class WidgetCapsuleArrangementCalculator
         int[] sizes = requestedSizes
             .Select(size => Math.Max(1, size))
             .ToArray();
+
+        // LAY-04 (DEF-026/FLAY-01) — documented overflow ladder, in order:
+        // ① the total including the gaps fits → keep both sizes and spacing;
+        // ② overflow → squeeze the spacing to zero first: the capsule sizes
+        //    win over the gaps, so the untouched sizes are returned as soon
+        //    as they fit without any spacing;
+        // ③ still overflowing → compress the sizes proportionally toward the
+        //    effective floor, then trim what still does not fit from the tail.
         int availableForItems = Math.Max(1, safeAvailable - safeSpacing * Math.Max(0, count - 1));
         if (sizes.Sum() <= availableForItems)
         {
             return (safeSpacing, sizes);
         }
 
+        if (sizes.Sum() <= safeAvailable)
+        {
+            // Sizes fit at spacing 0 (safeSpacing is > 0 here, otherwise step ①
+            // already returned): the gaps give way, the sizes do not.
+            return (0, sizes);
+        }
+
+        safeSpacing = 0;
+        availableForItems = safeAvailable;
         int effectiveMinimum = Math.Min(
             preferredMinimum,
             Math.Max(1, availableForItems / count));
@@ -195,20 +212,13 @@ public static class WidgetCapsuleArrangementCalculator
         }
 
         // LAY-04 (DEF-026): when even the 1px floor cannot fit every capsule
-        // (extreme case: count × 1px + spacing > work-area length), the loop
-        // above used to leave the overflow silently in place — the bar then
-        // spills out of the work area and ClampGroupIntoWorkArea can only
-        // push it toward one edge. Squeeze spacing to zero first (the sizes
-        // still win), then truncate the tail: the dropped capsules fall back
-        // to free placement upstream instead of pushing the whole bar out of
-        // the screen. The caller-visible sizes always sum to what fits.
-        int totalWithSpacing = sizes.Sum() + safeSpacing * Math.Max(0, count - 1);
-        if (totalWithSpacing > safeAvailable && count > 1)
-        {
-            safeSpacing = 0;
-            totalWithSpacing = sizes.Sum();
-        }
-
+        // (extreme case: count × 1px > work-area length), the loops above
+        // leave the overflow silently in place — the bar then spills out of
+        // the work area and ClampGroupIntoWorkArea can only push it toward one
+        // edge. Truncate the tail: the dropped capsules fall back to free
+        // placement upstream instead of pushing the whole bar out of the
+        // screen. The caller-visible sizes always sum to what fits.
+        int totalWithSpacing = sizes.Sum();
         if (totalWithSpacing > safeAvailable)
         {
             int fitCount = Math.Max(1, Math.Min(

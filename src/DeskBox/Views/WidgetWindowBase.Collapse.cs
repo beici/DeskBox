@@ -3419,9 +3419,11 @@ public abstract partial class WidgetWindowBase
         if (frameRateCap > 0)
         {
             // A user-selected cap replaces the adaptive ladder entirely: the
-            // cadence is fixed at refresh/cap (rounded, always at or under
-            // the target) and the overrun escalation is bypassed — the user
-            // asked for this rate, so the session must not silently drop it.
+            // cadence is fixed at refresh/cap with a floor-divided skip, so
+            // the delivered rate lands at or ABOVE the target (never below —
+            // e.g. 165Hz/60 → skip 2 = 82.5fps), and the overrun escalation
+            // is bypassed — the user asked for this rate, so the session must
+            // not silently drop it.
             _collapseAnimationFrameSkipLevel =
                 WidgetCompactFrameSkipPolicy.ResolveLevelForFrameRate(refreshRateHz, frameRateCap);
             _collapseAnimationFrameSkip = WidgetCompactFrameSkipPolicy.ResolveSkipForFrameRate(

@@ -142,11 +142,6 @@ public sealed class ManagedStorageRollbackFailureException : Exception
     public IReadOnlyList<ManagedStorageRollbackFailure> Failures { get; }
 }
 
-public sealed record QuickCaptureFileWidgetTarget(
-    string WidgetId,
-    string Name,
-    string FolderPath);
-
 public enum WidgetRemovalAction
 {
     RemoveWidgetOnly,
@@ -453,7 +448,6 @@ public sealed partial class WidgetManager
         }
     }
 
-    public event Action<string>? WidgetRemoved;
     public event Action<bool>? TrayLayerStateChanged;
 
     private static bool HasUiThreadAccess()
@@ -1773,6 +1767,12 @@ public sealed partial class WidgetManager
                     bounds.Y + cascadeOffset,
                     bounds.Width,
                     bounds.Height);
+                // FLAY-03: the cascade shift runs after the placement policy
+                // has already clamped, so a wide widget can be pushed past the
+                // work area's left edge by up to 8 × 24 px (and a tall one
+                // past the bottom edge). Re-clamp the offset bounds with the
+                // same EnsureVisible semantics before they are persisted.
+                bounds = WidgetPositioningService.EnsureVisible(bounds, workArea);
                 WidgetPositioningService.UpdateConfigFromPhysicalBounds(config, bounds, workArea);
                 WidgetPositioningService.CaptureAnchor(config, bounds, workArea);
                 config.NeedsInitialPlacement = false;
@@ -1898,7 +1898,6 @@ public sealed partial class WidgetManager
         await _settingsService.SaveAsync();
         _deletedWidgetIds.Remove(widgetId);
         App.Log($"[WidgetManager] Widget delete persisted: {widgetId} kind={config?.WidgetKind} featureEnabled={GetFeatureWidgetEnabledState(config?.WidgetKind)}");
-        WidgetRemoved?.Invoke(widgetId);
     }
 
     public async Task RenameWidgetAsync(string widgetId, string newName)
@@ -2195,18 +2194,6 @@ public sealed partial class WidgetManager
                !IsDeleted(widget.Id) &&
                WidgetGroupSettings.IsActiveMember(_settingsService.Settings, widget.Id) &&
                _widgetRegistry.IsAvailableForSession(widget, _settingsService.Settings);
-    }
-
-    private void QueueTrayRaiseTopMostConfirmation(
-        IReadOnlyList<IDesktopWidgetWindow> windows,
-        long generation,
-        TimeSpan delay)
-    {
-        App.UiDispatcherQueue.TryEnqueue(async () =>
-        {
-            await Task.Delay(delay);
-            ConfirmTrayRaiseTopMost(windows, generation);
-        });
     }
 
     private static bool CanCreateWidgetWindowOnCurrentThread()

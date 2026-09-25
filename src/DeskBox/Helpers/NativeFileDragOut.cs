@@ -252,7 +252,12 @@ internal static unsafe partial class NativeFileDragOut
             $"[NativeDragOut] Starting on drag thread " +
             $"paths={sourcePaths.Count} managedThreadId={Environment.CurrentManagedThreadId}");
 
-        using var watchdog = new System.Threading.Timer(
+        // DEF-088: `using var` disposed the watchdog the moment this method
+        // returned — i.e. before the drag loop it guards ever started. The
+        // timer is created explicitly and released when the queued drag work
+        // item exits, so it stays alive for the whole drag and is guaranteed
+        // to be disposed on every exit path.
+        var watchdog = new System.Threading.Timer(
             _ =>
             {
                 if (Volatile.Read(ref done) == 0 &&
@@ -270,45 +275,57 @@ internal static unsafe partial class NativeFileDragOut
             TimeSpan.FromSeconds(15),
             TimeSpan.FromSeconds(15));
 
-        _ = queue.TryAdd(() =>
+        void RunWatchedDragWork()
         {
-            uint finalEffect;
-            bool ran;
             try
             {
-                ran = TryRunFileDragOutCore(
-                    sourcePaths,
-                    widgetId,
-                    source,
-                    stopwatch,
-                    out finalEffect);
-            }
-            catch (Exception ex)
-            {
-                App.Log($"[NativeDragOut] Drag thread failed: {ex}");
-                ran = false;
-                finalEffect = 0;
+                uint finalEffect;
+                bool ran;
+                try
+                {
+                    ran = TryRunFileDragOutCore(
+                        sourcePaths,
+                        widgetId,
+                        source,
+                        stopwatch,
+                        out finalEffect);
+                }
+                catch (Exception ex)
+                {
+                    App.Log($"[NativeDragOut] Drag thread failed: {ex}");
+                    ran = false;
+                    finalEffect = 0;
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref done, 1);
+                }
+
+                DataPackageOperation result = ran
+                    ? MapOleEffect(finalEffect)
+                    : DataPackageOperation.None;
+                Microsoft.UI.Dispatching.DispatcherQueue? dispatcher =
+                    App.UiDispatcherQueue;
+                if (dispatcher is null)
+                {
+                    App.Log(
+                        "[NativeDragOut] Completion dropped: UI dispatcher " +
+                        "unavailable");
+                    return;
+                }
+
+                _ = dispatcher.TryEnqueue(() => onCompleted(result, ran));
             }
             finally
             {
-                Interlocked.Exchange(ref done, 1);
+                watchdog.Dispose();
             }
+        }
 
-            DataPackageOperation result = ran
-                ? MapOleEffect(finalEffect)
-                : DataPackageOperation.None;
-            Microsoft.UI.Dispatching.DispatcherQueue? dispatcher =
-                App.UiDispatcherQueue;
-            if (dispatcher is null)
-            {
-                App.Log(
-                    "[NativeDragOut] Completion dropped: UI dispatcher " +
-                    "unavailable");
-                return;
-            }
-
-            _ = dispatcher.TryEnqueue(() => onCompleted(result, ran));
-        });
+        if (!queue.TryAdd(RunWatchedDragWork))
+        {
+            watchdog.Dispose();
+        }
     }
 
     internal static DataPackageOperation MapOleEffect(uint effect) =>

@@ -571,6 +571,26 @@ public abstract partial class WidgetWindowBase
         // the position captured when the dialog opened (single-widget mode
         // only; the batch mode is applied immediately by design).
         Win32Helper.GetWindowRect(HWnd, out Win32Helper.RECT dialogInitialRect);
+        // DEF-085: a Smart-collapse host can fold back into its capsule while
+        // this dialog is open — the pointer sits in the dialog window, so the
+        // leave timer fires and SetCollapsedState runs mid-dialog. Cancel must
+        // then not shove the expanded dialogInitialRect back over the freshly
+        // folded capsule. Snapshot the open-time bounds state to tell the two
+        // situations apart, plus the capsule rect the resting placement
+        // resolved to at open (only meaningful when the host was expanded over
+        // a resting capsule).
+        bool dialogInitialCollapsedBounds = IsCompactBoundsStateActive;
+        RectInt32? dialogInitialCapsuleBounds = null;
+        if (RestsCollapsed && !dialogInitialCollapsedBounds)
+        {
+            var initialLive = new RectInt32(
+                dialogInitialRect.Left,
+                dialogInitialRect.Top,
+                Math.Max(1, dialogInitialRect.Right - dialogInitialRect.Left),
+                Math.Max(1, dialogInitialRect.Bottom - dialogInitialRect.Top));
+            dialogInitialCapsuleBounds = GetCompactBounds(initialLive);
+        }
+
         bool cancelledRestorePending = false;
 
         try
@@ -592,6 +612,46 @@ public abstract partial class WidgetWindowBase
 
             if (cancelledRestorePending)
             {
+                // DEF-085: collapsed now but expanded when the dialog opened —
+                // the Smart leave timer folded the host mid-dialog. Re-applying
+                // the expanded dialogInitialRect would tear the capsule back
+                // open and persist the stale expanded rect; restore the
+                // snapshot capsule instead (conservative no-op plus a log when
+                // no capsule rect could be derived at open).
+                if (IsCompactBoundsStateActive && !dialogInitialCollapsedBounds)
+                {
+                    if (dialogInitialCapsuleBounds is { } capsule)
+                    {
+                        // A collapse morph may still be rendering; never fight
+                        // it with a competing SetWindowPos — the placement
+                        // restore below is what the next settle consumes.
+                        if (!IsCompactTransitionActive)
+                        {
+                            Win32Helper.SetWindowPos(
+                                HWnd,
+                                IntPtr.Zero,
+                                capsule.X,
+                                capsule.Y,
+                                capsule.Width,
+                                capsule.Height,
+                                Win32Helper.SWP_NOZORDER | Win32Helper.SWP_NOACTIVATE);
+                        }
+
+                        CaptureCompactPlacement(capsule, persist: true);
+                        App.LogVerbose(
+                            $"[WidgetMargin] Cancel after auto-collapse restored the capsule " +
+                            $"id={Config.Id} hwnd=0x{HWnd.ToInt64():X}");
+                    }
+                    else
+                    {
+                        App.Log(
+                            $"[WidgetMargin] Cancel after auto-collapse keeps the collapsed " +
+                            $"state id={Config.Id} hwnd=0x{HWnd.ToInt64():X}");
+                    }
+
+                    return;
+                }
+
                 Win32Helper.GetWindowRect(HWnd, out Win32Helper.RECT currentRect);
                 if (currentRect.Left != dialogInitialRect.Left ||
                     currentRect.Top != dialogInitialRect.Top ||
@@ -802,7 +862,20 @@ public abstract partial class WidgetWindowBase
             Win32Helper.SWP_NOZORDER | Win32Helper.SWP_NOACTIVATE);
         CapturePositionAnchor(nextX, nextY, live.Width, live.Height);
         UpdateConfigBoundsFromPhysical(nextX, nextY, live.Width, live.Height, persist: true);
-        if (ReferenceEquals(subject, live))
+        // DEF-095: RectInt32 is a struct — ReferenceEquals boxes both values,
+        // so the comparison was always false and the refresh branch below was
+        // dead. Compare field-wise instead. While the widget is currently
+        // collapsed the moved subject IS the capsule, so it keeps the explicit
+        // placement capture; a fully expanded host must route through the
+        // generic refresh — capturing the expanded panel rect as a capsule
+        // placement here is exactly the DEF-065 corruption the branch comment
+        // below describes.
+        bool subjectIsLive =
+            subject.X == live.X &&
+            subject.Y == live.Y &&
+            subject.Width == live.Width &&
+            subject.Height == live.Height;
+        if (subjectIsLive && !IsCompactBoundsStateActive)
         {
             RefreshCompactPlacementAfterBoundsMove();
         }

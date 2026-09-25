@@ -1535,6 +1535,17 @@ public sealed partial class DeskBoxDataBackupService
                     continue;
                 }
 
+                if (item.Id is null)
+                {
+                    // DEF-106: a staged record without an id would escape the
+                    // dictionary lookup below as a bare ArgumentNullException;
+                    // surface it through the readable invalid-data channel.
+                    throw new InvalidDataException("Todo backup data contains an item without an id.")
+                    {
+                        Data = { [BackupManifestInvalidDataKey] = true }
+                    };
+                }
+
                 if (!liveIndexById.TryGetValue(item.Id, out int index))
                 {
                     liveIndexById[item.Id] = liveData.Items.Count;
@@ -1601,6 +1612,17 @@ public sealed partial class DeskBoxDataBackupService
                 if (item is null)
                 {
                     continue;
+                }
+
+                if (item.Id is null)
+                {
+                    // DEF-106: same readable-surface rule as the todo merge —
+                    // a staged record without an id must not escape as a bare
+                    // ArgumentNullException.
+                    throw new InvalidDataException("Quick Capture backup data contains an item without an id.")
+                    {
+                        Data = { [BackupManifestInvalidDataKey] = true }
+                    };
                 }
 
                 if (!liveIndexById.TryGetValue(item.Id, out int index))
@@ -1681,8 +1703,24 @@ public sealed partial class DeskBoxDataBackupService
         DeskBoxBackupManifest manifest;
         try
         {
-            ZipArchiveEntry? manifestEntry = archive.Entries.SingleOrDefault(entry =>
-                string.Equals(entry.FullName, "manifest.json", StringComparison.Ordinal));
+            // DEF-104: duplicate manifest entries are crafted-archive
+            // territory; SingleOrDefault would escape as a bare
+            // InvalidOperationException that the readable-message mapping
+            // never sees. Discriminate explicitly so a duplicate surfaces
+            // through the same InvalidDataException channel as every other
+            // manifest defect.
+            List<ZipArchiveEntry> manifestEntries = archive.Entries
+                .Where(entry => string.Equals(entry.FullName, "manifest.json", StringComparison.Ordinal))
+                .ToList();
+            if (manifestEntries.Count > 1)
+            {
+                throw new InvalidDataException("The backup archive contains more than one manifest entry.")
+                {
+                    Data = { [BackupManifestInvalidDataKey] = true }
+                };
+            }
+
+            ZipArchiveEntry? manifestEntry = manifestEntries.Count == 1 ? manifestEntries[0] : null;
             if (manifestEntry is null)
             {
                 throw new InvalidDataException("The backup manifest is missing.")

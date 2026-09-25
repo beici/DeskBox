@@ -218,9 +218,30 @@ public sealed class WidgetTrayBatchAnimationDriver
     private void StartFrameClock()
     {
         StopFrameClock();
+        // FANI-03: this delegate runs every frame; a hand-written minimum
+        // keeps it allocation-free (Select + DefaultIfEmpty + Min would
+        // allocate an enumerator chain per tick).
         _frameRegistration = _registerFrame(
             OnRenderingFrame,
-            () => _entries.Select(_getFrameBudget).DefaultIfEmpty(1000d / 60).Min());
+            () =>
+            {
+                if (_entries.Count == 0)
+                {
+                    return 1000d / 60;
+                }
+
+                double fastest = double.PositiveInfinity;
+                for (int index = 0; index < _entries.Count; index++)
+                {
+                    double budget = _getFrameBudget(_entries[index]);
+                    if (budget < fastest)
+                    {
+                        fastest = budget;
+                    }
+                }
+
+                return fastest;
+            });
     }
 
     private void StopFrameClock()

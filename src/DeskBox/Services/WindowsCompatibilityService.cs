@@ -412,13 +412,34 @@ public static class WindowsCompatibilityService
 
     private static void UiSettings_TextScaleFactorChanged(
         UISettings sender,
-        object args) =>
-        TextScaleFactorChanged?.Invoke();
+        object args)
+    {
+        // FEVT-02: these static events are raised on WinRT callback threads;
+        // a subscriber exception must not escape back into the callback or cut
+        // off the remaining subscribers.
+        try
+        {
+            TextScaleFactorChanged?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[WindowsCompatibility] TextScaleFactorChanged subscriber failed: {ex.Message}");
+        }
+    }
 
     private static void UiSettings_AdvancedEffectsEnabledChanged(
         UISettings sender,
-        object args) =>
-        AdvancedEffectsEnabledChanged?.Invoke();
+        object args)
+    {
+        try
+        {
+            AdvancedEffectsEnabledChanged?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[WindowsCompatibility] AdvancedEffectsEnabledChanged subscriber failed: {ex.Message}");
+        }
+    }
 
     private static void AccessibilitySettings_Changed(
         AccessibilitySettings sender,

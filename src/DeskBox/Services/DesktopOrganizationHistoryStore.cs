@@ -103,7 +103,10 @@ public sealed class DesktopOrganizationHistoryStore
     public Task SaveAsync() =>
         ResilientJsonStore.SaveAsync(_historyPath, WriteTempFileAsync);
 
-    public bool SaveChecked() => SaveCheckedAsync().GetAwaiter().GetResult();
+    // FTHR-07: mirrors DesktopOrganizationRecoveryStore.Save — the async
+    // write protocol runs on a pool thread so the synchronous wait cannot
+    // deadlock on a caller's STA/dispatcher sync context.
+    public bool SaveChecked() => Task.Run(SaveCheckedAsync).GetAwaiter().GetResult();
 
     /// <summary>
     /// Same load-bearing semantics as <c>SettingsService.SaveCheckedAsync</c>:

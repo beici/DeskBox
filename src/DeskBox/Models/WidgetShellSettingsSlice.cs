@@ -46,8 +46,10 @@ public sealed class WidgetShellSettingsSlice
     /// <summary>
     /// Capsule transition frame-rate cap in fps. Supported values are
     /// <c>30</c>, <c>60</c>, <c>90</c>, <c>120</c> (anything else falls back
-    /// to <c>60</c>); the delivered cadence is refresh/cap rounded, always at
-    /// or under the target.
+    /// to <c>60</c>); <c>WidgetCompactFrameSkipPolicy.ResolveSkipForFrameRate</c>
+    /// resolves the per-tick skip with floor division (<c>refresh / cap</c>),
+    /// so the delivered cadence is never below the selected tier (at 165Hz
+    /// the 30/60/90/120 tiers deliver 33 / 82.5 / 165 / 165 fps).
     /// </summary>
     public int WidgetAnimationFrameRate { get; set; } = 60;
 

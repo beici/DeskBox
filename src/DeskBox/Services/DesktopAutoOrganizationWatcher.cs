@@ -33,6 +33,13 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
     private CancellationTokenSource _featureCts = new();
+    // FTHR-03: FileSystemWatcher callback threads read the feature token
+    // after only a `_disposed` guard. Reading `_featureCts.Token` there races
+    // with Dispose()/BeginEnabledCycle() retiring the CTS — the Token getter
+    // throws ObjectDisposedException on a disposed source. This snapshot is
+    // refreshed whenever the CTS instance is created or swapped, so callback
+    // threads never touch the CTS itself.
+    private CancellationToken _featureToken;
     private Task? _retryPump;
     private bool _lastEnabled;
     private bool _disposed;
@@ -70,6 +77,7 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
         _utcNow = utcNow;
         _delayAsync = delayAsync;
         _activityTracker = new DesktopAutoOrganizationActivityTracker(ActivityBurstWindow);
+        _featureToken = _featureCts.Token;
 
         string desktopPath = desktopPathProvider?.Invoke() ??
             Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
@@ -164,6 +172,7 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
         // and the final Dispose() cancels whatever instance is current.
         _featureCts.Cancel();
         _featureCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+        _featureToken = _featureCts.Token;
         Interlocked.Exchange(ref _watcherRecoveryAttempts, 0);
     }
 
@@ -414,7 +423,11 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
             return;
         }
 
-        _ = RecoverWatcherContinuouslyAsync(_featureCts.Token);
+        // FTHR-03: use the snapshot token — `_featureCts.Token` here raced
+        // with Dispose() (Cancel+Dispose between the `_disposed` guard and
+        // the Token read) and surfaced as ObjectDisposedException on the
+        // FileSystemWatcher callback thread.
+        _ = RecoverWatcherContinuouslyAsync(_featureToken);
     }
 
     private async Task RecoverWatcherContinuouslyAsync(CancellationToken cancellationToken)
@@ -502,7 +515,10 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
             return;
         }
 
-        CancellationToken featureToken = _featureCts.Token;
+        // FTHR-03: snapshot token — see ScheduleWatcherRecovery; never read
+        // `_featureCts.Token` from a watcher callback after only the
+        // `_disposed` guard.
+        CancellationToken featureToken = _featureToken;
         _ = ProcessAfterSettleAsync(workItem, featureToken);
     }
 
@@ -1022,6 +1038,10 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
         }
 
         _disposed = true;
+        // FTHR-03: Cancel must precede Dispose. Callback threads may still be
+        // unwinding with the token snapshot taken from `_featureToken`; a
+        // canceled-then-disposed source keeps those tokens safe (cancellation
+        // is observable, the Token getter is never re-read).
         _featureCts.Cancel();
         _lifetimeCts.Cancel();
         _settingsService.SettingsChanged -= OnSettingsChanged;

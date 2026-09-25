@@ -484,6 +484,21 @@ public sealed partial class GlanceWidgetContent : UserControl
         object sender,
         PointerRoutedEventArgs e)
     {
+        // FEXC-05/FEVT-06: async void — an escaping fault would crash the
+        // process. The calendar update chain only swallows cancellation, so
+        // everything else is caught and logged here.
+        try
+        {
+            await RunCalendarWheelNavigationAsync(e);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[GlanceWidgetContent] Calendar wheel navigation failed: {ex}");
+        }
+    }
+
+    private async Task RunCalendarWheelNavigationAsync(PointerRoutedEventArgs e)
+    {
         if (!_isLoaded || NativeCalendarView.DisplayMode != CalendarViewDisplayMode.Month)
         {
             return;
@@ -658,6 +673,21 @@ public sealed partial class GlanceWidgetContent : UserControl
     }
 
     private async void CalendarMonthSyncTimer_Tick(object? sender, object e)
+    {
+        // FEXC-05: async void timer tick — the calendar update chain only
+        // swallows cancellation, so any other fault must be caught and logged
+        // here instead of escaping the handler.
+        try
+        {
+            await RunCalendarMonthSyncAsync();
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[GlanceWidgetContent] Calendar month sync failed: {ex}");
+        }
+    }
+
+    private async Task RunCalendarMonthSyncAsync()
     {
         _calendarMonthSyncTimer.Stop();
         if (!_isLoaded || NativeCalendarView.DisplayMode != CalendarViewDisplayMode.Month)

@@ -64,7 +64,10 @@ public sealed class FolderWatcherService : IDisposable
         NotifyFilters.Attributes;
 
     private FileSystemWatcher? _legacyWatcher;
-    private FileSystemWatcher? _desktopIniWatcher;
+    // FTHR-05: the desktop.ini watcher is created on the UI thread but
+    // swapped and disposed from FileSystemWatcher error callbacks, so it is
+    // volatile and every read site snapshots it before use.
+    private volatile FileSystemWatcher? _desktopIniWatcher;
     private StorageItemQueryResult? _queryWatcher;
     private readonly DispatcherQueueTimer _debounceTimer;
     private readonly DispatcherQueueTimer _iconDebounceTimer;
@@ -86,8 +89,13 @@ public sealed class FolderWatcherService : IDisposable
     private int _reconnectAttempt;
     private int _reconnectCount;
     private bool _isDisposed;
-    private DateTimeOffset? _lastEventAt;
-    private FolderWatcherHealth _health = FolderWatcherHealth.Stopped;
+    // FTHR-05: written from FileSystemWatcher/threadpool callbacks and read
+    // by diagnostics from any thread — stored as Interlocked-managed
+    // primitives instead of torn-prone struct/enum fields. 0 ticks means
+    // "no event observed yet"; the health field stores the FolderWatcherHealth
+    // enum as int.
+    private long _lastEventAtTicks;
+    private int _health;
     private string? _lastError;
 
     /// <summary>
@@ -133,16 +141,38 @@ public sealed class FolderWatcherService : IDisposable
     }
 
     public int ReconnectCount => Volatile.Read(ref _reconnectCount);
-    public DateTimeOffset? LastEventAt => _lastEventAt;
+
+    public DateTimeOffset? LastEventAt
+    {
+        get
+        {
+            long ticks = Interlocked.Read(ref _lastEventAtTicks);
+            return ticks == 0
+                ? null
+                : new DateTimeOffset(ticks, TimeSpan.Zero);
+        }
+    }
+
+    private FolderWatcherHealth HealthState =>
+        (FolderWatcherHealth)Volatile.Read(ref _health);
+
     public FolderWatcherHealthSnapshot Health => new(
         WatchedPath,
-        _health,
+        HealthState,
         _legacyWatcher is not null,
         _queryWatcher is not null,
         IsReconnectPending,
         ReconnectCount,
         LastEventAt,
         _lastError);
+
+    /// <summary>FTHR-05: cross-thread event timestamp writer.</summary>
+    private void MarkLastEventAt() =>
+        Interlocked.Exchange(ref _lastEventAtTicks, DateTimeOffset.Now.UtcTicks);
+
+    private void SetHealth(FolderWatcherHealth value) =>
+        Volatile.Write(ref _health, (int)value);
+
     public FolderWatcherHealthSnapshot HealthSnapshot => Health;
 
     public FolderWatcherService(DispatcherQueue dispatcherQueue)
@@ -211,7 +241,7 @@ public sealed class FolderWatcherService : IDisposable
 
         if (availability != FolderWatcherHealth.Watching)
         {
-            _health = availability;
+            SetHealth(availability);
             BeginReconnect(folderPath, resetAttempt: true);
             App.Log($"[FolderWatcher] Folder unavailable; reconnect scheduled for '{folderPath}'");
             return;
@@ -234,16 +264,16 @@ public sealed class FolderWatcherService : IDisposable
         bool queryStarted = await TryStartQueryWatcherAsync(folderPath, generation);
         if (!nativeStarted && !queryStarted)
         {
-            _health = ProbeFolderAccess(folderPath) == FolderWatcherHealth.AccessDenied
+            SetHealth(ProbeFolderAccess(folderPath) == FolderWatcherHealth.AccessDenied
                 ? FolderWatcherHealth.AccessDenied
-                : FolderWatcherHealth.Unavailable;
+                : FolderWatcherHealth.Unavailable);
             BeginReconnect(folderPath);
         }
         else
         {
-            _health = nativeStarted && queryStarted
+            SetHealth(nativeStarted && queryStarted
                 ? FolderWatcherHealth.Watching
-                : FolderWatcherHealth.Degraded;
+                : FolderWatcherHealth.Degraded);
             lock (_lock)
             {
                 _reconnectPath = null;
@@ -374,7 +404,7 @@ public sealed class FolderWatcherService : IDisposable
         // StorageFileQueryResult.ContentsChanged does not provide details
         // about what changed — it only signals that something in the folder
         // changed.  We treat this as a full-reload signal.
-        _lastEventAt = DateTimeOffset.Now;
+        MarkLastEventAt();
         QueueFullReload(generation);
     }
 
@@ -413,12 +443,14 @@ public sealed class FolderWatcherService : IDisposable
 
     private void OnDesktopIniChanged(object sender, FileSystemEventArgs e)
     {
-        if (!TryGetActiveGeneration(sender, _desktopIniWatcher, out int generation))
+        // FTHR-05: snapshot — the field can be swapped/disposed concurrently.
+        FileSystemWatcher? desktopIniWatcher = _desktopIniWatcher;
+        if (!TryGetActiveGeneration(sender, desktopIniWatcher, out int generation))
         {
             return;
         }
 
-        _lastEventAt = DateTimeOffset.Now;
+        MarkLastEventAt();
         // Only direct child folders' icons are displayed — ignore deeper
         // nesting and a desktop.ini sitting at the watched root itself.
         string? childDir = Path.GetDirectoryName(e.FullPath);
@@ -449,7 +481,9 @@ public sealed class FolderWatcherService : IDisposable
 
     private void OnDesktopIniWatcherError(object sender, ErrorEventArgs e)
     {
-        if (!TryGetActiveGeneration(sender, _desktopIniWatcher, out _))
+        // FTHR-05: snapshot — the field can be swapped/disposed concurrently.
+        FileSystemWatcher? reportingWatcher = _desktopIniWatcher;
+        if (!TryGetActiveGeneration(sender, reportingWatcher, out _))
         {
             return;
         }
@@ -470,14 +504,14 @@ public sealed class FolderWatcherService : IDisposable
             App.Log($"[FolderWatcher] desktop.ini watcher error: {e.GetException()}");
         }
 
-        if (_desktopIniRestartCount >= DesktopIniRestartMaxAttempts)
+        if (Volatile.Read(ref _desktopIniRestartCount) >= DesktopIniRestartMaxAttempts)
         {
             // Persistent (typically a denied subtree). Stay stopped until the
             // next full reconfiguration recreates it with a fresh budget.
             return;
         }
 
-        _desktopIniRestartCount++;
+        Interlocked.Increment(ref _desktopIniRestartCount);
         string? path;
         lock (_lock)
         {
@@ -489,8 +523,10 @@ public sealed class FolderWatcherService : IDisposable
             return;
         }
 
-        _desktopIniWatcher?.Dispose();
-        _desktopIniWatcher = null;
+        // FTHR-05: atomic swap so Stop() racing this callback cannot
+        // double-dispose or resurrect a disposed watcher.
+        FileSystemWatcher? staleWatcher = Interlocked.Exchange(ref _desktopIniWatcher, null);
+        staleWatcher?.Dispose();
         StartDesktopIniWatcher(path);
     }
 
@@ -544,7 +580,7 @@ public sealed class FolderWatcherService : IDisposable
             _reconnectPath = null;
             _requestedPath = null;
             _reconnectAttempt = 0;
-            _desktopIniRestartCount = 0;
+            Interlocked.Exchange(ref _desktopIniRestartCount, 0);
         }
 
         if (_queryWatcher is not null)
@@ -557,20 +593,22 @@ public sealed class FolderWatcherService : IDisposable
             _queryWatcher = null;
         }
 
-        if (_desktopIniWatcher is not null)
+        // FTHR-05: atomic swap so the error-callback restart path racing this
+        // Stop() cannot double-dispose the same watcher instance.
+        FileSystemWatcher? desktopIniWatcher = Interlocked.Exchange(ref _desktopIniWatcher, null);
+        if (desktopIniWatcher is not null)
         {
-            _desktopIniWatcher.EnableRaisingEvents = false;
-            _desktopIniWatcher.Created -= OnDesktopIniChanged;
-            _desktopIniWatcher.Changed -= OnDesktopIniChanged;
-            _desktopIniWatcher.Renamed -= OnDesktopIniChanged;
-            _desktopIniWatcher.Error -= OnDesktopIniWatcherError;
-            _desktopIniWatcher.Dispose();
-            _desktopIniWatcher = null;
+            desktopIniWatcher.EnableRaisingEvents = false;
+            desktopIniWatcher.Created -= OnDesktopIniChanged;
+            desktopIniWatcher.Changed -= OnDesktopIniChanged;
+            desktopIniWatcher.Renamed -= OnDesktopIniChanged;
+            desktopIniWatcher.Error -= OnDesktopIniWatcherError;
+            desktopIniWatcher.Dispose();
         }
 
         StopLegacyWatcher();
         WatchedPath = null;
-        _health = FolderWatcherHealth.Stopped;
+        SetHealth(FolderWatcherHealth.Stopped);
     }
 
     private void StopLegacyWatcher()
@@ -597,7 +635,7 @@ public sealed class FolderWatcherService : IDisposable
             return;
         }
 
-        _lastEventAt = DateTimeOffset.Now;
+        MarkLastEventAt();
         if (HandleUnavailableRootFromCallback(generation))
         {
             return;
@@ -613,7 +651,7 @@ public sealed class FolderWatcherService : IDisposable
             return;
         }
 
-        _lastEventAt = DateTimeOffset.Now;
+        MarkLastEventAt();
         if (HandleUnavailableRootFromCallback(generation))
         {
             return;
@@ -639,7 +677,7 @@ public sealed class FolderWatcherService : IDisposable
 
         lock (_lock)
         {
-            _health = FolderWatcherHealth.Unavailable;
+            SetHealth(FolderWatcherHealth.Unavailable);
             _lastError = "The watched folder is temporarily unavailable.";
         }
 
@@ -658,7 +696,7 @@ public sealed class FolderWatcherService : IDisposable
         }
 
         _lastError = e.GetException()?.Message;
-        _health = FolderWatcherHealth.Degraded;
+        SetHealth(FolderWatcherHealth.Degraded);
         if (_legacyErrorAnnounced)
         {
             // A denied subtree keeps tripping the watcher every cycle; after
@@ -831,7 +869,7 @@ public sealed class FolderWatcherService : IDisposable
             FolderWatcherHealth availability = await ProbeFolderAccessAsync(probePath);
             if (availability != FolderWatcherHealth.Watching)
             {
-                _health = availability;
+                SetHealth(availability);
                 ScheduleReconnect();
                 return;
             }
@@ -850,7 +888,7 @@ public sealed class FolderWatcherService : IDisposable
             lock (_lock)
             {
                 path = _reconnectPath;
-                _health = FolderWatcherHealth.Unavailable;
+                SetHealth(FolderWatcherHealth.Unavailable);
                 _lastError = ex.Message;
             }
 

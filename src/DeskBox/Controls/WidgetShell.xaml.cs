@@ -982,15 +982,24 @@ public sealed partial class WidgetShell : UserControl
             return;
         }
 
+        // DEF-089/FANI-01: the breathing key frames are constant per
+        // ready-state, so the template is seeded once per variant and the
+        // start path only touches Duration/Iteration and starts it.
         ScalarKeyFrameAnimation animation =
-            _compositionResources.GetScalar(visual.Compositor, WidgetAnimationTemplate.GroupDropBreathing);
+            _compositionResources.GetScalar(
+                visual.Compositor,
+                WidgetAnimationTemplate.GroupDropBreathing,
+                ready,
+                seeded =>
+                {
+                    CubicBezierEasingFunction easing =
+                        _compositionResources.GetBreathingEasing(visual.Compositor);
+                    seeded.InsertKeyFrame(0, ready ? 0.42f : 0.3f);
+                    seeded.InsertKeyFrame(0.5f, ready ? 1 : 0.78f, easing);
+                    seeded.InsertKeyFrame(1, ready ? 0.42f : 0.3f, easing);
+                });
         animation.Duration = TimeSpan.FromMilliseconds(1500);
         animation.IterationBehavior = AnimationIterationBehavior.Forever;
-        CubicBezierEasingFunction easing =
-            _compositionResources.GetBreathingEasing(visual.Compositor);
-        animation.InsertKeyFrame(0, ready ? 0.42f : 0.3f);
-        animation.InsertKeyFrame(0.5f, ready ? 1 : 0.78f, easing);
-        animation.InsertKeyFrame(1, ready ? 0.42f : 0.3f, easing);
         _groupDropBreathingAnimation = animation;
         visual.StartAnimation("Opacity", animation);
     }
@@ -2132,8 +2141,12 @@ public sealed partial class WidgetShell : UserControl
         double fromProgress = 0)
     {
         Visual visual = ElementCompositionPreview.GetElementVisual(element);
-        ScalarKeyFrameAnimation animation = _compositionResources.GetScalar(
-            visual.Compositor, WidgetAnimationTemplate.CompactOpacity);
+        // DEF-089/FANI-01: the transition curves differ per element role,
+        // direction and fromProgress span, so this template cannot carry
+        // fixed key frames — each start gets a fresh instance instead of
+        // re-pouring the shared cached template.
+        ScalarKeyFrameAnimation animation = _compositionResources.CreateScalar(
+            visual.Compositor);
         double span = Math.Clamp(1 - fromProgress, 0.01, 1);
         animation.Duration = TimeSpan.FromMilliseconds(
             _compactTransitionProfile.DurationMilliseconds * span);
@@ -2158,8 +2171,9 @@ public sealed partial class WidgetShell : UserControl
     {
         Visual visual = ElementCompositionPreview.GetElementVisual(element);
         visual.CenterPoint = new Vector3(visual.Size.X / 2, visual.Size.Y / 2, 0);
-        Vector3KeyFrameAnimation animation = _compositionResources.GetVector3(
-            visual.Compositor, WidgetAnimationTemplate.CompactScale);
+        // DEF-089/FANI-01: fresh per-start instance — see the opacity path.
+        Vector3KeyFrameAnimation animation = _compositionResources.CreateVector3(
+            visual.Compositor);
         double span = Math.Clamp(1 - fromProgress, 0.01, 1);
         animation.Duration = TimeSpan.FromMilliseconds(
             _compactTransitionProfile.DurationMilliseconds * span);
@@ -2183,8 +2197,9 @@ public sealed partial class WidgetShell : UserControl
     {
         ElementCompositionPreview.SetIsTranslationEnabled(element, true);
         Visual visual = ElementCompositionPreview.GetElementVisual(element);
-        Vector3KeyFrameAnimation animation = _compositionResources.GetVector3(
-            visual.Compositor, WidgetAnimationTemplate.CompactTranslation);
+        // DEF-089/FANI-01: fresh per-start instance — see the opacity path.
+        Vector3KeyFrameAnimation animation = _compositionResources.CreateVector3(
+            visual.Compositor);
         double span = Math.Clamp(1 - fromProgress, 0.01, 1);
         animation.Duration = TimeSpan.FromMilliseconds(
             _compactTransitionProfile.DurationMilliseconds * span);
@@ -3064,16 +3079,20 @@ public sealed partial class WidgetShell : UserControl
             CompactLiveTrack.ActualWidth * (1 - _compactLiveIndeterminateSegment));
         ElementCompositionPreview.SetIsTranslationEnabled(CompactLiveProgress, true);
         Visual visual = ElementCompositionPreview.GetElementVisual(CompactLiveProgress);
-        ScalarKeyFrameAnimation translation = _compositionResources.GetScalar(
-            visual.Compositor, WidgetAnimationTemplate.CompactLiveTranslation);
+        // DEF-089/FANI-01: the translation's end value follows the track
+        // width, so it is a fresh per-start instance; the opacity pulse is a
+        // constant sine shape and stays a shared template seeded once.
+        ScalarKeyFrameAnimation translation = _compositionResources.CreateScalar(
+            visual.Compositor);
         translation.InsertKeyFrame(0, 0);
         translation.InsertKeyFrame(1, (float)maxTranslate);
         translation.Duration = TimeSpan.FromSeconds(CompactLiveIndeterminateDurationSeconds);
         translation.IterationBehavior = AnimationIterationBehavior.Forever;
 
         ScalarKeyFrameAnimation opacity = _compositionResources.GetScalar(
-            visual.Compositor, WidgetAnimationTemplate.CompactLiveOpacity);
-        InsertSineKeyFrames(opacity, midpoint: 0.6f, amplitude: 0.2f);
+            visual.Compositor,
+            WidgetAnimationTemplate.CompactLiveOpacity,
+            seeded => InsertSineKeyFrames(seeded, midpoint: 0.6f, amplitude: 0.2f));
         opacity.Duration = translation.Duration;
         opacity.IterationBehavior = AnimationIterationBehavior.Forever;
 
@@ -3270,9 +3289,12 @@ public sealed partial class WidgetShell : UserControl
         }
 
         Visual visual = ElementCompositionPreview.GetElementVisual(CompactEdgeGlow);
+        // DEF-089/FANI-01: constant sine shape — seeded once on the shared
+        // template instead of re-inserted on every start.
         ScalarKeyFrameAnimation animation = _compositionResources.GetScalar(
-            visual.Compositor, WidgetAnimationTemplate.EdgeGlow);
-        InsertSineKeyFrames(animation, midpoint: 0.48f, amplitude: 0.1f);
+            visual.Compositor,
+            WidgetAnimationTemplate.EdgeGlow,
+            seeded => InsertSineKeyFrames(seeded, midpoint: 0.48f, amplitude: 0.1f));
         animation.Duration = TimeSpan.FromSeconds(EdgeGlowPulseDurationSeconds);
         animation.IterationBehavior = AnimationIterationBehavior.Forever;
         _edgeGlowPulseAnimation = animation;
@@ -5465,12 +5487,34 @@ public sealed partial class WidgetShell : UserControl
         storyboard.Children.Add(animation);
     }
 
+    // FARC-03: one-shot gate so a trimmed-away property logs once, not on
+    // every pointer move.
+    private static bool s_protectedCursorReflectionLogged;
+
     private static void SetProtectedCursor(UIElement element, InputSystemCursorShape shape)
     {
+        // FARC-03 hardening: this resolves a non-public WinUI property via
+        // reflection, which Native AOT trimming can remove — a null lookup is
+        // the failure signal, not a supported path. The AOT-safe replacement
+        // is deferred until scripts/run-aot-*.ps1 proves the reflection path
+        // dead (FARC-03 完整替代已立案延后).
         var property = typeof(UIElement).GetProperty(
             "ProtectedCursor",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        property?.SetValue(element, InputSystemCursor.Create(shape));
+        if (property is null)
+        {
+            if (!s_protectedCursorReflectionLogged)
+            {
+                s_protectedCursorReflectionLogged = true;
+                App.Log(
+                    "[WidgetShell] UIElement.ProtectedCursor reflection unavailable " +
+                    "(AOT trimming?); custom cursor shapes are disabled");
+            }
+
+            return;
+        }
+
+        property.SetValue(element, InputSystemCursor.Create(shape));
     }
 
     private static bool IsWithin(DependencyObject source, DependencyObject target)

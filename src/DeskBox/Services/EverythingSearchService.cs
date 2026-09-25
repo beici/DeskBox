@@ -59,7 +59,9 @@ public sealed class EverythingSearchService : IDisposable
     private EverythingInstallationSnapshot? _lastInstallation;
     private long _lastProbeTick = long.MinValue;
     private long _lastDisabledFastPathTick = long.MinValue;
-    private bool _isDisposed;
+    // FTHR-08: _isDisposed is written by Dispose() on one thread while query
+    // paths read it on others — keep it visible without a lock.
+    private volatile bool _isDisposed;
 
     public EverythingSearchService(SettingsService settingsService)
     {
@@ -667,6 +669,15 @@ public sealed class EverythingSearchService : IDisposable
             }
 
             _nativeGate.Dispose();
+        }
+        else
+        {
+            // FTHR-08/DEF-103: a query still holds the gate. Skipping CleanUp
+            // is the safe outcome (in-flight work owns the SDK state until it
+            // finishes), but it must not stay silent — log it for diagnosis.
+            App.Log(
+                "[Everything] Dispose timed out waiting for the native gate " +
+                "(1s); skipping native CleanUp while a query is in flight.");
         }
     }
 

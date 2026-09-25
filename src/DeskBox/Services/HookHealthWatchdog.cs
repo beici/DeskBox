@@ -74,7 +74,9 @@ internal sealed class HookHealthWatchdog : IDisposable
     private readonly object _slotsLock = new();
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _loop;
-    private bool _disposed;
+    // FTHR-09: set by Dispose() from arbitrary threads while the watchdog
+    // loop reads it.
+    private volatile bool _disposed;
 
     internal HookHealthWatchdog(DispatcherQueue? dispatcherQueue, Action<string>? log = null)
     {

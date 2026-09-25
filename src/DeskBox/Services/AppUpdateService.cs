@@ -86,12 +86,7 @@ public sealed partial class AppUpdateService : IAppUpdateService
                 stream,
                 AppUpdateJsonContext.Default.UpdateManifest,
                 cancellationToken);
-            if (manifest is null ||
-                !TrySelectInstallerForArchitecture(
-                    manifest,
-                    CurrentInstallerArchitectureSuffix) ||
-                !IsManifestUsable(manifest) ||
-                string.IsNullOrWhiteSpace(manifest.Sha256))
+            if (manifest is null)
             {
                 return new AppUpdateCheckResult(
                     AppUpdateCheckStatus.InvalidManifest,
@@ -100,7 +95,23 @@ public sealed partial class AppUpdateService : IAppUpdateService
                     "The update manifest is missing installer metadata for this processor architecture.");
             }
 
-            return IsRemoteVersionNewer(currentVersion, manifest.Version)
+            // FARC-05: validate the architecture-selected view, but cache the
+            // manifest exactly as it was received.
+            AppUpdateManifest? selected = SelectInstallerForArchitecture(
+                manifest,
+                CurrentInstallerArchitectureSuffix);
+            if (selected is null ||
+                !IsManifestUsable(selected) ||
+                string.IsNullOrWhiteSpace(selected.Sha256))
+            {
+                return new AppUpdateCheckResult(
+                    AppUpdateCheckStatus.InvalidManifest,
+                    currentVersion,
+                    manifest,
+                    "The update manifest is missing installer metadata for this processor architecture.");
+            }
+
+            return IsRemoteVersionNewer(currentVersion, selected.Version)
                 ? new AppUpdateCheckResult(AppUpdateCheckStatus.UpdateAvailable, currentVersion, manifest)
                 : new AppUpdateCheckResult(AppUpdateCheckStatus.UpToDate, currentVersion, manifest);
         }
@@ -147,13 +158,17 @@ public sealed partial class AppUpdateService : IAppUpdateService
         IProgress<AppUpdateDownloadProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        if (!TrySelectInstallerForArchitecture(
-                manifest,
-                CurrentInstallerArchitectureSuffix) ||
-            !IsManifestUsable(manifest))
+        // FARC-05: the substitution lands on a clone; the caller's manifest
+        // (typically the cached LastCheckResult payload) stays untouched.
+        AppUpdateManifest? selected = SelectInstallerForArchitecture(
+            manifest,
+            CurrentInstallerArchitectureSuffix);
+        if (selected is null || !IsManifestUsable(selected))
         {
             return AppUpdateDownloadResult.Failed(AppUpdateDownloadFailureKind.InvalidManifest);
         }
+
+        manifest = selected;
 
         if (string.IsNullOrWhiteSpace(manifest.Sha256))
         {
@@ -481,7 +496,15 @@ public sealed partial class AppUpdateService : IAppUpdateService
             uri.Host.EndsWith("." + domain, StringComparison.OrdinalIgnoreCase);
     }
 
-    internal static bool TrySelectInstallerForArchitecture(
+    /// <summary>
+    /// Resolves the installer metadata for the requested architecture.
+    /// FARC-05: the ARM64 promotion happens on a clone — the manifest
+    /// instance flows into the <see cref="LastCheckResult"/> cache and must
+    /// keep its original payload intact, so <see cref="DownloadUpdateAsync"/>
+    /// works on the returned copy while the cached original is never
+    /// rewritten in place. Returns null when no compatible installer exists.
+    /// </summary>
+    internal static AppUpdateManifest? SelectInstallerForArchitecture(
         AppUpdateManifest manifest,
         string architectureSuffix)
     {
@@ -489,12 +512,14 @@ public sealed partial class AppUpdateService : IAppUpdateService
         {
             return IsInstallerDownloadCompatibleWithArchitecture(
                 manifest.DownloadUrl,
-                architectureSuffix);
+                architectureSuffix)
+                ? manifest
+                : null;
         }
 
         if (!string.Equals(architectureSuffix, "arm64", StringComparison.OrdinalIgnoreCase))
         {
-            return false;
+            return null;
         }
 
         if (string.IsNullOrWhiteSpace(manifest.Arm64DownloadUrl))
@@ -503,15 +528,36 @@ public sealed partial class AppUpdateService : IAppUpdateService
             // used the primary installer fields.
             return IsInstallerDownloadCompatibleWithArchitecture(
                 manifest.DownloadUrl,
-                architectureSuffix);
+                architectureSuffix)
+                ? manifest
+                : null;
         }
 
-        manifest.DownloadUrl = manifest.Arm64DownloadUrl;
-        manifest.Sha256 = manifest.Arm64Sha256;
-        manifest.Size = manifest.Arm64Size;
+        var selected = new AppUpdateManifest
+        {
+            SchemaVersion = manifest.SchemaVersion,
+            Channel = manifest.Channel,
+            Version = manifest.Version,
+            ReleaseDate = manifest.ReleaseDate,
+            MinimumSupportedVersion = manifest.MinimumSupportedVersion,
+            Mandatory = manifest.Mandatory,
+            DownloadUrl = manifest.Arm64DownloadUrl,
+            Arm64DownloadUrl = manifest.Arm64DownloadUrl,
+            ManualDownloadUrl = manifest.ManualDownloadUrl,
+            MirrorUrl = manifest.MirrorUrl,
+            Sha256 = manifest.Arm64Sha256,
+            Arm64Sha256 = manifest.Arm64Sha256,
+            Size = manifest.Arm64Size,
+            Arm64Size = manifest.Arm64Size,
+            ReleaseNotesUrl = manifest.ReleaseNotesUrl,
+            Summary = manifest.Summary,
+            ReleaseNotes = manifest.ReleaseNotes
+        };
         return IsInstallerDownloadCompatibleWithArchitecture(
-            manifest.DownloadUrl,
-            architectureSuffix);
+            selected.DownloadUrl,
+            architectureSuffix)
+            ? selected
+            : null;
     }
 
     private async Task<AppUpdateManifest?> CreateManifestFromGitHubReleaseAsync(

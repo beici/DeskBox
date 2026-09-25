@@ -418,7 +418,10 @@ public sealed class WidgetTrayAnimationController : IDisposable
         // Opacity animation
         if (Math.Abs(fromOpacity - toOpacity) > 0.001f)
         {
-            var opacityAnim = _compositionResources.GetScalar(compositor, WidgetAnimationTemplate.TrayOpacity);
+            // DEF-089/FANI-01: from/to values change on every start, so the
+            // animation is a fresh per-start instance instead of re-pouring
+            // key frames into a shared cached template.
+            var opacityAnim = _compositionResources.CreateScalar(compositor);
             opacityAnim.Duration = duration;
             opacityAnim.InsertKeyFrame(0, fromOpacity);
             opacityAnim.InsertKeyFrame(1, toOpacity, easing);
@@ -434,7 +437,7 @@ public sealed class WidgetTrayAnimationController : IDisposable
         if (Math.Abs(fromScale - toScale) > 0.001f)
         {
             visual.CenterPoint = GetVisualCenterPoint();
-            var scaleAnim = _compositionResources.GetVector3(compositor, WidgetAnimationTemplate.TrayScale);
+            var scaleAnim = _compositionResources.CreateVector3(compositor);
             scaleAnim.Duration = duration;
             scaleAnim.InsertKeyFrame(0, new Vector3(fromScale, fromScale, 1));
             scaleAnim.InsertKeyFrame(1, new Vector3(toScale, toScale, 1), easing);
@@ -537,7 +540,8 @@ public sealed class WidgetTrayAnimationController : IDisposable
 
         if (Math.Abs(fromOpacity - toOpacity) > 0.001f)
         {
-            var opacityAnim = _compositionResources.GetScalar(compositor, WidgetAnimationTemplate.TrayOpacity);
+            // DEF-089/FANI-01: fresh per-start instance — see Animate.
+            var opacityAnim = _compositionResources.CreateScalar(compositor);
             opacityAnim.Duration = duration;
             opacityAnim.InsertKeyFrame(0, fromOpacity);
             opacityAnim.InsertKeyFrame(1, toOpacity, easing);
@@ -552,7 +556,7 @@ public sealed class WidgetTrayAnimationController : IDisposable
         if (Math.Abs(fromScale - toScale) > 0.001f)
         {
             visual.CenterPoint = GetVisualCenterPoint();
-            var scaleAnim = _compositionResources.GetVector3(compositor, WidgetAnimationTemplate.TrayScale);
+            var scaleAnim = _compositionResources.CreateVector3(compositor);
             scaleAnim.Duration = duration;
             scaleAnim.InsertKeyFrame(0, new Vector3(fromScale, fromScale, 1));
             scaleAnim.InsertKeyFrame(1, new Vector3(toScale, toScale, 1), easing);

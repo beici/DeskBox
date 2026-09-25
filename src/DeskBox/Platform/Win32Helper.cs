@@ -1918,8 +1918,10 @@ public static partial class Win32Helper
 
     /// <summary>
     /// Reads the DWM cloak state of a window. Returns -1 when dwmapi is
-    /// unavailable or the call fails; otherwise the raw DWMWA_CLOAK value
-    /// (0 visible, 1 cloaked).
+    /// unavailable or the call fails; otherwise the raw DWMWA_CLOAK value,
+    /// which is a bit mask rather than a boolean: 0 visible, 1 cloaked by
+    /// its owner app, 2 cloaked by the shell, 4 cloak inherited from the
+    /// owner. Treat any value &gt; 0 as "cloaked" and -1 as unknown.
     /// </summary>
     public static int TryGetDwmCloakState(IntPtr hwnd)
     {

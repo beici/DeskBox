@@ -48,16 +48,39 @@ public static partial class PerformanceLogger
     public static int LastHandleCount { get; private set; }
 
     /// <summary>Thumbnail cache entry count, updated by IconHelper.</summary>
-    public static int ThumbnailCacheCount { get; set; }
+    // FTHR-06: diagnostic counters are written from worker threads and read
+    // from the SampleMemory path — same Interlocked discipline as the private
+    // counters below, so wide writes cannot tear and reads stay coherent.
+    public static int ThumbnailCacheCount
+    {
+        get => Volatile.Read(ref s_thumbnailCacheCount);
+        set => Interlocked.Exchange(ref s_thumbnailCacheCount, value);
+    }
 
-    public static long ThumbnailEstimatedBytes { get; set; }
+    public static long ThumbnailEstimatedBytes
+    {
+        get => Interlocked.Read(ref s_thumbnailEstimatedBytes);
+        set => Interlocked.Exchange(ref s_thumbnailEstimatedBytes, value);
+    }
 
     /// <summary>Icon cache entry count, updated by IconHelper.</summary>
-    public static int IconCacheCount { get; set; }
+    public static int IconCacheCount
+    {
+        get => Volatile.Read(ref s_iconCacheCount);
+        set => Interlocked.Exchange(ref s_iconCacheCount, value);
+    }
 
-    public static int DecodedBitmapCacheCount { get; set; }
+    public static int DecodedBitmapCacheCount
+    {
+        get => Volatile.Read(ref s_decodedBitmapCacheCount);
+        set => Interlocked.Exchange(ref s_decodedBitmapCacheCount, value);
+    }
 
-    public static long DecodedBitmapEstimatedBytes { get; set; }
+    public static long DecodedBitmapEstimatedBytes
+    {
+        get => Interlocked.Read(ref s_decodedBitmapEstimatedBytes);
+        set => Interlocked.Exchange(ref s_decodedBitmapEstimatedBytes, value);
+    }
 
     public static int QuickCaptureDetailImageDecodeCount =>
         Volatile.Read(ref s_quickCaptureDetailImageDecodeCount);
@@ -88,7 +111,11 @@ public static partial class PerformanceLogger
         Volatile.Read(ref s_markdownInlineImageDecodeCount);
 
     /// <summary>Active music progress timer count.</summary>
-    public static int ActiveMusicTimerCount { get; set; }
+    public static int ActiveMusicTimerCount
+    {
+        get => Volatile.Read(ref s_activeMusicTimerCount);
+        set => Interlocked.Exchange(ref s_activeMusicTimerCount, value);
+    }
 
     /// <summary>Transient WinUI timers created since launch.</summary>
     public static int TransientUiTimerCreatedCount =>
@@ -103,8 +130,19 @@ public static partial class PerformanceLogger
         Math.Max(0, TransientUiTimerCreatedCount - TransientUiTimerReleasedCount);
 
     /// <summary>Current music progress timer interval.</summary>
-    public static int MusicProgressTimerIntervalMs { get; set; }
+    public static int MusicProgressTimerIntervalMs
+    {
+        get => Volatile.Read(ref s_musicProgressTimerIntervalMs);
+        set => Interlocked.Exchange(ref s_musicProgressTimerIntervalMs, value);
+    }
 
+    private static int s_thumbnailCacheCount;
+    private static long s_thumbnailEstimatedBytes;
+    private static int s_iconCacheCount;
+    private static int s_decodedBitmapCacheCount;
+    private static long s_decodedBitmapEstimatedBytes;
+    private static int s_activeMusicTimerCount;
+    private static int s_musicProgressTimerIntervalMs;
     private static int s_musicCoverDecodeCount;
     private static int s_markdownRenderCount;
     private static int s_markdownInlineImageDecodeCount;

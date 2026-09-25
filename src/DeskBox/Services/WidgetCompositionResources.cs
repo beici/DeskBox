@@ -25,6 +25,7 @@ internal enum WidgetAnimationTemplate
 internal sealed class WidgetCompositionResources : IDisposable
 {
     private readonly Dictionary<WidgetAnimationTemplate, CompositionAnimation> _animations = [];
+    private readonly Dictionary<(WidgetAnimationTemplate Template, bool Variant), CompositionAnimation> _variantAnimations = [];
     private readonly Dictionary<(string Intensity, bool Showing), CompositionEasingFunction> _trayEasings = [];
     private CubicBezierEasingFunction? _breathingEasing;
     private bool _isDisposed;
@@ -57,6 +58,76 @@ internal sealed class WidgetCompositionResources : IDisposable
         Vector3KeyFrameAnimation animation = Track(compositor.CreateVector3KeyFrameAnimation());
         _animations.Add(template, animation);
         return animation;
+    }
+
+    /// <summary>
+    /// Cached scalar template whose key frames are seeded exactly once at
+    /// first creation (DEF-089/FANI-01): call sites with a constant key-frame
+    /// shape start the template without re-inserting key frames on every
+    /// start. <paramref name="seedKeyFrames"/> runs only on the create path.
+    /// </summary>
+    internal ScalarKeyFrameAnimation GetScalar(
+        Compositor compositor,
+        WidgetAnimationTemplate template,
+        Action<ScalarKeyFrameAnimation> seedKeyFrames)
+    {
+        ObjectDisposedException.ThrowIf(_isDisposed, this);
+        if (_animations.TryGetValue(template, out CompositionAnimation? existing))
+        {
+            return (ScalarKeyFrameAnimation)existing;
+        }
+
+        ScalarKeyFrameAnimation animation = Track(compositor.CreateScalarKeyFrameAnimation());
+        seedKeyFrames(animation);
+        _animations.Add(template, animation);
+        return animation;
+    }
+
+    /// <summary>
+    /// Same seeding contract as the overload above, for templates with a
+    /// small fixed set of constant key-frame variants (e.g. the group-drop
+    /// breathing pulse, which has one shape per ready-state).
+    /// </summary>
+    internal ScalarKeyFrameAnimation GetScalar(
+        Compositor compositor,
+        WidgetAnimationTemplate template,
+        bool variant,
+        Action<ScalarKeyFrameAnimation> seedKeyFrames)
+    {
+        ObjectDisposedException.ThrowIf(_isDisposed, this);
+        var key = (template, variant);
+        if (_variantAnimations.TryGetValue(key, out CompositionAnimation? existing))
+        {
+            return (ScalarKeyFrameAnimation)existing;
+        }
+
+        ScalarKeyFrameAnimation animation = Track(compositor.CreateScalarKeyFrameAnimation());
+        seedKeyFrames(animation);
+        _variantAnimations.Add(key, animation);
+        return animation;
+    }
+
+    /// <summary>
+    /// Per-start animation instances (DEF-089/FANI-01) for templates whose
+    /// key frames genuinely change on every start — from/to values, sampled
+    /// per-element curves, fromProgress spans. They must not be re-poured
+    /// into a shared cached instance, so each start gets a fresh object with
+    /// the same lifecycle as the codebase's other per-start compositor
+    /// animations (particles, content hosts): not cached, not tracked here.
+    /// </summary>
+    internal ScalarKeyFrameAnimation CreateScalar(Compositor compositor)
+    {
+        ObjectDisposedException.ThrowIf(_isDisposed, this);
+        return compositor.CreateScalarKeyFrameAnimation();
+    }
+
+    /// <summary>
+    /// Vector3 counterpart of <see cref="CreateScalar(Compositor)"/>.
+    /// </summary>
+    internal Vector3KeyFrameAnimation CreateVector3(Compositor compositor)
+    {
+        ObjectDisposedException.ThrowIf(_isDisposed, this);
+        return compositor.CreateVector3KeyFrameAnimation();
     }
 
     internal CompositionEasingFunction GetTrayEasing(
@@ -150,6 +221,11 @@ internal sealed class WidgetCompositionResources : IDisposable
             Release(animation);
         }
         _animations.Clear();
+        foreach (CompositionAnimation animation in _variantAnimations.Values)
+        {
+            Release(animation);
+        }
+        _variantAnimations.Clear();
         foreach (CompositionEasingFunction easing in _trayEasings.Values)
         {
             Release(easing);

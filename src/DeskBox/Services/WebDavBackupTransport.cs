@@ -240,10 +240,27 @@ internal sealed class WebDavBackupTransport : ICloudBackupTransport
                 continue;
             }
 
-            string decodedPath = Uri.UnescapeDataString(
-                href.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-                    ? new Uri(href).AbsolutePath
-                    : href);
+            // DEF-105: the href is server-controlled input; a malformed
+            // absolute URI must not abort the whole listing with an unhandled
+            // UriFormatException. Skip the entry instead — the listing
+            // validation, retention cleanup and snapshot-list paths all read
+            // this parse and share the same graceful filtering semantics.
+            string decodedPath;
+            if (href.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!Uri.TryCreate(href, UriKind.Absolute, out Uri? hrefUri))
+                {
+                    App.Log($"[WebDavBackup] Skipping malformed PROPFIND href '{href}'.");
+                    continue;
+                }
+
+                decodedPath = Uri.UnescapeDataString(hrefUri.AbsolutePath);
+            }
+            else
+            {
+                decodedPath = Uri.UnescapeDataString(href);
+            }
+
             if (decodedPath.TrimEnd('/').Equals(requestedPath, StringComparison.OrdinalIgnoreCase))
             {
                 continue;

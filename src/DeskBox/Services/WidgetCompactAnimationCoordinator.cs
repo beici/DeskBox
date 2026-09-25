@@ -555,7 +555,15 @@ internal static class WidgetCompactAnimationCoordinator
                 }
                 catch (Exception ex)
                 {
-                    App.Log($"[CompactAnimationClock] Frame callback failed: {ex.Message}");
+                    // FANI-04: a callback that throws every frame would
+                    // otherwise log on every tick and keep the shared clock
+                    // alive for an animation that can never make progress.
+                    // Unregister it (same teardown as a normal Dispose) and
+                    // log once — the removal itself is the one-shot gate,
+                    // because the callback never runs again.
+                    Unregister(registrationId);
+                    App.Log(
+                        $"[CompactAnimationClock] Frame callback failed and was unregistered: {ex.Message}");
                 }
             }
         }

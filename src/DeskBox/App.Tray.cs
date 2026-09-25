@@ -1019,7 +1019,15 @@ public partial class App
         }
 
         string style = SettingsService.Settings.TrayIconStyle ?? "System";
+        // FMEM-02: AppBranding.CreateTrayIcon news an Icon on every call. The
+        // previous instance has no other owner once this assignment swaps it
+        // into the TaskbarIcon (the native tray surface already references
+        // only the new HICON after the DP change callback re-posts
+        // NIM_MODIFY), so release it here. System.Drawing.Icon.Dispose is
+        // idempotent, so the teardown Dispose below stays harmless.
+        System.Drawing.Icon? previousIcon = _trayIcon.Icon;
         _trayIcon.Icon = AppBranding.CreateTrayIcon(style, IsDarkThemeActive());
+        previousIcon?.Dispose();
     }
 
     public void UpdateTrayIcon()
