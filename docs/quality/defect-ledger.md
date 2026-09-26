@@ -198,6 +198,22 @@
 > **提交（2026-09-25 拆分落库，工作树清零）**：C1 `cf145f71`（P1 批＋钩子/设置底座，逐 commit worktree 编译核验通过）→ C2 `a672a777`（持久化加固）→ C3 `f3402280`（P3 修复扫尾，含 FEVT-02 补齐）→ C4 `5078325e`（死代码/死键清理＋DEF-072 补键＋全部测试）→ C5 `34bd10a0`（文档/台账/勘误）；收口回归 **4286/4286**；实例重启 PID 17256。
 > **收口批补录（同日）**：DEF-072（12 语言补键，2896 parity，`5078325e`）与 DEF-075 残余（外层 catch 盖戳 CurrentSchemaVersion＋契约用例，`cf145f71`）已随批修复——上两节历史行中这两条的「📌 挂账」状态以本行为准，更新为 **✅ 已修复（R8-AB 收口批）**。
 
+---
+
+## 历史 P2 专项批（2026-09-25，清零代码类 P2）
+
+> 输入：台账存量 P2（DEF-069/070/071/073/067）。门禁：构建 0 错误；x64 全量回归 **4295/4295**（净增 9 用例）。提交：`6070dabc`（测试钉死＋去闪断）、`c943b139`（DEF-070/071 修复）。
+
+| 编号 | 处置 | 说明 |
+|---|---|---|
+| **DEF-069** | ✅ 已修复（现状核实＋测试钉死） | 逐行核实当前树已随近期整改落地（CopyEntryAsync 委托 CreateNew 受控核心、按句柄回滚只删自建对象）；本批以 2 个回归用例钉死契约（外来同名目标在冲突回滚中分毫不动、目录回退中止保留完成子项与外来内容）。`6070dabc` |
+| **DEF-073** | ✅ 已修复（现状核实＋测试钉死） | 两处源清理调用点均收口至 `DeleteSourceTreeByManifest`（按句柄身份校验＋只读同句柄清除＋fail-closed）；本批以 3 个用例钉死（同卷回退/managed 引擎/字面跨盘——后者 Hardware 门控空跑）。`6070dabc` |
+| **DEF-070** | ✅ 已修复（`c943b139`） | `SettingsService` 新增 `AddWidget`/`RecordOrganizationHistoryEntry`/`GetWidgetsSnapshot` 锁内 API；全部 11 处锁外 `Widgets.Add` 写点收口（WidgetManager 创建路径×2、FeatureWidgets×5、Storage、组织事务、AOT smoke×2），组织 watcher 改读快照；grep 复验仅剩 `lock (_lock)` 内写点。并发守恒用例锁死（96 并发 Add × 8 轮保存全量 id 守恒）。 |
+| **DEF-071** | ✅ 已修复（`c943b139`） | 拖出预览窗口重构为「锁内规划、锁外应用」：`_gate` 8 个持有者全部 UI 线程安全，Win32 调用（SetWindowPos/ShowWindow/SetLayeredWindowAttributes）全部移出锁块；16ms 跟手节奏不变；源码契约测试断言锁块内零 Win32 调用。 |
+| **DEF-067** | ✅ 已修复（`6070dabc`） | 备份快照竞态测试以确定性屏障替代 10ms 轮询时间窗（暂存大文件写满因果性地证明 settings 暂存已关闭）；守护意图不变。 |
+
+> 残留记录：DEF-070 的其余无锁**枚举**读点（WidgetTopologyLayoutService:400/543、DesktopOrganizationCoordinator、Transaction.Restore:368-372 等，均为 UI 线程同线程读或后续批次候选）与 `DesktopOrganizationHistoryStore.WriteTempFileAsync` 不持 `_lock` 的历史写器维持观察，不构成本批立案；`QuickCapture.TextFileNamePrefix/LinkFileNamePrefix` 孤儿键维持观察。
+
 ### 新增缺陷（B 轮 P1×2，本批已修复）
 
 | 编号 | 标题 | 优先级 | 位置 | 状态 |
