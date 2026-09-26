@@ -322,7 +322,7 @@ public partial class App
             true);
         SettingsService.Settings.TodoShowCompletedTasks = true;
         SettingsService.Settings.TodoDefaultFilter = TodoFilter.All.ToString();
-        SettingsService.Settings.Widgets.Add(new WidgetConfig
+        SettingsService.AddWidget(new WidgetConfig
         {
             Id = AotTodoNotificationSurfaceWidgetId,
             Name = "AOT Todo Notification Surface",

@@ -1076,7 +1076,7 @@ public sealed partial class WidgetManager
             config.NeedsInitialPlacement = true;
         }
 
-        _settingsService.Settings.Widgets.Add(config);
+        _settingsService.AddWidget(config);
         await _settingsService.SaveAsync();
 
         await CreateWidgetFromConfigAsync(config, revealAfterCreate: true);
@@ -1151,7 +1151,7 @@ public sealed partial class WidgetManager
         };
 
         MarkNeedsInitialPlacementIfDisplayUnusable(config);
-        _settingsService.Settings.Widgets.Add(config);
+        _settingsService.AddWidget(config);
         SyncMappedWidgetShortcut(config);
         await _settingsService.SaveAsync();
 

@@ -91,18 +91,29 @@ public sealed class WidgetPresentationAndDetachContractTests
 
         string preview = Read(
             "src/DeskBox/Views/WidgetDetachPlacementPreviewWindow.cs");
-        string move = ExtractSection(
+        // DEF-071: the Win32 calls moved out of lock (_gate) into the
+        // PendingNativeWork plan/apply split; the Z-order contract is pinned
+        // against the apply path.
+        string invoke = ExtractSection(
             preview,
-            "private void MoveAndShowNoLock(RectInt32 bounds)",
-            "private void HideNoLock()");
-        string steadyMove = ExtractSection(
-            move,
-            "if (!boundsChanged)",
-            "private void HideNoLock()",
-            allowEndAtSourceEnd: true);
+            "private readonly record struct PendingNativeWork(",
+            "private PendingNativeWork PlanShow(RectInt32 bounds)");
 
-        Assert.Contains("Win32Helper.HWND_TOPMOST", move, StringComparison.Ordinal);
-        Assert.Contains("Win32Helper.SWP_SHOWWINDOW", move, StringComparison.Ordinal);
+        // Hidden -> visible transition: establish WS_EX_TOPMOST and show.
+        string showBranch = ExtractSection(
+            invoke,
+            "if (ShowBounds is RectInt32 show)",
+            "else if (MoveBounds is RectInt32 move)");
+        Assert.Contains("Win32Helper.HWND_TOPMOST", showBranch, StringComparison.Ordinal);
+        Assert.Contains("Win32Helper.SWP_SHOWWINDOW", showBranch, StringComparison.Ordinal);
+
+        // Steady tracking frames only move the silhouette; they must not
+        // rebuild the global Z-order or issue another show request per poll.
+        string steadyMove = ExtractSection(
+            invoke,
+            "else if (MoveBounds is RectInt32 move)",
+            "private PendingNativeWork PlanShow(RectInt32 bounds)",
+            allowEndAtSourceEnd: true);
         Assert.Contains("IntPtr.Zero", steadyMove, StringComparison.Ordinal);
         Assert.Contains("Win32Helper.SWP_NOZORDER", steadyMove, StringComparison.Ordinal);
         Assert.DoesNotContain("Win32Helper.HWND_TOPMOST", steadyMove, StringComparison.Ordinal);

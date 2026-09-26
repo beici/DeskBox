@@ -531,8 +531,11 @@ public sealed class OrganizerService
 
     private async Task AddHistoryEntryAsync(OrganizationHistoryEntry entry)
     {
+        // DEF-070: the head insert goes through the settings service's locked
+        // mutator so it can never race a concurrent reader/save of the same
+        // live list; the local below is the same list the mutator touched.
+        _settingsService.RecordOrganizationHistoryEntry(entry);
         var history = _settingsService.OrganizationHistory.Entries;
-        history.Insert(0, entry);
 
         // The global budget and entry cap run here too, so a long session of
         // ordinary imports cannot grow the history without bound between

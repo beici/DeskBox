@@ -93,7 +93,7 @@ public sealed partial class WidgetManager
                 Width = _settingsService.Settings.DefaultWidgetWidth,
                 Height = _settingsService.Settings.DefaultWidgetHeight
             };
-            _settingsService.Settings.Widgets.Add(config);
+            _settingsService.AddWidget(config);
         }
 
         config.IsDisabled = false;
@@ -154,7 +154,7 @@ public sealed partial class WidgetManager
         };
 
         MarkNeedsInitialPlacementIfDisplayUnusable(config);
-        _settingsService.Settings.Widgets.Add(config);
+        _settingsService.AddWidget(config);
         await _settingsService.SaveAsync();
         await TryAdoptOrphanedTodoStoreAsync(config);
         await SeedTodoGuideAsync(config);
@@ -436,7 +436,7 @@ public sealed partial class WidgetManager
         ApplyDefaultFeatureWidgetChromeMode(config, kind);
 
         MarkNeedsInitialPlacementIfDisplayUnusable(config);
-        _settingsService.Settings.Widgets.Add(config);
+        _settingsService.AddWidget(config);
         await _settingsService.SaveAsync();
 
         return await CreateContentWidgetFromConfigAsync(config, revealAfterCreate: true);
@@ -505,7 +505,7 @@ public sealed partial class WidgetManager
         await GlanceWidgetStore.ForWidget(config.Id).SaveAsync(data);
 
         MarkNeedsInitialPlacementIfDisplayUnusable(config);
-        _settingsService.Settings.Widgets.Add(config);
+        _settingsService.AddWidget(config);
         await _settingsService.SaveAsync();
 
         if (featureEnabled)
@@ -911,7 +911,7 @@ public sealed partial class WidgetManager
             if (config is null)
             {
                 config = CreateDefaultFeatureWidgetConfig(kind, isEnabled: false);
-                _settingsService.Settings.Widgets.Add(config);
+                _settingsService.AddWidget(config);
             }
             else
             {

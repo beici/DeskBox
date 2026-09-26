@@ -149,7 +149,7 @@ public sealed partial class WidgetManager
                 IsDisabled = false
             };
 
-            _settingsService.Settings.Widgets.Add(config);
+            _settingsService.AddWidget(config);
             if (canCreateWindow)
             {
                 await CreateWidgetFromConfigAsync(config, revealAfterCreate: true);

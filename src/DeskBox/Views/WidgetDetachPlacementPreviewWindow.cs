@@ -135,6 +135,7 @@ internal sealed class WidgetDetachPlacementPreviewWindow : IDisposable
 
     public void BeginTracking(string caption, double cornerRadius)
     {
+        PendingNativeWork work;
         lock (_gate)
         {
             if (_closed)
@@ -143,15 +144,22 @@ internal sealed class WidgetDetachPlacementPreviewWindow : IDisposable
             }
 
             _animationGeneration++;
-            ApplyAppearanceNoLock(caption, cornerRadius);
-            SetOpacityNoLock(TrackingOpacity);
-            HideNoLock();
+            ApplyAppearance(caption, cornerRadius);
+            work = PlanHide();
+            if (PlanOpacity(TrackingOpacity) is byte value)
+            {
+                work = work with { Opacity = value };
+            }
+
             _hasBounds = false;
         }
+
+        work.Invoke(_hWnd);
     }
 
     public void Update(RectInt32 bounds, bool visible)
     {
+        PendingNativeWork work;
         lock (_gate)
         {
             if (_closed)
@@ -164,16 +172,20 @@ internal sealed class WidgetDetachPlacementPreviewWindow : IDisposable
             {
                 _lastBounds = normalized;
                 _hasBounds = true;
-                HideNoLock();
-                return;
+                work = PlanHide();
             }
-
-            MoveAndShowNoLock(normalized);
+            else
+            {
+                work = PlanShow(normalized);
+            }
         }
+
+        work.Invoke(_hWnd);
     }
 
     public void MarkCommitted(RectInt32 bounds)
     {
+        PendingNativeWork work;
         lock (_gate)
         {
             if (_closed)
@@ -181,13 +193,18 @@ internal sealed class WidgetDetachPlacementPreviewWindow : IDisposable
                 return;
             }
 
-            SetOpacityNoLock(CommittedOpacity);
-            MoveAndShowNoLock(NormalizeBounds(new RectInt32(
+            work = PlanShow(NormalizeBounds(new RectInt32(
                 bounds.X - 2,
                 bounds.Y - 2,
                 bounds.Width + 4,
                 bounds.Height + 4)));
+            if (PlanOpacity(CommittedOpacity) is byte value)
+            {
+                work = work with { Opacity = value };
+            }
         }
+
+        work.Invoke(_hWnd);
     }
 
     public async Task FadeOutAndHideAsync()
@@ -205,6 +222,7 @@ internal sealed class WidgetDetachPlacementPreviewWindow : IDisposable
 
         foreach (byte opacity in new byte[] { 176, 118, 58, 16 })
         {
+            byte? planned;
             lock (_gate)
             {
                 if (_closed || generation != _animationGeneration)
@@ -212,23 +230,38 @@ internal sealed class WidgetDetachPlacementPreviewWindow : IDisposable
                     return;
                 }
 
-                SetOpacityNoLock(opacity);
+                planned = PlanOpacity(opacity);
+            }
+
+            if (planned is byte value)
+            {
+                _ = Win32Helper.SetLayeredWindowAttributes(
+                    _hWnd,
+                    0,
+                    value,
+                    Win32Helper.LWA_ALPHA);
             }
 
             await Task.Delay(28);
         }
 
+        PendingNativeWork work;
         lock (_gate)
         {
-            if (!_closed && generation == _animationGeneration)
+            if (_closed || generation != _animationGeneration)
             {
-                HideNoLock();
+                return;
             }
+
+            work = PlanHide();
         }
+
+        work.Invoke(_hWnd);
     }
 
     public void Hide()
     {
+        PendingNativeWork work;
         lock (_gate)
         {
             if (_closed)
@@ -237,12 +270,15 @@ internal sealed class WidgetDetachPlacementPreviewWindow : IDisposable
             }
 
             _animationGeneration++;
-            HideNoLock();
+            work = PlanHide();
         }
+
+        work.Invoke(_hWnd);
     }
 
     public void Dispose()
     {
+        PendingNativeWork work;
         lock (_gate)
         {
             if (_closed)
@@ -252,13 +288,84 @@ internal sealed class WidgetDetachPlacementPreviewWindow : IDisposable
 
             _closed = true;
             _animationGeneration++;
-            HideNoLock();
+            work = PlanHide();
         }
 
+        work.Invoke(_hWnd);
         _window.Close();
     }
 
-    private void MoveAndShowNoLock(RectInt32 bounds)
+    /// <summary>
+    /// DEF-071: the native window operations this silhouette needs —
+    /// SetWindowPos, ShowWindow, SetLayeredWindowAttributes — synchronously
+    /// pump messages on the HWND's owning UI thread. Running them while a
+    /// UI-thread caller holds <c>_gate</c> (Hide, MarkCommitted,
+    /// FadeOutAndHideAsync, Dispose) deadlocked both threads whenever the
+    /// 16 ms tracking poll on the pool thread was mid-call: the UI thread
+    /// waited for the lock while the pool thread waited for the UI pump.
+    /// Mutators now only PLAN the transition under the lock — swapping the
+    /// small guarded state snapshot (_lastBounds, _visible, _opacity,
+    /// generation) — and apply the queued Win32 calls after releasing it.
+    /// The plan encodes exactly the same show/move/hide decisions the former
+    /// in-lock helpers made, so tracking cadence and visuals are unchanged.
+    /// </summary>
+    private readonly record struct PendingNativeWork(
+        byte? Opacity,
+        RectInt32? ShowBounds,
+        RectInt32? MoveBounds,
+        bool HideWindow)
+    {
+        public static PendingNativeWork None => default;
+
+        /// <summary>Runs the planned transitions. Must be called OUTSIDE _gate.</summary>
+        public void Invoke(IntPtr hWnd)
+        {
+            if (Opacity is byte opacity)
+            {
+                _ = Win32Helper.SetLayeredWindowAttributes(
+                    hWnd,
+                    0,
+                    opacity,
+                    Win32Helper.LWA_ALPHA);
+            }
+
+            if (ShowBounds is RectInt32 show)
+            {
+                _ = Win32Helper.SetWindowPos(
+                    hWnd,
+                    Win32Helper.HWND_TOPMOST,
+                    show.X,
+                    show.Y,
+                    show.Width,
+                    show.Height,
+                    Win32Helper.SWP_NOACTIVATE |
+                    Win32Helper.SWP_SHOWWINDOW);
+            }
+            else if (MoveBounds is RectInt32 move)
+            {
+                // WS_EX_TOPMOST is established on the hidden -> visible transition.
+                // Tracking frames only move the silhouette; they must not rebuild the
+                // global Z-order or issue another show request on every poll.
+                _ = Win32Helper.SetWindowPos(
+                    hWnd,
+                    IntPtr.Zero,
+                    move.X,
+                    move.Y,
+                    move.Width,
+                    move.Height,
+                    Win32Helper.SWP_NOACTIVATE |
+                    Win32Helper.SWP_NOZORDER);
+            }
+
+            if (HideWindow)
+            {
+                _ = Win32Helper.ShowWindow(hWnd, Win32Helper.SW_HIDE);
+            }
+        }
+    }
+
+    /// <summary>Plans a move/show transition; caller holds _gate.</summary>
+    private PendingNativeWork PlanShow(RectInt32 bounds)
     {
         bool boundsChanged = !_hasBounds || !AreEqual(_lastBounds, bounds);
         _lastBounds = bounds;
@@ -266,65 +373,43 @@ internal sealed class WidgetDetachPlacementPreviewWindow : IDisposable
 
         if (!_visible)
         {
-            _ = Win32Helper.SetWindowPos(
-                _hWnd,
-                Win32Helper.HWND_TOPMOST,
-                bounds.X,
-                bounds.Y,
-                bounds.Width,
-                bounds.Height,
-                Win32Helper.SWP_NOACTIVATE |
-                Win32Helper.SWP_SHOWWINDOW);
             _visible = true;
-            return;
+            return new PendingNativeWork(null, bounds, null, false);
         }
 
-        if (!boundsChanged)
-        {
-            return;
-        }
-
-        // WS_EX_TOPMOST is established on the hidden -> visible transition.
-        // Tracking frames only move the silhouette; they must not rebuild the
-        // global Z-order or issue another show request on every poll.
-        _ = Win32Helper.SetWindowPos(
-            _hWnd,
-            IntPtr.Zero,
-            bounds.X,
-            bounds.Y,
-            bounds.Width,
-            bounds.Height,
-            Win32Helper.SWP_NOACTIVATE |
-            Win32Helper.SWP_NOZORDER);
+        return boundsChanged
+            ? new PendingNativeWork(null, null, bounds, false)
+            : PendingNativeWork.None;
     }
 
-    private void HideNoLock()
+    /// <summary>Plans a hide transition; caller holds _gate.</summary>
+    private PendingNativeWork PlanHide()
     {
         if (!_visible)
         {
-            return;
+            return PendingNativeWork.None;
         }
 
-        _ = Win32Helper.ShowWindow(_hWnd, Win32Helper.SW_HIDE);
         _visible = false;
+        return new PendingNativeWork(null, null, null, true);
     }
 
-    private void SetOpacityNoLock(byte opacity)
+    /// <summary>
+    /// Plans an opacity transition; caller holds _gate. Returns the value to
+    /// apply outside the lock, or null when the layer already carries it.
+    /// </summary>
+    private byte? PlanOpacity(byte opacity)
     {
         if (_opacity == opacity)
         {
-            return;
+            return null;
         }
 
-        _ = Win32Helper.SetLayeredWindowAttributes(
-            _hWnd,
-            0,
-            opacity,
-            Win32Helper.LWA_ALPHA);
         _opacity = opacity;
+        return opacity;
     }
 
-    private void ApplyAppearanceNoLock(string caption, double cornerRadius)
+    private void ApplyAppearance(string caption, double cornerRadius)
     {
         Color tone = ResolveNeutralTone();
         double surfaceRadius = Math.Clamp(cornerRadius, 0, 32);

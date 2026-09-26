@@ -1450,6 +1450,56 @@ settings.FocusClickedWidgetOnRaise = false;
         SaveDebounced(notifySubscribers);
     }
 
+    /// <summary>
+    /// DEF-070: appends a brand-new widget configuration under the settings
+    /// lock so a concurrent debounced save — which serializes the same live
+    /// <see cref="AppSettings.Widgets"/> list inside <c>_lock</c> — can never
+    /// enumerate the list mid-insert (lost save or UI enumeration crash).
+    /// Deliberately a pure add, unlike <see cref="UpdateWidget"/>: no
+    /// DeletedWidgetIds guard, no notification, and no debounced save —
+    /// callers keep their explicit persistence and notification sequencing.
+    /// </summary>
+    public void AddWidget(WidgetConfig config)
+    {
+        lock (_lock)
+        {
+            _settings.Widgets.Add(config);
+        }
+    }
+
+    /// <summary>
+    /// DEF-070: returns a point-in-time copy of the widget list captured
+    /// under the settings lock, so background consumers (e.g. the
+    /// auto-organization watcher) enumerate a stable list instead of racing
+    /// a concurrent <see cref="AddWidget"/> or the debounced save's
+    /// lock-internal serialization pass. The copy is shallow: the
+    /// <see cref="WidgetConfig"/> instances are shared with the live list.
+    /// </summary>
+    public List<WidgetConfig> GetWidgetsSnapshot()
+    {
+        lock (_lock)
+        {
+            return _settings.Widgets.ToList();
+        }
+    }
+
+    /// <summary>
+    /// DEF-070: records a desktop-organization receipt at the head of the
+    /// live history list under the settings lock, so the mutation shares one
+    /// serialized critical section with every other lock-protected settings
+    /// reader/mutator instead of racing them with an unlocked
+    /// <c>Insert(0, …)</c>. Persistence stays with the caller (retention
+    /// policy, then the history store and settings saves), preserving the
+    /// previous notify/save sequencing exactly.
+    /// </summary>
+    public void RecordOrganizationHistoryEntry(OrganizationHistoryEntry entry)
+    {
+        lock (_lock)
+        {
+            OrganizationHistory.Entries.Insert(0, entry);
+        }
+    }
+
     public void UpdateWidgetsBatch(
         IEnumerable<WidgetConfig> configs,
         bool notifySubscribers = true)

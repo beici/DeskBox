@@ -605,17 +605,22 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
                 return;
             }
 
+            // DEF-070: both reads below enumerate the widget list on a
+            // background thread; use a lock-protected snapshot so a
+            // concurrent AddWidget or the debounced save's lock-internal
+            // serialization pass can never mutate the list mid-enumeration.
+            List<WidgetConfig> widgetsSnapshot = _settingsService.GetWidgetsSnapshot();
             DesktopOrganizationRule? rule = _ruleResolver.Resolve(
                 item,
                 _settingsService.Settings.DesktopOrganizationRules,
-                _settingsService.Settings.Widgets);
+                widgetsSnapshot);
             if (rule is null)
             {
                 MarkIgnored(workItem);
                 return;
             }
 
-            WidgetConfig? target = _settingsService.Settings.Widgets.FirstOrDefault(widget =>
+            WidgetConfig? target = widgetsSnapshot.FirstOrDefault(widget =>
                 string.Equals(widget.Id, rule.TargetWidgetId, StringComparison.Ordinal));
             if (target is null)
             {

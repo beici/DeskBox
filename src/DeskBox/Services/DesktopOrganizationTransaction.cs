@@ -465,7 +465,7 @@ public sealed partial class DesktopOrganizationTransaction
                 Y = bounds?.Y ?? 100,
                 IsVisible = true
             };
-            settings.Widgets.Add(config);
+            _settingsService.AddWidget(config);
             created.Add(config);
         }
 

@@ -625,7 +625,7 @@ public partial class App
         SettingsService.Settings.TodoReminderEnabled = false;
         SettingsService.Settings.TodoShowCompletedTasks = true;
         SettingsService.Settings.TodoDefaultFilter = TodoFilter.All.ToString();
-        SettingsService.Settings.Widgets.Add(new WidgetConfig
+        SettingsService.AddWidget(new WidgetConfig
         {
             Id = AotTodoNotificationUserClickWidgetId,
             Name = "AOT Todo Real Notification Click",
