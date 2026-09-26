@@ -881,6 +881,47 @@ public sealed class FileServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteTransferPlanAsync_AbortedDirectoryCopy_KeepsCompletedChildrenAndForeignContent()
+    {
+        // DEF-069 trigger surface: the directory copy behind the relocation
+        // fallback chain. A copy that aborts mid-tree (a locked source
+        // sibling here) must leave its completed children (Explorer
+        // semantics) and every foreign object at the destination untouched —
+        // the old catch deleted the conflicting destination path itself,
+        // taking files it did not own down with it.
+        var service = new FileService();
+        string sourceDirectory = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "aborted-copy-source")).FullName;
+        File.WriteAllText(Path.Combine(sourceDirectory, "01.txt"), "a");
+        string lockedFile = Path.Combine(sourceDirectory, "zz-locked.txt");
+        File.WriteAllText(lockedFile, "locked");
+        string destinationDirectory = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "aborted-copy-dest")).FullName;
+        string foreignFile = Path.Combine(destinationDirectory, "foreign.txt");
+        File.WriteAllText(foreignFile, "not deskbox data");
+
+        await using (var lockStream = new FileStream(
+                         lockedFile, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            FileService.FileTransferPartialFailureException failure =
+                await Assert.ThrowsAsync<FileService.FileTransferPartialFailureException>(() =>
+                    service.ExecuteTransferPlanAsync(
+                        [new FileService.FileTransferPlan(
+                            sourceDirectory,
+                            destinationDirectory)],
+                        move: false));
+            Assert.IsAssignableFrom<IOException>(failure.InnerException);
+        }
+
+        Assert.Equal("not deskbox data", File.ReadAllText(foreignFile));
+        Assert.Equal("a", File.ReadAllText(Path.Combine(destinationDirectory, "01.txt")));
+        Assert.False(File.Exists(Path.Combine(destinationDirectory, "zz-locked.txt")));
+        Assert.Equal(2, Directory.EnumerateFileSystemEntries(destinationDirectory).Count());
+        Assert.True(File.Exists(Path.Combine(sourceDirectory, "01.txt")));
+        Assert.True(File.Exists(lockedFile));
+    }
+
+    [Fact]
     public async Task RelocateDirectoryAsync_RemovesOwnEmptyDestinationAfterAllSkipped()
     {
         // A destination this call created and never populated is litter —
@@ -1049,6 +1090,91 @@ public sealed class FileServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteTransferPlanAsync_DirectoryMoveFallback_CleansReadOnlySourceTree()
+    {
+        // DEF-073 regression: a directory move whose source tree contains
+        // read-only files used to fail at source cleanup (deleting a
+        // read-only file is access-denied) and left a split tree — a
+        // complete destination plus an untouched source, reported as a
+        // failed entry. The manifest-based cleanup clears the read-only
+        // attribute per file through its verified handle before deleting,
+        // so the move completes and the source disappears. The destination
+        // keeps the read-only attributes: preservation stays the copy's
+        // contract.
+        var service = new FileService();
+        string sourceDirectory = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "read-only-move-source")).FullName;
+        string nestedDirectory = Directory.CreateDirectory(
+            Path.Combine(sourceDirectory, "nested")).FullName;
+        string readOnlySource = Path.Combine(sourceDirectory, "read-only.txt");
+        File.WriteAllText(readOnlySource, "read-only content");
+        File.SetAttributes(
+            readOnlySource,
+            File.GetAttributes(readOnlySource) | FileAttributes.ReadOnly);
+        string nestedReadOnlySource = Path.Combine(nestedDirectory, "nested-read-only.txt");
+        File.WriteAllText(nestedReadOnlySource, "nested read-only content");
+        File.SetAttributes(
+            nestedReadOnlySource,
+            File.GetAttributes(nestedReadOnlySource) | FileAttributes.ReadOnly);
+        // The pre-existing destination directory forces the copy-then-clean
+        // fallback instead of the atomic rename.
+        string destinationDirectory = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "read-only-move-destination")).FullName;
+
+        IReadOnlyList<FileService.FileTransferResult> results =
+            await service.ExecuteTransferPlanAsync(
+                [new FileService.FileTransferPlan(sourceDirectory, destinationDirectory)],
+                move: true);
+
+        Assert.Single(results);
+        Assert.False(
+            Directory.Exists(sourceDirectory),
+            "the source tree must be fully cleaned up, read-only files included");
+        Assert.Equal(
+            "read-only content",
+            await File.ReadAllTextAsync(Path.Combine(destinationDirectory, "read-only.txt")));
+        Assert.Equal(
+            "nested read-only content",
+            await File.ReadAllTextAsync(
+                Path.Combine(destinationDirectory, "nested", "nested-read-only.txt")));
+        Assert.True(
+            new FileInfo(Path.Combine(destinationDirectory, "read-only.txt"))
+                .Attributes.HasFlag(FileAttributes.ReadOnly),
+            "the moved file keeps its read-only attribute");
+    }
+
+    [Fact]
+    public async Task ExecuteTransferPlanAsync_DirectoryMoveWithProgress_CleansReadOnlySourceTree()
+    {
+        // Same DEF-073 contract through the managed engine: the progress
+        // path's own copy-then-cleanup call site must clear read-only source
+        // files too, so a read-only tree moves without leaving the source
+        // behind as a split tree.
+        var service = new FileService();
+        string sourceDirectory = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "read-only-progress-source")).FullName;
+        string readOnlySource = Path.Combine(sourceDirectory, "read-only.txt");
+        File.WriteAllText(readOnlySource, "read-only content");
+        File.SetAttributes(
+            readOnlySource,
+            File.GetAttributes(readOnlySource) | FileAttributes.ReadOnly);
+        string destinationDirectory = Directory.CreateDirectory(
+            Path.Combine(_tempRoot, "read-only-progress-destination")).FullName;
+
+        IReadOnlyList<FileService.FileTransferResult> results =
+            await service.ExecuteTransferPlanAsync(
+                [new FileService.FileTransferPlan(sourceDirectory, destinationDirectory)],
+                move: true,
+                progress: new InlineProgress<FileService.FileTransferProgress>(_ => { }));
+
+        Assert.Single(results);
+        Assert.False(Directory.Exists(sourceDirectory));
+        Assert.Equal(
+            "read-only content",
+            await File.ReadAllTextAsync(Path.Combine(destinationDirectory, "read-only.txt")));
+    }
+
+    [Fact]
     public void ManagedMoveEngine_PostsShellRenameNotificationsForRawMoves()
     {
         string transferSource = File.ReadAllText(TestPaths.FromRepository(
@@ -1121,6 +1247,37 @@ public sealed class FileServiceTests : IDisposable
         Assert.Equal("source", await File.ReadAllTextAsync(sourcePath));
         Assert.Equal(
             "existing destination",
+            await File.ReadAllTextAsync(destinationPath));
+    }
+
+    [Fact]
+    public async Task ExecuteTransferPlanAsync_CopyCollisionNeverDeletesExistingDestination()
+    {
+        // DEF-069 regression: the headless copy path used to catch the
+        // destination-conflict IOException and unconditionally
+        // File.Delete(destinationPath) — deleting a FOREIGN file this
+        // operation never created. The CreateNew-based copy fails while the
+        // destination is untouched: the pre-existing file must survive with
+        // its original content.
+        var service = new FileService();
+        string sourcePath = Path.Combine(_tempRoot, "copy-collision-source.txt");
+        string destinationPath = Path.Combine(_tempRoot, "copy-collision-destination.txt");
+        await File.WriteAllTextAsync(sourcePath, "source");
+        await File.WriteAllTextAsync(destinationPath, "foreign destination");
+
+        // No progress, cancellation or item-error hook: this routes through
+        // the headless CopyEntryAsync path the defect was filed against.
+        FileService.FileTransferPartialFailureException collisionFailure =
+            await Assert.ThrowsAsync<FileService.FileTransferPartialFailureException>(() =>
+            service.ExecuteTransferPlanAsync(
+                [new FileService.FileTransferPlan(sourcePath, destinationPath)],
+                move: false));
+        Assert.IsAssignableFrom<IOException>(collisionFailure.InnerException);
+        Assert.Empty(collisionFailure.CompletedResults);
+
+        Assert.Equal("source", await File.ReadAllTextAsync(sourcePath));
+        Assert.Equal(
+            "foreign destination",
             await File.ReadAllTextAsync(destinationPath));
     }
 
@@ -1501,6 +1658,110 @@ public sealed class FileServiceTests : IDisposable
             {
                 Directory.Delete(destinationTestRoot, recursive: false);
             }
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Hardware")]
+    public async Task ExecuteTransferPlanAsync_RealCrossVolumeDirectoryMoveCleansReadOnlySource()
+    {
+        // DEF-073 in its literal form: a cross-drive directory move whose
+        // source tree holds a read-only file must complete and leave no
+        // source residue behind (no split tree), with the destination
+        // keeping the read-only attribute.
+        string? sourceVolume = Environment.GetEnvironmentVariable(
+            "DESKBOX_TEST_SOURCE_VOLUME");
+        string? destinationVolume = Environment.GetEnvironmentVariable(
+            "DESKBOX_TEST_DESTINATION_VOLUME");
+        if (string.IsNullOrWhiteSpace(sourceVolume) ||
+            string.IsNullOrWhiteSpace(destinationVolume))
+        {
+            return;
+        }
+
+        string runId = Guid.NewGuid().ToString("N");
+        string sourceTestRoot = Path.Combine(
+            Path.GetFullPath(sourceVolume),
+            "DeskBox-TransferTests");
+        string destinationTestRoot = Path.Combine(
+            Path.GetFullPath(destinationVolume),
+            "DeskBox-TransferTests");
+        string runSourceRoot = Path.Combine(sourceTestRoot, runId);
+        string sourceDirectory = Path.Combine(runSourceRoot, "read-only-tree");
+        string runDestinationRoot = Path.Combine(destinationTestRoot, runId);
+        string destinationDirectory = Path.Combine(runDestinationRoot, "read-only-tree");
+        Directory.CreateDirectory(sourceDirectory);
+        Directory.CreateDirectory(runDestinationRoot);
+
+        try
+        {
+            string readOnlySource = Path.Combine(sourceDirectory, "read-only.txt");
+            await File.WriteAllTextAsync(readOnlySource, "read-only content");
+            File.SetAttributes(
+                readOnlySource,
+                File.GetAttributes(readOnlySource) | FileAttributes.ReadOnly);
+            Assert.False(FileService.CanUseAtomicMove(
+                sourceDirectory,
+                destinationDirectory));
+
+            var service = new FileService();
+            IReadOnlyList<FileService.FileTransferResult> results =
+                await service.ExecuteTransferPlanAsync(
+                    [new FileService.FileTransferPlan(sourceDirectory, destinationDirectory)],
+                    move: true);
+
+            Assert.Single(results);
+            Assert.False(
+                Directory.Exists(sourceDirectory),
+                "a cross-drive move of a read-only tree must not leave the " +
+                "source behind as a split tree");
+            string movedReadOnly = Path.Combine(destinationDirectory, "read-only.txt");
+            Assert.Equal("read-only content", await File.ReadAllTextAsync(movedReadOnly));
+            Assert.True(
+                new FileInfo(movedReadOnly).Attributes.HasFlag(FileAttributes.ReadOnly));
+        }
+        finally
+        {
+            // The moved tree keeps its read-only attributes; clear them so
+            // the recursive cleanup can remove the hardware volumes' scratch
+            // directories.
+            ClearReadOnlyAttributes(runSourceRoot);
+            ClearReadOnlyAttributes(runDestinationRoot);
+            if (Directory.Exists(runSourceRoot))
+            {
+                Directory.Delete(runSourceRoot, recursive: true);
+            }
+
+            if (Directory.Exists(runDestinationRoot))
+            {
+                Directory.Delete(runDestinationRoot, recursive: true);
+            }
+
+            if (Directory.Exists(sourceTestRoot) &&
+                !Directory.EnumerateFileSystemEntries(sourceTestRoot).Any())
+            {
+                Directory.Delete(sourceTestRoot, recursive: false);
+            }
+
+            if (Directory.Exists(destinationTestRoot) &&
+                !Directory.EnumerateFileSystemEntries(destinationTestRoot).Any())
+            {
+                Directory.Delete(destinationTestRoot, recursive: false);
+            }
+        }
+    }
+
+    private static void ClearReadOnlyAttributes(string root)
+    {
+        if (!Directory.Exists(root))
+        {
+            return;
+        }
+
+        foreach (string path in Directory.EnumerateFileSystemEntries(
+                     root, "*", SearchOption.AllDirectories))
+        {
+            File.SetAttributes(path, File.GetAttributes(path) & ~FileAttributes.ReadOnly);
         }
     }
 

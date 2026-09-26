@@ -217,7 +217,8 @@ public sealed class DeskBoxDataBackupServiceTests : IDisposable
         string settingsPath = Path.Combine(dataDirectory, "settings.json");
         await File.WriteAllTextAsync(settingsPath, "{\"theme\":\"Light\"}");
         string largeFilePath = Path.Combine(dataDirectory, "000-large.bin");
-        await File.WriteAllBytesAsync(largeFilePath, new byte[24 * 1024 * 1024]);
+        byte[] largeContent = new byte[24 * 1024 * 1024];
+        await File.WriteAllBytesAsync(largeFilePath, largeContent);
         var service = new DeskBoxDataBackupService(_appDataRoot);
 
         Task<string> exportTask = service.ExportBackupAsync(_exportRoot);
@@ -225,6 +226,21 @@ public sealed class DeskBoxDataBackupServiceTests : IDisposable
             service.BackupSnapshotStagingDirectory,
             Path.Combine("data", "settings.json"));
         Assert.True(File.Exists(stagedSettingsPath));
+
+        // Explicit synchronization point instead of a timing window: the
+        // snapshot stages settings.json inside the metadata gate BEFORE the
+        // general loop starts staging 000-large.bin, so a fully written
+        // staged large file proves the settings staging copy is already
+        // closed. The source edits below are therefore deterministically
+        // after staging — or, if the whole export already finished on a fast
+        // machine, after the archive itself. Either way the archive can only
+        // ever hold "Light"; the old existence-poll alone could return while
+        // the settings copy was still mid-flight.
+        await WaitForStagedSnapshotBarrierAsync(
+            exportTask,
+            service.BackupSnapshotStagingDirectory,
+            Path.Combine("data", "000-large.bin"),
+            largeContent.Length);
 
         await File.WriteAllTextAsync(settingsPath, "{\"theme\":\"Dark\"}");
         await File.WriteAllBytesAsync(largeFilePath, [9, 8, 7]);
@@ -1223,6 +1239,51 @@ public sealed class DeskBoxDataBackupServiceTests : IDisposable
         }
 
         throw new TimeoutException($"Timed out waiting for staged file '{relativePath}'.");
+    }
+
+    /// <summary>
+    /// Deterministic staging barrier for the "stable snapshot" test: returns
+    /// once the staged copy of <paramref name="relativePath"/> is fully
+    /// written (length reached) — or once the whole export finished, because
+    /// that trivially proves every staging copy closed. Since the snapshot
+    /// stages the small metadata files before the general loop stages the
+    /// big file, this turns "the source edit happened after staging" into a
+    /// causal fact instead of a timing assumption.
+    /// </summary>
+    private static async Task WaitForStagedSnapshotBarrierAsync(
+        Task<string> exportTask,
+        string stagingDirectory,
+        string relativePath,
+        long expectedLength)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        while (!exportTask.IsCompleted)
+        {
+            string? stagedFile = Directory.Exists(stagingDirectory)
+                ? Directory
+                    .EnumerateDirectories(stagingDirectory)
+                    .Select(snapshotRoot => Path.Combine(snapshotRoot, relativePath))
+                    .FirstOrDefault(path =>
+                    {
+                        var info = new FileInfo(path);
+                        return info.Exists && info.Length == expectedLength;
+                    })
+                : null;
+            if (stagedFile is not null)
+            {
+                return;
+            }
+
+            try
+            {
+                await Task.Delay(10, timeout.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                throw new TimeoutException(
+                    $"Timed out waiting for the staged snapshot barrier '{relativePath}'.");
+            }
+        }
     }
 
     public void Dispose()
