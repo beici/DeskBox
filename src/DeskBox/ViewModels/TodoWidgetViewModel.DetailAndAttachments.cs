@@ -388,13 +388,25 @@ public sealed partial class TodoWidgetViewModel
         await SaveAsync();
         if (attachment.Attachment.IsManagedCopy && File.Exists(attachment.FilePath))
         {
-            try
+            // DEF-115: a recurrence clone shares this physical managed file
+            // with the source occurrence (same FilePath, different Id). Only
+            // delete it when no other item in this widget still references
+            // the same path, otherwise the other side is left dangling.
+            bool stillReferenced = Items.Any(other =>
+                !ReferenceEquals(other, item) &&
+                other.Item.Attachments.Any(shared =>
+                    shared is not null &&
+                    string.Equals(shared.FilePath, attachment.FilePath, StringComparison.OrdinalIgnoreCase)));
+            if (!stillReferenced)
             {
-                File.Delete(attachment.FilePath);
-            }
-            catch (Exception ex)
-            {
-                App.Log($"[Todo] Failed to delete managed attachment '{attachment.FilePath}': {ex.Message}");
+                try
+                {
+                    File.Delete(attachment.FilePath);
+                }
+                catch (Exception ex)
+                {
+                    App.Log($"[Todo] Failed to delete managed attachment '{attachment.FilePath}': {ex.Message}");
+                }
             }
         }
         return true;

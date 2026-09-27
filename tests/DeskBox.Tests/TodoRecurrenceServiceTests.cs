@@ -94,6 +94,50 @@ public sealed class TodoRecurrenceServiceTests
             });
     }
 
+    [Fact]
+    public void TryCreateNextOccurrence_PreservesAttachmentStorageModes()
+    {
+        var dueDate = new DateTimeOffset(new DateTime(2026, 7, 10, 9, 0, 0, DateTimeKind.Local));
+        var completedAt = dueDate.AddMinutes(30);
+        var item = CreateRecurringItem(TodoRecurrenceMode.Weekly, dueDate);
+        item.Attachments =
+        [
+            new TodoAttachment
+            {
+                FilePath = @"C:\managed\template.pdf",
+                DisplayName = "template.pdf",
+                Type = "pdf",
+                StorageMode = TodoAttachment.ManagedStorageMode
+            },
+            new TodoAttachment
+            {
+                FilePath = @"D:\external\notes.txt",
+                DisplayName = "notes.txt",
+                Type = "file",
+                StorageMode = TodoAttachment.LinkedStorageMode
+            }
+        ];
+
+        bool created = TodoRecurrenceService.TryCreateNextOccurrence(item, completedAt, out TodoItem? nextItem);
+
+        Assert.True(created);
+        Assert.NotNull(nextItem);
+        Assert.Collection(
+            nextItem.Attachments,
+            cloned =>
+            {
+                Assert.Equal(TodoAttachment.ManagedStorageMode, cloned.StorageMode);
+                Assert.Equal(item.Attachments[0].FilePath, cloned.FilePath);
+                Assert.NotEqual(item.Attachments[0].Id, cloned.Id);
+            },
+            cloned =>
+            {
+                Assert.Equal(TodoAttachment.LinkedStorageMode, cloned.StorageMode);
+                Assert.Equal(item.Attachments[1].FilePath, cloned.FilePath);
+                Assert.NotEqual(item.Attachments[1].Id, cloned.Id);
+            });
+    }
+
     private static TodoItem CreateRecurringItem(string recurrenceMode, DateTimeOffset dueDate, DateTimeOffset? anchorDueDate = null)
     {
         return new TodoItem

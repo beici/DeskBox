@@ -686,12 +686,14 @@ public sealed partial class SearchPopupViewModel : ObservableObject, IDisposable
             return _localizationService.T(providerStatusKey);
         }
 
-        return string.Format(
-            _localizationService.T(response.IsComplete
-                ? "Search.Status.Results"
-                : "Search.Status.PartialResults"),
-            response.TotalResultCount,
-            response.Elapsed.TotalMilliseconds);
+        return response.IsComplete
+            ? string.Format(
+                _localizationService.T("Search.Status.Results"),
+                response.TotalResultCount,
+                response.Elapsed.TotalMilliseconds)
+            : string.Format(
+                _localizationService.T("Search.Status.PartialResults"),
+                response.TotalResultCount);
     }
 
     private void CancelCurrentSearch()

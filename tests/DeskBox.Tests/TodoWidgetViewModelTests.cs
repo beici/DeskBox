@@ -1146,6 +1146,50 @@ public sealed class TodoWidgetViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task DeleteAttachmentAsync_KeepsSharedManagedFileWhileOtherItemReferencesIt()
+    {
+        string sharedSource = Path.Combine(_tempRoot, $"def115-{Guid.NewGuid():N}.pdf");
+        await File.WriteAllTextAsync(sharedSource, "shared attachment payload");
+        try
+        {
+            var viewModel = CreateViewModel("todo-widget");
+            await viewModel.InitializeAsync();
+            TodoItemViewModel owner = (await viewModel.AddItemAsync("owner"))!;
+            TodoAttachmentViewModel ownerAttachment = (await viewModel.AddAttachmentPathAsync(
+                owner.Id,
+                sharedSource,
+                copyToManagedStorageOverride: true))!;
+            string managedPath = ownerAttachment.FilePath;
+            Assert.True(ownerAttachment.Attachment.IsManagedCopy);
+            Assert.True(File.Exists(managedPath));
+
+            // A recurrence clone shares the same physical file under a new Id (DEF-115).
+            TodoItemViewModel clone = (await viewModel.AddItemAsync("clone"))!;
+            var shared = new TodoAttachment
+            {
+                FilePath = managedPath,
+                DisplayName = ownerAttachment.DisplayName,
+                Type = ownerAttachment.Type,
+                StorageMode = TodoAttachment.ManagedStorageMode
+            };
+            clone.Item.Attachments.Add(shared);
+            clone.Attachments.Add(new TodoAttachmentViewModel(shared));
+
+            Assert.True(await viewModel.DeleteAttachmentAsync(clone.Id, shared.Id));
+            Assert.Empty(clone.Attachments);
+            Assert.True(File.Exists(managedPath));
+
+            Assert.True(await viewModel.DeleteAttachmentAsync(owner.Id, ownerAttachment.Id));
+            Assert.Empty(owner.Attachments);
+            Assert.False(File.Exists(managedPath));
+        }
+        finally
+        {
+            File.Delete(sharedSource);
+        }
+    }
+
+    [Fact]
     public async Task UpdateNotesAsync_PreservesMarkdownSourceWhitespace()
     {
         var viewModel = CreateViewModel("todo-widget");

@@ -579,7 +579,7 @@ public sealed partial class TodoItemViewModel : ObservableObject
         : Visibility.Collapsed;
 
     public string RecurringHistoryToggleText => IsRecurringHistoryExpanded
-        ? Format("Todo.RecurrenceHistory.Collapse", HiddenRecurringHistoryCount)
+        ? Format("Todo.RecurrenceHistory.Collapse")
         : Format("Todo.RecurrenceHistory.Expand", HiddenRecurringHistoryCount);
 
     public string RecurringHistoryToggleGlyph => IsRecurringHistoryExpanded ? "\uE70D" : "\uE70E";

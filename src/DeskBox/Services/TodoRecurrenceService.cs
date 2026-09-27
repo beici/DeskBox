@@ -83,6 +83,7 @@ public static class TodoRecurrenceService
                     FilePath = attachment.FilePath,
                     DisplayName = attachment.DisplayName,
                     Type = attachment.Type,
+                    StorageMode = attachment.StorageMode,
                     AddedAt = completedAt
                 })
                 .ToList(),
