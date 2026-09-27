@@ -40,6 +40,18 @@ def rg(pattern, path, extra_args=None):
     return lines
 
 
+# rg 输出行按 '文件:行号:内容' 解析；Windows 盘符路径自带冒号（E:\...），
+# 不能用 split(":", 2)——非贪婪正则回溯到「冒号后是行号」处才定界。
+_LOC_RE = re.compile(r"^(.+?):(\d+):(.*)$", re.S)
+
+
+def parse_loc(line):
+    m = _LOC_RE.match(line)
+    if not m:
+        return (line, -1, "")
+    return (m.group(1), int(m.group(2)), m.group(3))
+
+
 def check_strings():
     errors, stats = [], []
     keysets = {}
@@ -113,13 +125,12 @@ def check_clipboard_pairing():
     # 文件 -> {行号: True}，用于同方法体判定
     mark_by_file = {}
     for l in marks:
-        parts = l.split(":", 2)
-        mark_by_file.setdefault(norm(parts[0]), {})[int(parts[1])] = True
+        fp, ln, _ = parse_loc(l)
+        mark_by_file.setdefault(norm(fp), {})[ln] = True
     unpaired = []
     paired = 0
     for l in writes:
-        parts = l.split(":", 2)
-        fp, ln, text = parts[0], int(parts[1]), parts[2]
+        fp, ln, text = parse_loc(l)
         if norm(fp) in exempt_real:
             continue
         near = [m for m in mark_by_file.get(norm(fp), {}) if abs(m - ln) <= 12]
@@ -167,7 +178,7 @@ def replay_contract_assertions():
                 if "ContractTests" in fn and fn.endswith(".cs"):
                     cfiles.append(os.path.join(dirpath, fn))
     for cf in cfiles:
-        rel = os.path.relpath(cf, ROOT)
+        rel = os.path.relpath(cf, ROOT).replace(os.sep, "/")
         try:
             src = open(cf, encoding="utf-8").read()
         except Exception:
