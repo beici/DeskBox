@@ -344,8 +344,10 @@ public sealed class SettingsSliceOwnershipContractTests
         // The OnboardingWindow.Appearance/DesktopOrganization/Features/Hotkey/
         // Storage partials went away with the dead legacy five-step flow
         // (08bdd98e, DEF-128), so their facade budgets are retired too.
-        // OnboardingWindow.Completion.cs (5) survives as legal slack: the file
-        // is live (OnLanguageChanged) with zero facade access today.
+        // OnboardingWindow.Completion.cs (5) is live (OnLanguageChanged) with
+        // zero facade access today - kept as legal slack (DEF-132 restored it
+        // after the round-15 batch removed it by mistake).
+        ["src/DeskBox/Views/OnboardingWindow.Completion.cs"] = 5,
         ["src/DeskBox/Views/OnboardingWindow.TaskFlow.cs"] = 5,
         ["src/DeskBox/Views/OnboardingWindow.xaml.cs"] = 4,
         // QuickCaptureWidgetWindow partials went away with the dead host
