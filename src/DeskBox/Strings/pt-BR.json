@@ -2647,6 +2647,7 @@
     "Widget.RunAsAdministrator.AlreadyRunning": "Este aplicativo já está em execução sem privilégios de administrador. Feche-o completamente e tente novamente.",
     "Widget.RunAsAdministrator.NotElevated": "O Windows não conseguiu criar um processo de administrador. Verifique as configurações do UAC e tente novamente.",
     "Widget.CreateShortcut": "Criar atalho",
+    "Widget.CreateShortcutSuffix": " - Atalho.lnk",
     "Widget.MoreSystemOperations": "Mais operações do sistema",
     "Widget.OpenItemDispatched": "O Windows aceitou a solicitação de abertura.",
     "Settings.ManagedPath.DesktopShortcut.Title": "Atalho do armazenamento na área de trabalho",

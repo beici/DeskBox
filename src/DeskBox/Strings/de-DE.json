@@ -2647,6 +2647,7 @@
     "Widget.RunAsAdministrator.AlreadyRunning": "Diese App wird bereits ohne Administratorrechte ausgeführt. Beenden Sie sie vollständig und versuchen Sie es erneut.",
     "Widget.RunAsAdministrator.NotElevated": "Windows konnte keinen Administratorprozess erstellen. Prüfen Sie die UAC-Einstellungen und versuchen Sie es erneut.",
     "Widget.CreateShortcut": "Verknüpfung erstellen",
+    "Widget.CreateShortcutSuffix": " - Verknüpfung.lnk",
     "Widget.MoreSystemOperations": "Weitere Systemaktionen",
     "Widget.OpenItemDispatched": "Windows hat den Öffnungsauftrag angenommen.",
     "Settings.ManagedPath.DesktopShortcut.Title": "Desktop-Verknüpfung zum Speicher",

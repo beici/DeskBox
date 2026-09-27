@@ -2674,6 +2674,7 @@
     "Widget.RunAsAdministrator.AlreadyRunning": "Это приложение уже запущено без прав администратора. Полностью закройте его и повторите попытку.",
     "Widget.RunAsAdministrator.NotElevated": "Windows не удалось создать процесс с правами администратора. Проверьте параметры UAC и повторите попытку.",
     "Widget.CreateShortcut": "Создать ярлык",
+    "Widget.CreateShortcutSuffix": " - ярлык.lnk",
     "Widget.MoreSystemOperations": "Дополнительные системные операции",
     "Settings.ManagedPath.DesktopShortcut.Title": "Ярлык папки хранилища на рабочем столе",
     "Settings.ManagedPath.DesktopShortcut.Description": "Создаёт ярлык текущей папки хранилища. Если удалить его, DeskBox не будет создавать его заново.",

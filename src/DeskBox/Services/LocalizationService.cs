@@ -262,7 +262,23 @@ public sealed class LocalizationService
     /// HKCU\Software\DeskBox\InstallLanguage), falling back to the OS UI
     /// culture when that value is absent or unrecognized.
     /// </summary>
+    /// <remarks>
+    /// DEF-120: the registry value is only written by the installer/repair,
+    /// so the resolved default is constant for the lifetime of the process
+    /// and memoized — CurrentCultureName sits under every <c>T()</c> call
+    /// (1,200+ call sites), and re-reading the registry per lookup showed up
+    /// as measurable overhead on list-virtualization and full-page binding
+    /// paths. Lazy default is thread-safe without reintroducing the
+    /// EXC-06-family double-check-locking pattern.
+    /// </remarks>
+    private static readonly Lazy<string> ResolvedDefaultLanguageInstance = new(ResolveDefaultLanguageCore);
+
     private static string ResolveDefaultLanguage()
+    {
+        return ResolvedDefaultLanguageInstance.Value;
+    }
+
+    private static string ResolveDefaultLanguageCore()
     {
         try
         {

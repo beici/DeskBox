@@ -2674,6 +2674,7 @@
     "Widget.RunAsAdministrator.AlreadyRunning": "Cette application s’exécute déjà sans droits d’administrateur. Fermez-la complètement, puis réessayez.",
     "Widget.RunAsAdministrator.NotElevated": "Windows n’a pas pu créer de processus administrateur. Vérifiez les paramètres UAC et réessayez.",
     "Widget.CreateShortcut": "Créer un raccourci",
+    "Widget.CreateShortcutSuffix": " - Raccourci.lnk",
     "Widget.MoreSystemOperations": "Autres opérations système",
     "Settings.ManagedPath.DesktopShortcut.Title": "Raccourci du dossier de stockage sur le bureau",
     "Settings.ManagedPath.DesktopShortcut.Description": "Crée un raccourci vers le dossier de stockage actuel. Si vous le supprimez, DeskBox ne le recréera pas.",

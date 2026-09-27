@@ -2676,6 +2676,7 @@
     "Widget.RunAsAdministrator.AlreadyRunning": "此程式正以一般權限執行，請完全結束後再以系統管理員身分開啟。",
     "Widget.RunAsAdministrator.NotElevated": "Windows 無法建立系統管理員程序，請檢查 UAC 設定後再試。",
     "Widget.CreateShortcut": "建立捷徑",
+    "Widget.CreateShortcutSuffix": " - 捷徑.lnk",
     "Widget.MoreSystemOperations": "更多系統操作",
     "Settings.ManagedPath.DesktopShortcut.Title": "桌面上的收納檔案入口",
     "Settings.ManagedPath.DesktopShortcut.Description": "建立後可直接開啟目前的收納資料夾；手動刪除後，DeskBox 不會再次建立",

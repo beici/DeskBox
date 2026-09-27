@@ -2674,6 +2674,7 @@
     "Widget.RunAsAdministrator.AlreadyRunning": "هذا التطبيق قيد التشغيل بالفعل دون صلاحيات المسؤول. أغلقه بالكامل ثم حاول مرة أخرى.",
     "Widget.RunAsAdministrator.NotElevated": "تعذر على Windows إنشاء عملية بصلاحيات المسؤول. تحقق من إعدادات UAC وحاول مرة أخرى.",
     "Widget.CreateShortcut": "إنشاء اختصار",
+    "Widget.CreateShortcutSuffix": " - اختصار.lnk",
     "Widget.MoreSystemOperations": "المزيد من عمليات النظام",
     "Settings.ManagedPath.DesktopShortcut.Title": "اختصار مجلد التخزين على سطح المكتب",
     "Settings.ManagedPath.DesktopShortcut.Description": "ينشئ اختصارًا لمجلد التخزين الحالي. إذا حذفته، فلن يعيد DeskBox إنشاءه.",

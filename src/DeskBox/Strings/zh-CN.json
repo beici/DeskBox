@@ -2647,6 +2647,7 @@
     "Widget.RunAsAdministrator.AlreadyRunning": "该程序正在以普通权限运行，请完全退出后再使用管理员身份打开。",
     "Widget.RunAsAdministrator.NotElevated": "Windows 未能创建管理员进程，请检查 UAC 设置后重试。",
     "Widget.CreateShortcut": "创建快捷方式",
+    "Widget.CreateShortcutSuffix": " - 快捷方式.lnk",
     "Widget.MoreSystemOperations": "更多系统操作",
     "Widget.OpenItemDispatched": "已交给系统打开",
     "Settings.ManagedPath.DesktopShortcut.Title": "桌面上的收纳文件入口",

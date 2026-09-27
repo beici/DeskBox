@@ -2647,6 +2647,7 @@
     "Widget.RunAsAdministrator.AlreadyRunning": "This app is already running without administrator privileges. Close it completely, then try again.",
     "Widget.RunAsAdministrator.NotElevated": "Windows could not create an administrator process. Check UAC settings and try again.",
     "Widget.CreateShortcut": "Create shortcut",
+    "Widget.CreateShortcutSuffix": " - Shortcut.lnk",
     "Widget.MoreSystemOperations": "More system operations",
     "Widget.OpenItemDispatched": "Windows has accepted the open request.",
     "Settings.ManagedPath.DesktopShortcut.Title": "Desktop storage shortcut",

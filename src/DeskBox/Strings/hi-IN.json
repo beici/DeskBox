@@ -2674,6 +2674,7 @@
     "Widget.RunAsAdministrator.AlreadyRunning": "यह ऐप पहले से बिना व्यवस्थापक अधिकारों के चल रहा है। इसे पूरी तरह बंद करके फिर प्रयास करें।",
     "Widget.RunAsAdministrator.NotElevated": "Windows व्यवस्थापक प्रक्रिया नहीं बना सका। UAC सेटिंग जाँचकर फिर प्रयास करें।",
     "Widget.CreateShortcut": "शॉर्टकट बनाएँ",
+    "Widget.CreateShortcutSuffix": " - शॉर्टकट.lnk",
     "Widget.MoreSystemOperations": "अधिक सिस्टम संचालन",
     "Settings.ManagedPath.DesktopShortcut.Title": "डेस्कटॉप स्टोरेज शॉर्टकट",
     "Settings.ManagedPath.DesktopShortcut.Description": "मौजूदा स्टोरेज फ़ोल्डर का शॉर्टकट बनाता है। इसे हटाने पर DeskBox इसे दोबारा नहीं बनाएगा।",

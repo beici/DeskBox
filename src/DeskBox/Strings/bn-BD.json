@@ -2674,6 +2674,7 @@
     "Widget.RunAsAdministrator.AlreadyRunning": "এই অ্যাপটি ইতিমধ্যে প্রশাসক অনুমতি ছাড়া চলছে। এটি সম্পূর্ণ বন্ধ করে আবার চেষ্টা করুন।",
     "Widget.RunAsAdministrator.NotElevated": "Windows প্রশাসক প্রক্রিয়া তৈরি করতে পারেনি। UAC সেটিং পরীক্ষা করে আবার চেষ্টা করুন।",
     "Widget.CreateShortcut": "শর্টকাট তৈরি করুন",
+    "Widget.CreateShortcutSuffix": " - শর্টকাট.lnk",
     "Widget.MoreSystemOperations": "আরও সিস্টেম অপারেশন",
     "Settings.ManagedPath.DesktopShortcut.Title": "ডেস্কটপ স্টোরেজ শর্টকাট",
     "Settings.ManagedPath.DesktopShortcut.Description": "বর্তমান স্টোরেজ ফোল্ডারের একটি শর্টকাট তৈরি করে। আপনি এটি মুছে দিলে DeskBox আবার তৈরি করবে না।",

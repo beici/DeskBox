@@ -841,7 +841,7 @@ public sealed partial class DesktopOrganizationSettingsSection : UserControl
         string state = rule.IsEnabled
             ? T("DesktopOrganization.Rules.Enabled")
             : T("DesktopOrganization.Rules.Paused");
-        return $"{string.Join("、", values)} · {state}";
+        return $"{string.Join(ListSeparator, values)} · {state}";
     }
 
     private void BuildRuleTokens()
@@ -862,7 +862,7 @@ public sealed partial class DesktopOrganizationSettingsSection : UserControl
             .ToList();
         bool hasAssignments = values.Count > 0;
         FileTypeExpander.Description = hasAssignments
-            ? string.Join("、", values.Take(4)) + (values.Count > 4 ? $" +{values.Count - 4}" : string.Empty)
+            ? string.Join(ListSeparator, values.Take(4)) + (values.Count > 4 ? $" +{values.Count - 4}" : string.Empty)
             : T("DesktopOrganization.Rules.Unconfigured");
         RuleEnabledCard.Description = hasAssignments
             ? null
@@ -971,6 +971,11 @@ public sealed partial class DesktopOrganizationSettingsSection : UserControl
 
     private static string T(string key) =>
         global::DeskBox.App.Current.LocalizationService.T(key);
+
+    // DEF-121: list separator follows the UI language (matches the
+    // LocalizationService.IsChinese convention used in SettingsViewModel).
+    private static string ListSeparator =>
+        global::DeskBox.App.Current.LocalizationService.IsChinese ? "、" : ", ";
 
     private static string Format(string key, params object[] values) =>
         global::DeskBox.App.Current.LocalizationService.Format(key, values);

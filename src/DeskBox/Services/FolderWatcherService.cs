@@ -203,6 +203,19 @@ public sealed class FolderWatcherService : IDisposable
             return;
         }
 
+        // DEF-123: the resolution below yields the UI thread, so a newer
+        // StartAsync (or a ConfigureFolderWatchersAsync Stop) can run to
+        // completion while it is in flight. Snapshot the generation now and
+        // bail out after the await if it moved — restoring the original
+        // "last caller wins" semantics the synchronous resolution used to
+        // provide. The startGeneration snapshot further down covers the
+        // probe/query windows; this one covers the resolution window.
+        int entryGeneration;
+        lock (_lock)
+        {
+            entryGeneration = _watchGeneration;
+        }
+
         string requestedPath = folderPath;
         // Watch the physical target rather than asking FileSystemWatcher and
         // StorageFolder to traverse a user-created mount point. The logical
@@ -214,6 +227,14 @@ public sealed class FolderWatcherService : IDisposable
             FileService.TryResolveExistingPathForTraversal(folderPath, out string traversalPath)
                 ? traversalPath
                 : folderPath);
+
+        lock (_lock)
+        {
+            if (_isDisposed || entryGeneration != _watchGeneration)
+            {
+                return;
+            }
+        }
 
         Stop();
         lock (_lock)
@@ -855,10 +876,12 @@ public sealed class FolderWatcherService : IDisposable
             _reconnectTimer.Stop();
             string? path;
             string? requestedPath;
+            int entryGeneration;
             lock (_lock)
             {
                 path = _reconnectPath;
                 requestedPath = _requestedPath;
+                entryGeneration = _watchGeneration;
             }
 
             if (_isDisposed || string.IsNullOrWhiteSpace(path))
@@ -871,6 +894,12 @@ public sealed class FolderWatcherService : IDisposable
             // thread, so it goes through Task.Run. On resolution failure the
             // probe target stays on the last physical path (never the
             // requested junction), matching the pre-fix semantics.
+            // DEF-123: the tick awaits twice (resolution and probe), and
+            // either one can interleave with a newer StartAsync taking over.
+            // Re-check the entry generation after both — if it moved, a newer
+            // layer owns recovery (its own failure path re-arms reconnect),
+            // so this tick simply exits instead of stopping the new watcher
+            // or overwriting its health.
             string probePath = await Task.Run(() =>
                 !string.IsNullOrWhiteSpace(requestedPath) &&
                 FileService.TryResolveExistingPathForTraversal(
@@ -879,7 +908,23 @@ public sealed class FolderWatcherService : IDisposable
                     ? refreshedPath
                     : path);
 
+            lock (_lock)
+            {
+                if (_isDisposed || entryGeneration != _watchGeneration)
+                {
+                    return;
+                }
+            }
+
             FolderWatcherHealth availability = await ProbeFolderAccessAsync(probePath);
+            lock (_lock)
+            {
+                if (_isDisposed || entryGeneration != _watchGeneration)
+                {
+                    return;
+                }
+            }
+
             if (availability != FolderWatcherHealth.Watching)
             {
                 SetHealth(availability);

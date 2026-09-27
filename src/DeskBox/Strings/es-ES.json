@@ -2674,6 +2674,7 @@
     "Widget.RunAsAdministrator.AlreadyRunning": "Esta aplicación ya se está ejecutando sin privilegios de administrador. Ciérrela por completo e inténtelo de nuevo.",
     "Widget.RunAsAdministrator.NotElevated": "Windows no pudo crear un proceso de administrador. Compruebe la configuración de UAC e inténtelo de nuevo.",
     "Widget.CreateShortcut": "Crear acceso directo",
+    "Widget.CreateShortcutSuffix": " - Acceso directo.lnk",
     "Widget.MoreSystemOperations": "Más operaciones del sistema",
     "Settings.ManagedPath.DesktopShortcut.Title": "Acceso directo del almacenamiento en el escritorio",
     "Settings.ManagedPath.DesktopShortcut.Description": "Crea un acceso directo a la carpeta de almacenamiento actual. Si lo eliminas, DeskBox no volverá a crearlo.",

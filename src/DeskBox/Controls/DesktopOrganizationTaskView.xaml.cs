@@ -252,6 +252,11 @@ public sealed partial class DesktopOrganizationTaskView : UserControl
 
     private static string T(string key) => App.Current.LocalizationService.T(key);
 
+    // DEF-121: list separator follows the UI language (matches the
+    // LocalizationService.IsChinese convention used in SettingsViewModel).
+    private static string ListSeparator =>
+        App.Current.LocalizationService.IsChinese ? "、" : ", ";
+
     private static string Format(string key, params object[] values) =>
         App.Current.LocalizationService.Format(key, values);
 
@@ -292,7 +297,7 @@ public sealed partial class DesktopOrganizationTaskView : UserControl
             return string.Empty;
         }
 
-        string names = string.Join("、", stuck.Take(3).Select(item => item.Name));
+        string names = string.Join(ListSeparator, stuck.Take(3).Select(item => item.Name));
         if (stuck.Count > 3)
         {
             names += " " + Format("DesktopOrganization.Public.AbandonMoreItems", stuck.Count - 3);

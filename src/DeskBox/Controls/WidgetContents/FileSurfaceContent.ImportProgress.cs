@@ -237,8 +237,17 @@ public sealed partial class FileSurfaceContent
                 TaskCreationOptions.RunContinuationsAsynchronously);
             DispatcherQueue.TryEnqueue(async () =>
             {
-                await CompleteTrackedImportAsync(completionState);
-                completion.TrySetResult(true);
+                // DEF-124: the awaited call can throw (e.g. CancellationToken
+                // registrations) — the waiting thread must be released even
+                // then, or the import stays busy forever.
+                try
+                {
+                    await CompleteTrackedImportAsync(completionState);
+                }
+                finally
+                {
+                    completion.TrySetResult(true);
+                }
             });
             await completion.Task;
             return;

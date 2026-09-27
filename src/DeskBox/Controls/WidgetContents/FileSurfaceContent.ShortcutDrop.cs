@@ -93,7 +93,7 @@ public sealed partial class FileSurfaceContent
         };
     }
 
-    private static string GetShortcutDisplayName(string sourcePath)
+    private static string GetShortcutDisplayName(string sourcePath, string localizedSuffix)
     {
         string trimmed = sourcePath.TrimEnd(
             Path.DirectorySeparatorChar,
@@ -104,9 +104,11 @@ public sealed partial class FileSurfaceContent
             name = Path.GetFileName(trimmed);
         }
 
+        // DEF-122: the suffix is localized (" - Shortcut.lnk" and friends).
+        // With no usable source name the bare localized noun is the name.
         return string.IsNullOrWhiteSpace(name)
-            ? "Shortcut.lnk"
-            : name + " - Shortcut.lnk";
+            ? localizedSuffix.TrimStart(' ', '-')
+            : name + localizedSuffix;
     }
 
     private async Task<IReadOnlyList<string>> CreateShortcutFilesAsync(
@@ -141,7 +143,7 @@ public sealed partial class FileSurfaceContent
             }
 
             string linkPath = FileService.GetAvailablePath(
-                Path.Combine(destination, GetShortcutDisplayName(source)),
+                Path.Combine(destination, GetShortcutDisplayName(source, T("Widget.CreateShortcutSuffix"))),
                 reserved);
             if (Directory.Exists(source))
             {

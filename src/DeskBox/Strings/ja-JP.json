@@ -2647,6 +2647,7 @@
     "Widget.RunAsAdministrator.AlreadyRunning": "このアプリは通常の権限ですでに実行中です。完全に終了してから、もう一度お試しください。",
     "Widget.RunAsAdministrator.NotElevated": "Windows は管理者プロセスを作成できませんでした。UAC の設定を確認して、もう一度お試しください。",
     "Widget.CreateShortcut": "ショートカットを作成",
+    "Widget.CreateShortcutSuffix": " - ショートカット.lnk",
     "Widget.MoreSystemOperations": "その他のシステム操作",
     "Widget.OpenItemDispatched": "Windows に開く要求を渡しました。",
     "Settings.ManagedPath.DesktopShortcut.Title": "保存フォルダーのデスクトップ ショートカット",
