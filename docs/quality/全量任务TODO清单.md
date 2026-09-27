@@ -126,6 +126,16 @@
 | M4 | R13 优化修复方案 + 方案复核验证 | 方案覆盖全部立案；独立完善性审查 GO | rectify/R13-remediation-plan.md | 已完成（首审 **GO**，3 条建议全采纳：行号更正 :302-312、WatchedPath 可接受性留档、NC_DESTROY 兜底省略理由） |
 | M5 | R13 修复执行 + 效果验证 | 最小侵入修复；构建 0 错误；x64 全量回归全绿；台账/TODO 收口 | 代码 + 本清单 + rectify/R13-remediation-report.md | 已完成（DEF-125/126 修复；构建 0 错误；回归 **4297/4297**；static_gate PASS 五项与基线持平；新实例 PID 32244 @ 规范 Debug 路径） |
 
+## N. R14 双路全量代码缺陷审查与整改（长期循环迭代 · 本轮批次）
+
+| 编号 | 任务 | 完成标准 | 输出物 | 核验状态 |
+|---|---|---|---|---|
+| N1 | 2 个专项 subagent 并行审查（A 核心服务与数据面 / B 界面交互与工程面），纯静态、差异化策略 | 每专项独立报告 | rounds/round-14/A、B 两份专项报告 | 已完成（A：1 立案（拖放 COM 家族 13 文件首次全文 + 4 组 vtable 核对）+ 3 观察项 + 6 证伪留档；B：2 立案（OnboardingWindow 旧流死代码 + Logo 咬合）+ 5 观察项 + 机械校验全绿） |
+| N2 | 主流程汇总复核：去重合并、逐条核验、分级分类 | 总报告含问题总览/风险分布/优先级排序/整改建议 | rounds/round-14/全量代码缺陷审查总报告.md | 已完成（DEF-127~129 全核验；死链封闭性与活映射交叉验证） |
+| N3 | 缺陷台账入账 | DEF-127~129 立案 + 无改判记录 | defect-ledger.md round-14 节 | 已完成 |
+| N4 | R14 优化修复方案 + 方案复核验证 | 方案覆盖全部立案（W1→W2→W3 依赖序）；独立完善性审查 GO | rectify/R14-remediation-plan.md | 已完成（首审 **NO-GO**——M1 漏 DesktopOrganization.cs/活方法死分支/AutoStart 自纠退役声明，M2 契约爆炸半径 4 文件非计数类；按指令重写 v2 后复审 **GO**，S1~S5 全采纳） |
+| N5 | R14 修复执行 + 效果验证 | 最小侵入修复；构建 0 错误；x64 全量回归全绿；publish-aot-audit（XAML 变更）；台账/TODO 收口 | 代码 + 本清单 + rectify/R14-remediation-report.md | 已完成（DEF-127~129 修复：约 3,900+ 行死代码/死键清除、第七死面板实施发现、230 孤儿键 ×12、契约 4 文件裁剪、AutoStart 自纠退役声明；构建 0 错误 20 警告净降 2；回归 **4291/4291**；static_gate PASS 2667 键；**AOT 审计通过** WMC1510=742=上限；新实例 PID 2696） |
+
 ## 核验记录
 
 | 日期 | 核验轮 | 结论 |
@@ -263,3 +273,19 @@
 - **修复落地**（2 源文件）：DEF-125（成功分支 query await 后补代际复核，与失败分支对称）、DEF-126（SearchPopupWindow 子类对称卸载）。
 - **门禁**：构建 0 错误；x64 全量回归 **4297/4297**；`static_gate.py` PASS；新实例 PID 32244。
 - **下一步**：R14 重启双 SubAgent 进入下一轮循环。
+
+## 第 28 次循环核验（R14 双路全量审查，2026-09-27）
+
+- **执行**：N1 双专项 subagent 并行，差异化策略（A 面：Helpers 拖放 COM 家族 13 文件首次全文约 2,300 行 + 4 组裸 vtable 逐槽核对 + TodoItemViewModel 首次全文；B 面：OnboardingWindow 全家族 + 剩余分部 + tests 契约抽查）。
+- **净立案 3 条（P0×0、P1×0、P2×0、P3×3）：DEF-127（ShellDropDelegator 死子系统 + 文档矛盾）、DEF-128（OnboardingWindow 旧版五步流程整体死代码 ~1,500 行 + 台账靶向失准）、DEF-129（BrandLogoHost 嵌死面板，DEF-128 前置迁移项）**——三条互相关联，主流程核验死链封闭性后入账。
+- **存量复核零改判**：round-13 修复批（DEF-125/126）双代理独立复核零回归（DEF-125 五个 await 窗口守卫网清点闭合）。
+- **收敛趋势**：连续第九轮 P0/P1 = 0；立案全部为死代码/清理类。
+- **下一步**：N4 修复方案（W1→W2→W3 依赖序）+ 独立复核 → N5 修复执行与门禁（含 publish-aot-audit）→ R15 重启双 SubAgent。
+
+### R14 整改批收口（同日，第 28 次循环核验续）
+
+- **方案与审查**：`rectify/R14-remediation-plan.md`；独立完善性审查**首审 NO-GO**（W3 漏 DesktopOrganization.cs/3 个活方法死分支/未声明 AutoStart 自纠退役；契约爆炸半径 4 文件 6 方法非计数类缺失）→ 按指令全面重写 v2 → 复审 **GO**（S1~S5 全采纳）。
+- **实施发现**：第七个死面板 `StepOrganizationPanel`（B 代理与首轮审查均未单列，其范围被误并入 Step4Panel 区间）——经引用图核验后纳入死集；`DesktopOrganization.cs` 的活接线实际位于该面板而非审查所述 Step4Panel:1374（死集结论不变）。
+- **修复落地**：DEF-127（死子系统 ~540 行 + 死测试 6 用例）；DEF-129（BrandLogoHost 迁至标题行，恢复可见）；DEF-128（七面板 + 5 分部 + 孤儿字段 + 死分支 + 孤儿键 230 ×12 + 契约 4 文件裁剪 + **AutoStart 激活期自纠行为退役声明** + 台账 DEF-036/038/087 补注）。
+- **门禁**：构建 0 错误（20 警告净降 2）；x64 全量回归 **4291/4291**；`static_gate.py` PASS（2667 键 ×12；async void −2/空 catch −4 删除驱动）；**AOT 审计通过**（WMC1510=742=上限、ABI/导出完整）；新实例 PID 2696。
+- **下一步**：R15 重启双 SubAgent 进入下一轮循环。

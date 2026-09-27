@@ -11,8 +11,8 @@
 |---|---|---|---|---|---|---|---|
 | **DEF-034** | WidgetLayerService 双重 lock 竞态窗口期 | **已修复（663c593）** | P1 | 线程同步 | `src/DeskBox/Services/WidgetLayerService.cs:919-927` | 两次 lock(s_desktopLayerLock) 之间无原子保证；TryApplyMinimalWindowMoves 返回 false 后到第二次 lock 前 z-order 可能变化，IsWindowChainAlreadyHighestToLowest 短路未重检查；导致多余 DeferWindowPos 事务，极端下 DWM 微卡顿 | F8 Round 1 task-0 |
 | **DEF-035** | StoreStartupService.GetStartupTask() UI 线程阻塞 | **已修复（663c593+3f2504d）** | P2 | 线程模型/启动性能 | `src/DeskBox/Services/StoreStartupService.cs:123` | StartupTask.GetAsync().AsTask().GetAwaiter().GetResult() 在 UI 线程同步等待 Windows Runtime；Store 构建 + 首次启动时 UI 冻结风险；非 Store 构建不受影响 | F8 Round 1 task-2 |
-| **DEF-036** | Step4StartupToggle_Toggled async void 内同步调用 GetStartupTask | **已修复（cf0fadb+4701b39）** | P2 | 线程模型 | `src/DeskBox/Views/OnboardingWindow.Hotkey.cs:317` | Onboarding 步骤 4 切换自动启动开关时同步调用 StartupService.SetEnabled → Store 路径触发 DEF-035；应改为 async Task + SafeFireAndForget | F8 Round 1 task-2 |
-| **DEF-038** | 刷新代际护栏未覆盖「用户拨动 vs 在途刷新」 | **已修复（917bcf9，Toggled 入口递增代际）** | P2 | 线程模型/UI 时序 | `src/DeskBox/Views/OnboardingWindow.Hotkey.cs:325` | 代际护栏只拦「新刷新 vs 旧刷新」；用户拨动不递增代际，Store 渠道 Pending 收敛窗口内在途回调仍回弹 IsOn+覆写 AutoStart。R2 Round 2 收敛审查（deleg_8d8b2d7b）NO-GO 指出，一行修复后闭环，CI run 917bcf9e 全绿 | F8 Round 2 收敛审查 |
+| **DEF-036** | Step4StartupToggle_Toggled async void 内同步调用 GetStartupTask | **已修复（cf0fadb+4701b39）** | P2 | 线程模型 | `src/DeskBox/Views/OnboardingWindow.Hotkey.cs:317`（**R14 补注：该位点已随旧版引导流死代码删除（DEF-128），机制修复的历史有效性保留**）| Onboarding 步骤 4 切换自动启动开关时同步调用 StartupService.SetEnabled → Store 路径触发 DEF-035；应改为 async Task + SafeFireAndForget | F8 Round 1 task-2 |
+| **DEF-038** | 刷新代际护栏未覆盖「用户拨动 vs 在途刷新」 | **已修复（917bcf9，Toggled 入口递增代际）** | P2 | 线程模型/UI 时序 | `src/DeskBox/Views/OnboardingWindow.Hotkey.cs:325`（**R14 补注：位点已随旧版引导流死代码删除（DEF-128）**） | 代际护栏只拦「新刷新 vs 旧刷新」；用户拨动不递增代际，Store 渠道 Pending 收敛窗口内在途回调仍回弹 IsOn+覆写 AutoStart。R2 Round 2 收敛审查（deleg_8d8b2d7b）NO-GO 指出，一行修复后闭环，CI run 917bcf9e 全绿 | F8 Round 2 收敛审查 |
 | **DEF-039** | FileInfo.FileModified 在 es-ES/fr-FR/ru-RU 三语种携带非法 .NET 日期格式字母（aaaa / aaaa/M/j / гггг/М/д ЧЧ:мм），string.Format 按字面量渲染 → 文件格子副标题时间戳显示假字（俄语用户看到 гггг/9/2 ЧЧ:мм）| P2 | 1.3.8 (f515632) 起 | Models/WidgetItem.cs:111 LocalizeFormat + Strings/{es-ES,fr-FR,ru-RU}.json | R3 主线亲审（subagent 429 后接管），Python 全 12 国占位符扫描 | ✅ 已修复 41d70e7：三国改 dd/MM/yyyy·dd.MM.yyyy；新增契约测试 JsonLocales_DateTimeFormatSpecifiers_OnlyUseValidNetFormatLetters 锁死格式字母白名单，闭合索引级比对盲区 |
 | **DEF-040** | StackSurface PropertyChanged 订阅生命周期缝隙：容器销毁路径 Unloaded 不保证触发，WidgetStackItem.PropertyChanged 长期持有 content 实例（ItemVisuals.cs:973-1002，EVT-02 同族新实例）| P3 | R4 收敛审查 | FileSurfaceContent.ItemVisuals.cs:973-1002 | deleg_96eac299 | 📌 挂账（加固即可：handler 内查 XamlRoot/IsLoaded 或弱引用）|
 | **DEF-041** | _stackProjectionTransitionPending 无 Reuse/Dispose 复位点：投影切换入队后 Reuse/Dispose 致标志残留（同一调度循环内自愈，毫秒级窗口）| P3 | R4 收敛审查 | FileSurfaceContent.SelectionAndMenus.cs:1335-1368 | deleg_96eac299 | 📌 挂账（ResetStackInteractionVisuals 补复位）|
@@ -136,6 +136,7 @@
 - **round-11（2026-09-27）双路全量代码缺陷深度审查新增**：3 项（P0×0、P1×0、P2×0、**P3×3**：DEF-117~119），详见下节；round-10 修复批经双代理独立复核零回归；无存量改判；连续第六轮 P0/P1 = 0（R8→R11 = 23→5→2→3，P3 平台期）
 - **round-12（2026-09-27）双路全量代码缺陷深度审查新增**：5 项（P0×0、P1×0、P2×0、**P3×5**：DEF-120~124，其中 DEF-123 为 round-11 DEF-117 修复引入的回归——「下轮审上轮」机制首次捕获跨轮回归），详见下节；连续第七轮 P0/P1 = 0
 - **round-13（2026-09-27）双路全量代码缺陷深度审查新增**：2 项（P0×0、P1×0、P2×0、**P3×2**：DEF-125/126），详见下节；round-12 修复批经双代理独立复核零回归（DEF-123 主目标达成，成功分支残留单列 DEF-125 随轮收口）；无存量改判；连续第八轮 P0/P1 = 0
+- **round-14（2026-09-27）双路全量代码缺陷深度审查新增**：3 项（P0×0、P1×0、P2×0、**P3×3**：DEF-127~129，全部为死代码/清理类且互相关联须按序整批处置），详见下节；round-13 修复批经双代理独立复核零回归；无存量改判；连续第九轮 P0/P1 = 0
 
 ---
 
@@ -150,7 +151,7 @@
 |---|---|---|---|---|---|
 | **DEF-085** | 边距对话框打开期间胶囊自动折叠后取消恢复：把打开时捕获的展开面板矩形套回已折叠窗口，折叠态绕过 DEF-065 面板重推导守卫，取消的预览位移在下次收起/重启回弹 | P2 | `src/DeskBox/Views/WidgetWindowBase.TitleAppearance.cs:573,593-619`（配合 `Collapse.cs:553-569,4295-4321,4753-4771`、`Bounds.cs:519-523`、`WidgetCompactInteractionPolicy.cs:168-177`） | 取消恢复无条件 SetWindowPos+`RefreshCompactPlacementAfterBoundsMove`，无 `RestsCollapsed` 重推导；DEF-065 家族复发向量 | 📌 挂账（S04/round-08） |
 | **DEF-086** | settings.json 全仓唯一缺「新架构档案只读」防护：降级/交叉构建后首次保存静默丢弃未知字段（widget-layout/revisions/weather-cache 三处均有此防护，唯独最大 store 缺席） | P2 | `src/DeskBox/Services/SettingsService.cs:705-868,942-1058`（对照 `WidgetLayoutStore.cs:98`、`SyncRevisionsStore.cs:105-115`、`WeatherCacheStore.cs:192-196`） | typed slice 无法表示新 schema 字段，覆写即丢弃 | 📌 挂账（S07/round-08） |
-| **DEF-087** | 钩子线程同步握手 Wait(1500)+Join(650) 占 UI 线程主路径，钩子线程假死可冻结约 2.15s（r06-THR-02 维持 + S03-WIN-13 同型并入，调用面 6 处） | P2 | `ReservedHotkeyHookService.cs:187,325,363`；`DesktopDoubleClickActivationService.cs:251,352,368`；`GlobalHotkeyService.cs:156`；`SearchHotkeyService.cs:150`；`OnboardingWindow.Hotkey.cs:94`；`SettingsWindow.HotkeyAndAppearance.cs:361` | hook 线程 handshake 用同步 Wait/Join 阻塞调用线程（UI） | 📌 挂账（S08+S03/round-08） |
+| **DEF-087** | 钩子线程同步握手 Wait(1500)+Join(650) 占 UI 线程主路径，钩子线程假死可冻结约 2.15s（r06-THR-02 维持 + S03-WIN-13 同型并入，调用面 6 处） | P2 | `ReservedHotkeyHookService.cs:187,325,363`；`DesktopDoubleClickActivationService.cs:251,352,368`；`GlobalHotkeyService.cs:156`；`SearchHotkeyService.cs:150`；`OnboardingWindow.Hotkey.cs:94`（**R14 补注：该文件已随旧版引导流死代码整体删除（DEF-128），async 孪生保留于 Settings 侧**）；`SettingsWindow.HotkeyAndAppearance.cs:361` | hook 线程 handshake 用同步 Wait/Join 阻塞调用线程（UI） | 📌 挂账（S08+S03/round-08） |
 | **DEF-088** | 拖出看门狗 Timer `using var` 声明于同步方法内，方法返回即 Dispose，15s 饥饿看门狗永不触发（诊断失效，无泄漏） | P3 | `src/DeskBox/Helpers/NativeFileDragOut.cs:255-271` | `using var` 生命周期=方法体 | 📌 挂账（S01/round-08） |
 | **DEF-089** | 共享 Composition 动画模板每次启动重灌关键帧，依赖未文档化重复进度语义；KeyFrameAnimation 无清除 API，最坏会话级缓慢劣化 | P3 | `WidgetShell.xaml.cs:2135-2199,3067-3078,3273-3278,986-993`；`WidgetTrayAnimationController.cs:423-440,542-558`；`WidgetCompositionResources.cs:32-60` | 每次启动重灌关键帧 | 📌 挂账（S02/round-08） |
 | **DEF-090** | 帧率档位上线后自适应 ladder 成死代码（NormalizeFrameRate 恒>0 → cap 恒激活、escalation 不可达）；cap 注释与地板除实现相反 | P3 | `WidgetWindowBase.Collapse.cs:3419-3440,3651-3691`；`WidgetCompactFrameSkipPolicy.cs:54-118` | 档位与旧自适应机制并存，前者恒短路后者 | 📌 挂账（S02/round-08） |
@@ -421,3 +422,35 @@
 - **方案**：`rectify/R13-remediation-plan.md`（独立完善性审查**首审 GO**，3 条建议全采纳：成功分支行号更正 :302-312、WatchedPath 可接受性留档、NC_DESTROY 兜底省略理由）。
 - **落地**：DEF-125（queryStarted await 后补代际复核，与失败分支守卫对称）；DEF-126（OnWindowClosed 顶部三行对称卸载 + 字段复位）。
 - **门禁**：构建 0 错误；x64 全量回归 **4297/4297**；`static_gate.py` **PASS**（五项与基线持平，留档 `rectify/r13-static-gate.json`）；新实例 PID 32244 @ 规范 Debug 路径。报告 `rectify/R13-remediation-report.md`。
+
+---
+
+## round-14 双路全量代码缺陷深度审查（2026-09-27，2 路并行）
+
+> 代码基线 `wip/fix-bug` @ `435b1a1a`。纯静态审查，未运行测试。R14-A + R14-B 两专项报告与总报告见 `docs/quality/rounds/round-14/`。全部立案经主流程当前树核验后入账。
+
+### 新增缺陷
+
+| 编号 | 标题 | 优先级 | 位置 | 根因/机制 | 状态 |
+|---|---|---|---|---|---|
+| **DEF-127** | ShellDropDelegator 委托发射子系统整体死代码 + 设计依据文档互相矛盾：`TryDelegateDrop` 链与 `TryCreateHdropDataObject` 全仓零调用点（活路径走 ShortcutFileLauncher/ShellExecuteEx）；类注释自称「与 Explorer 行为一致」与 ShortcutFileLauncher.cs:30-34 实测记载（该路径真机弹 Open with 被放弃，drop_on_shortcut_open.md §10.2）完全相反；6 个测试钉死死路径契约（BuildHdropBytes 仅被死链使用，主流程核验闭合） | P3 | `ShellDropDelegator.cs:149-248`、`ShellDataObjectBuilder.cs:56-146,145-152`、`NativeDropTarget.cs:506-509`、`ShellDataObjectBuilderTests.cs` | 发射方案切换时未删除旧实现与旧注释 | ✅ 已修复（R14 批：死类删除 + ShellDataObjectBuilder/SHCreateItemFromParsingName/死测试整删 + 注释校正；回归 4291/4291） |
+| **DEF-128** | OnboardingWindow 旧版五步流程整体死代码（~1,500 行跨 8 文件）：活映射仅 TaskStep 面板（StepCount=4），六个旧面板 Collapsed 且 .cs 零引用；旧 Setup 链调用图封闭于死集（主流程核验闭合）；DEF-036/038/087 的 onboarding 位点全部落在死链上（台账靶向失准）；孤儿键最大簇的实体来源 | P3 | `OnboardingWindow.xaml:174-260,845-1523`、`xaml.cs:560,608`、`Appearance.cs` 整文件、`Features/Completion/Storage/Hotkey/TaskFlow.cs` 死成员 | 重构为 TaskStep 任务流时旧面板/Setup/动画退役未删除 | ✅ 已修复（R14 批：七个 Collapsed 死面板（含实施发现的第七面板 StepOrganizationPanel）+ 5 分部整删 + 孤儿字段 7 项 + 3 活方法死分支；孤儿键 230 ×12 删除（2897→2667）；契约测试 4 文件裁剪；AutoStart 激活期自纠行为随旧流退役（显式声明）；AOT 审计通过） |
+| **DEF-129** | 品牌标志 BrandLogoHost 嵌在永久 Collapsed 死面板内：真实 Logo（deskbox.svg 全仓唯一展示位）引导全程不可见，intro 交接协议操作不可见元素；StartBrandLogoShine Forever 动画自 Loaded 空转至关闭；死面板与活协议互相咬合（DEF-128 的前置迁移项） | P3 | `OnboardingWindow.xaml:851-885` ↔ `IntroAnimations.cs:39-46,121-128,212-224,253-277` | 重构时品牌标志随旧面板折叠，活协议引用指向旧面板内元素 | ✅ 已修复（R14 批：BrandLogoHost 迁至 RootGrid Row 0 居中 + IsHitTestVisible=False，deskbox.svg 唯一展示位恢复可见，shine 空转消除；GUI 目检列入人工复验清单） |
+
+### 已知模式新位点（并入既有编号，不新立案）
+
+- **DEF-070 家族读侧**：`SearchEngineService.cs:287-288`、`:553-555`（线程池枚举活 Widgets）。
+- **DEF-092 家族**：`TodoItemViewModel.cs:388` MarkerGlyph 死属性（两分支恒等笔误化石）。
+- **O-26 家族**：`FolderWatcherService.cs:819-829`（catch 结算无代际复核，近不可达）。
+- **DEF-078 家族**：B 面 +1 位点。
+
+### 存量条目状态变更（round-14 复核）
+
+- **无改判**。round-13 修复批复核：DEF-125（五个 await 窗口守卫网全貌清点闭合）与 DEF-126（全仓 14 处子类化全部对称卸载）正确落地、零回归。Helpers 拖放 COM 家族 13 文件首次全文（4 组裸 vtable 逐槽核对正确、IDropTargetHelper 疑点证伪留档）；TodoItemViewModel 首次全文（Todo 双 VM 家族收官）。
+- **正面结论**：2897 键 ×12 parity、Format 调用点 230 处 0 失配、XAML 195 资源键/事件绑定零失效、Rust ABI 零漂移。**连续第九轮 P0/P1 = 0。**
+
+### round-14 整改批（2026-09-27，随轮完成）
+
+- **方案**：`rectify/R14-remediation-plan.md`（独立完善性审查**首审 NO-GO**——M1 漏 DesktopOrganization.cs/3 个活方法死分支/未声明 AutoStart 自纠退役，M2 契约爆炸半径 4 文件非计数类缺失；按指令重写 v2 后复审 **GO**，S1~S5 全采纳）。
+- **落地**：W1 DEF-127（死子系统 ~540 行 + 死测试 6 用例删除）；W2 DEF-129（BrandLogoHost 迁至标题行，deskbox.svg 恢复可见）；W3 DEF-128（七个 Collapsed 死面板——含实施发现的第七面板 StepOrganizationPanel、5 分部整文件、孤儿字段 7 项、3 活方法死分支删除；孤儿键 230 ×12；契约测试 4 文件「保 Settings 半段」裁剪；**AutoStart 激活期自纠行为随旧流退役**）。实施中发现的计划外事实：第七死面板 StepOrganizationPanel（B 代理与首轮审查均未单列），经引用图核验后纳入死集。
+- **门禁**：构建 0 错误（20 警告净降 2）；x64 全量回归 **4291/4291**（4297 − 6 死路径用例）；`static_gate.py` **PASS**（12 语言 2667 键；async void −2/空 catch −4 均删除驱动；留档 `rectify/r14-static-gate.json`）；`publish-aot-audit.ps1 -Platform x64` **通过**（WMC1510=742=上限、ABI 2/掩码 511/十导出、260 秒）；新实例 PID 2696。报告 `rectify/R14-remediation-report.md`。
