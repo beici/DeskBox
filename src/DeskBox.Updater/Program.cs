@@ -57,7 +57,14 @@ internal static class Program
             int exitCode = RunInstaller(options);
             if (exitCode == 0 && !string.IsNullOrWhiteSpace(options.AppPath) && File.Exists(options.AppPath))
             {
-                _ = RestartApp(options.AppPath);
+                if (!RestartApp(options.AppPath))
+                {
+                    // DEF-113: a failed restart after a successful install
+                    // would leave the machine without a running DeskBox and
+                    // with no --update-install-result signal at all. Report
+                    // it so the next launch can surface the failure dialog.
+                    RestartAfterIncompleteUpdate(options, "restart-failed");
+                }
             }
             else if (exitCode != 0)
             {

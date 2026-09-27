@@ -283,10 +283,17 @@ public sealed class CloudBackupTransportTests : IDisposable
         SeedTodoData();
         var uploadStarted = new TaskCompletionSource();
         var releaseUpload = new TaskCompletionSource();
+        var secondUploadStarted = new TaskCompletionSource();
+        int uploadStartCount = 0;
         var transport = new FakeCloudBackupTransport
         {
             UploadHook = _ =>
             {
+                if (Interlocked.Increment(ref uploadStartCount) == 2)
+                {
+                    secondUploadStarted.TrySetResult();
+                }
+
                 uploadStarted.TrySetResult();
                 return releaseUpload.Task;
             }
@@ -303,7 +310,15 @@ public sealed class CloudBackupTransportTests : IDisposable
 
         releaseUpload.SetResult();
         await first;
-        await Task.Delay(50); // any wrongly queued run would surface here
+        // DEF-114: the skip-rather-than-queue contract is about never
+        // *starting* a second run, so assert on a second upload start
+        // instead of racing a completion count against a fixed delay — a
+        // slow machine let a wrongly queued run slip past the old 50ms
+        // completion window. A wrongly queued run would start the moment
+        // the gate is released, so the bounded negative wait below only
+        // needs to cover thread scheduling, never upload duration.
+        await Assert.ThrowsAsync<TimeoutException>(
+            () => secondUploadStarted.Task.WaitAsync(TimeSpan.FromMilliseconds(250)));
         Assert.Single(transport.Files);
     }
 

@@ -1231,7 +1231,18 @@ public sealed partial class QuickCaptureSurfaceContent :
             return;
         }
 
-        await OpenDetailAfterSavingAsync(item);
+        try
+        {
+            await OpenDetailAfterSavingAsync(item);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[WidgetSurface] Quick Capture detail open failed id={WidgetId}: {ex}");
+            RaiseFeedback(
+                T("Common.OperationFailedRetry"),
+                WidgetFeedbackSeverity.Error,
+                "quick-detail-open-error");
+        }
         await Task.CompletedTask;
     }
 
@@ -2298,7 +2309,19 @@ public sealed partial class QuickCaptureSurfaceContent :
             editItem.Click += async (_, _) =>
             {
                 flyout.Hide();
-                await OpenDetailAfterSavingAsync(item);
+                try
+                {
+                    await OpenDetailAfterSavingAsync(item);
+                }
+                catch (Exception ex)
+                {
+                    App.Log($"[WidgetSurface] Quick Capture detail open failed id={WidgetId}: {ex}");
+                    RaiseFeedback(
+                        T("Common.OperationFailedRetry"),
+                        WidgetFeedbackSeverity.Error,
+                        "quick-detail-open-error");
+                    return;
+                }
                 if (_detailItem is not null)
                 {
                     BeginDetailEditing();

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using DeskBox.Models;
 using Microsoft.UI.Dispatching;
 
@@ -23,7 +24,11 @@ public sealed class TodoReminderService : IDisposable
     private readonly Action<TodoReminderNotification> _notify;
     private readonly Func<string, TodoWidgetStore> _storeFactory;
     private readonly Func<DateTimeOffset> _clock;
-    private readonly HashSet<string> _sessionNotifiedKeys = new(StringComparer.Ordinal);
+    // DEF-110: cleared on the UI thread (Start/Refresh) and written from
+    // store mutate callbacks that resume on thread-pool threads
+    // (TodoWidgetStore.MutateAsync awaits its gate with
+    // ConfigureAwait(false)) — a plain HashSet would race.
+    private readonly ConcurrentDictionary<string, byte> _sessionNotifiedKeys = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Raised on the UI thread after this service persists a change to a
@@ -436,7 +441,7 @@ public sealed class TodoReminderService : IDisposable
                 }
 
                 string reminderKey = GetReminderKey(widget.Id, item, triggerKind, effectiveOffsetMinutes);
-                if (!_sessionNotifiedKeys.Add(reminderKey))
+                if (!_sessionNotifiedKeys.TryAdd(reminderKey, 0))
                 {
                     continue;
                 }
