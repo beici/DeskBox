@@ -801,25 +801,38 @@ public static class DragDropPermissionService
     {
         try
         {
-            Process? explorer = Process.GetProcessesByName("explorer").FirstOrDefault();
-            if (explorer is null)
-            {
-                return ProcessTokenSnapshot.Unknown(0, "explorer", "not-running");
-            }
-
-            IntPtr processHandle = OpenProcess(ProcessQueryLimitedInformation, false, (uint)explorer.Id);
-            if (processHandle == IntPtr.Zero)
-            {
-                return ProcessTokenSnapshot.Unknown(explorer.Id, explorer.ProcessName, $"open-error:{Marshal.GetLastWin32Error()}");
-            }
-
+            // DEF-118: every element of the array holds a process handle, so
+            // all of them are disposed — not just the selected instance.
+            Process[] explorers = Process.GetProcessesByName("explorer");
             try
             {
-                return CreateProcessTokenSnapshot(explorer.Id, explorer.ProcessName, null, processHandle);
+                Process? explorer = explorers.FirstOrDefault();
+                if (explorer is null)
+                {
+                    return ProcessTokenSnapshot.Unknown(0, "explorer", "not-running");
+                }
+
+                IntPtr processHandle = OpenProcess(ProcessQueryLimitedInformation, false, (uint)explorer.Id);
+                if (processHandle == IntPtr.Zero)
+                {
+                    return ProcessTokenSnapshot.Unknown(explorer.Id, explorer.ProcessName, $"open-error:{Marshal.GetLastWin32Error()}");
+                }
+
+                try
+                {
+                    return CreateProcessTokenSnapshot(explorer.Id, explorer.ProcessName, null, processHandle);
+                }
+                finally
+                {
+                    CloseHandle(processHandle);
+                }
             }
             finally
             {
-                CloseHandle(processHandle);
+                foreach (Process process in explorers)
+                {
+                    process.Dispose();
+                }
             }
         }
         catch (Exception ex)

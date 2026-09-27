@@ -207,13 +207,13 @@ public sealed class FolderWatcherService : IDisposable
         // Watch the physical target rather than asking FileSystemWatcher and
         // StorageFolder to traverse a user-created mount point. The logical
         // junction path remains in widget configuration; only this runtime
-        // watcher path is resolved.
-        if (FileService.TryResolveExistingPathForTraversal(
-                folderPath,
-                out string traversalPath))
-        {
-            folderPath = traversalPath;
-        }
+        // watcher path is resolved. The resolution is pure file-system IO and
+        // can stall for seconds on an offline network path (DEF-117), so it
+        // runs off the calling thread.
+        folderPath = await Task.Run(() =>
+            FileService.TryResolveExistingPathForTraversal(folderPath, out string traversalPath)
+                ? traversalPath
+                : folderPath);
 
         Stop();
         lock (_lock)
@@ -264,7 +264,16 @@ public sealed class FolderWatcherService : IDisposable
         bool queryStarted = await TryStartQueryWatcherAsync(folderPath, generation);
         if (!nativeStarted && !queryStarted)
         {
-            SetHealth(ProbeFolderAccess(folderPath) == FolderWatcherHealth.AccessDenied
+            FolderWatcherHealth probeHealth = await ProbeFolderAccessAsync(folderPath);
+            lock (_lock)
+            {
+                if (_isDisposed || startGeneration != _watchGeneration)
+                {
+                    return;
+                }
+            }
+
+            SetHealth(probeHealth == FolderWatcherHealth.AccessDenied
                 ? FolderWatcherHealth.AccessDenied
                 : FolderWatcherHealth.Unavailable);
             BeginReconnect(folderPath);
@@ -857,14 +866,18 @@ public sealed class FolderWatcherService : IDisposable
                 return;
             }
 
-            string probePath = path;
-            if (!string.IsNullOrWhiteSpace(requestedPath) &&
+            // DEF-117: the resolution is file-system IO that can stall for
+            // seconds on an offline network path; this tick runs on the UI
+            // thread, so it goes through Task.Run. On resolution failure the
+            // probe target stays on the last physical path (never the
+            // requested junction), matching the pre-fix semantics.
+            string probePath = await Task.Run(() =>
+                !string.IsNullOrWhiteSpace(requestedPath) &&
                 FileService.TryResolveExistingPathForTraversal(
                     requestedPath,
-                    out string refreshedPath))
-            {
-                probePath = refreshedPath;
-            }
+                    out string refreshedPath)
+                    ? refreshedPath
+                    : path);
 
             FolderWatcherHealth availability = await ProbeFolderAccessAsync(probePath);
             if (availability != FolderWatcherHealth.Watching)

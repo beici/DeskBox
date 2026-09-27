@@ -102,9 +102,13 @@ begin
   // {autopf} follows the installer architecture (Program Files on x64 and
   // native ARM64 Program Files on Windows ARM). Keep {pf} as a compatibility
   // fallback for older Inno Setup installations and custom layouts.
+  // {localappdata} covers the user-level .NET layout used by the unelevated
+  // .NET installer, dotnet-install scripts and VS-bundled components; in an
+  // elevated run it resolves to the profile of the account running Setup.
   Result :=
     IsDotNet10RuntimeInstalledAt(ExpandConstant('{autopf}')) or
-    IsDotNet10RuntimeInstalledAt(ExpandConstant('{pf}'));
+    IsDotNet10RuntimeInstalledAt(ExpandConstant('{pf}')) or
+    IsDotNet10RuntimeInstalledAt(ExpandConstant('{localappdata}') + '\Microsoft');
 end;
 
 function IsWindowsAppRuntime24Installed: Boolean;
