@@ -116,6 +116,16 @@
 | L4 | R12 优化修复方案 + 方案复核验证 | 方案覆盖全部立案；独立完善性审查 GO | rectify/R12-remediation-plan.md | 已完成（首审**不通过**——W1 tick 探测 await 残留窗口 + 台账预写流程问题；修订后复审**通过**，另采纳 5 条建议） |
 | L5 | R12 修复执行 + 效果验证 | 最小侵入修复；构建 0 错误；x64 全量回归全绿；台账/TODO 收口 | 代码 + 本清单 + rectify/R12-remediation-report.md | 已完成（DEF-120~124 修复；构建 0 错误；回归 **4297/4297**；static_gate PASS——12 语言 2897 键对齐；新实例 PID 30924 @ 规范 Debug 路径） |
 
+## M. R13 双路全量代码缺陷审查与整改（长期循环迭代 · 本轮批次）
+
+| 编号 | 任务 | 完成标准 | 输出物 | 核验状态 |
+|---|---|---|---|---|
+| M1 | 2 个专项 subagent 并行审查（A 核心服务与数据面 / B 界面交互与工程面），纯静态、差异化策略 | 每专项独立报告 | rounds/round-13/A、B 两份专项报告 | 已完成（A：1 立案（DEF-123 成功分支残留）+ 3 观察项 + 大文件面收官；B：1 立案（子类钩子无对称卸载）+ 5 观察项 + 机械校验全绿） |
+| M2 | 主流程汇总复核：去重合并、逐条核验、分级分类 | 总报告含问题总览/风险分布/优先级排序/整改建议 | rounds/round-13/全量代码缺陷审查总报告.md | 已完成（DEF-125/126 全核验） |
+| M3 | 缺陷台账入账 | DEF-125/126 立案 + 无改判记录 | defect-ledger.md round-13 节 | 已完成 |
+| M4 | R13 优化修复方案 + 方案复核验证 | 方案覆盖全部立案；独立完善性审查 GO | rectify/R13-remediation-plan.md | 已完成（首审 **GO**，3 条建议全采纳：行号更正 :302-312、WatchedPath 可接受性留档、NC_DESTROY 兜底省略理由） |
+| M5 | R13 修复执行 + 效果验证 | 最小侵入修复；构建 0 错误；x64 全量回归全绿；台账/TODO 收口 | 代码 + 本清单 + rectify/R13-remediation-report.md | 已完成（DEF-125/126 修复；构建 0 错误；回归 **4297/4297**；static_gate PASS 五项与基线持平；新实例 PID 32244 @ 规范 Debug 路径） |
+
 ## 核验记录
 
 | 日期 | 核验轮 | 结论 |
@@ -238,3 +248,18 @@
 - **修复落地**（6 源文件 + 12 语言 JSON）：DEF-123（StartAsync 入口快照 + 解析 await 后校验；tick 顶部快照 + 解析/探测两个 await 后均校验）、DEF-124（try/finally）、DEF-120（Lazy 记忆化）、DEF-121（ListSeparator ×2 类 + 3 站点）、DEF-122（新键 `Widget.CreateShortcutSuffix` ×12，键集 2897，参数化后缀 + 兜底覆盖）。
 - **门禁**：构建 0 错误；x64 全量回归 **4297/4297**；`static_gate.py` PASS（12 语言 2897 键对齐，其余与基线持平）；新实例 PID 30924。
 - **下一步**：R13 重启双 SubAgent 进入下一轮循环。
+
+## 第 27 次循环核验（R13 双路全量审查，2026-09-27）
+
+- **执行**：M1 双专项 subagent 并行，差异化策略（A 面：EverythingSearchService 全文、WidgetManager 主文件+Storage 全文、Todo DetailAndAttachments 全文、100 个零提及 Services 文件全模式扫描——零新增立案；B 面：FileSurfaceContent/WidgetShell/SearchPopupWindow 剩余区段、tests 契约测试抽查）。
+- **净立案 2 条（P0×0、P1×0、P2×0、P3×2）：DEF-125（DEF-123 修复的成功分支残留——query await 后无守卫即结算）、DEF-126（SearchPopupWindow 子类钩子无对称卸载，全仓 10 处唯一破例）**，主流程逐条核码后入账。
+- **存量复核零改判**：round-12 修复批（DEF-120~124）双代理独立复核全部正确；O-20 解除。
+- **收敛趋势**：连续第八轮 P0/P1 = 0；R10→R13 立案 2→3→5→2；修复质量迭代收敛（R12 五条中四条一次通过、一条残留被本轮捕获闭环）。
+- **下一步**：M4 修复方案 + 独立复核 → M5 修复执行与门禁 → R14 重启双 SubAgent 进入下一轮循环。
+
+### R13 整改批收口（同日，第 27 次循环核验续）
+
+- **方案与审查**：`rectify/R13-remediation-plan.md`；独立完善性审查**首审 GO**（3 条建议全采纳）。
+- **修复落地**（2 源文件）：DEF-125（成功分支 query await 后补代际复核，与失败分支对称）、DEF-126（SearchPopupWindow 子类对称卸载）。
+- **门禁**：构建 0 错误；x64 全量回归 **4297/4297**；`static_gate.py` PASS；新实例 PID 32244。
+- **下一步**：R14 重启双 SubAgent 进入下一轮循环。

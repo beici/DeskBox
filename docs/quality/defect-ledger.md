@@ -135,6 +135,7 @@
 - **round-10（2026-09-27）双路全量代码缺陷深度审查新增**：2 项（P0×0、P1×0、P2×0、**P3×2**：DEF-115/116），详见下节；round-09 修复批经双代理独立复核零回归；无存量改判；连续第五轮 P0/P1 = 0，立案数收敛 5 → 2
 - **round-11（2026-09-27）双路全量代码缺陷深度审查新增**：3 项（P0×0、P1×0、P2×0、**P3×3**：DEF-117~119），详见下节；round-10 修复批经双代理独立复核零回归；无存量改判；连续第六轮 P0/P1 = 0（R8→R11 = 23→5→2→3，P3 平台期）
 - **round-12（2026-09-27）双路全量代码缺陷深度审查新增**：5 项（P0×0、P1×0、P2×0、**P3×5**：DEF-120~124，其中 DEF-123 为 round-11 DEF-117 修复引入的回归——「下轮审上轮」机制首次捕获跨轮回归），详见下节；连续第七轮 P0/P1 = 0
+- **round-13（2026-09-27）双路全量代码缺陷深度审查新增**：2 项（P0×0、P1×0、P2×0、**P3×2**：DEF-125/126），详见下节；round-12 修复批经双代理独立复核零回归（DEF-123 主目标达成，成功分支残留单列 DEF-125 随轮收口）；无存量改判；连续第八轮 P0/P1 = 0
 
 ---
 
@@ -391,3 +392,32 @@
 - **方案**：`rectify/R12-remediation-plan.md`（独立完善性审查：**首审不通过**——W1 tick 探测 await 残留窗口（probe 成功路径可复现 DEF-123）+ 台账预写流程问题；按指令修订（tick 两个 await 后均校验 + 台账改待实施占位）后复审 **通过**，另采纳 5 条建议：W4 字段核正、W5 参数化后缀 + 兜底覆盖、W1 残留语义留档、W5 验证措辞、DEF-123 行回填表述绑定）。
 - **落地**：DEF-123（StartAsync 入口快照 + 解析 await 后校验；ReconnectTimer_Tick 顶部快照 + 解析/探测两个 await 后均校验）、DEF-124（封送 lambda try/finally）、DEF-120（Lazy 记忆化）、DEF-121（两类 ListSeparator + 3 站点）、DEF-122（新键 ×12 + 参数化后缀 + 兜底覆盖）。
 - **门禁**：构建 0 错误（22 警告 ≤ 基线 24）；`static_gate.py` **PASS**（12 语言 2897 键对齐，其余五项与基线持平，留档 `rectify/r12-static-gate.json`）；x64 全量回归 **4297/4297**；新实例 PID 21488 @ 规范 Debug 路径。报告 `rectify/R12-remediation-report.md`。
+
+---
+
+## round-13 双路全量代码缺陷深度审查（2026-09-27，2 路并行）
+
+> 代码基线 `wip/fix-bug` @ `7387efeb`。纯静态审查，未运行测试。R13-A + R13-B 两专项报告与总报告见 `docs/quality/rounds/round-13/`。全部立案经主流程当前树核验后入账。
+
+### 新增缺陷
+
+| 编号 | 标题 | 优先级 | 位置 | 根因/机制 | 状态 |
+|---|---|---|---|---|---|
+| **DEF-125** | FolderWatcherService.StartAsync **成功分支**缺代际复核（DEF-123 修复不完备残留）：失败分支已有「probe await + 守卫」，成功分支在 query await 后直接 SetHealth + 取消已排程重连（_reconnectPath=null/_reconnectAttempt=0）——query await 期间被取代时旧调用结算覆盖新调用状态 | P3 | `FolderWatcherService.cs:285-306` | DEF-123 修复的守卫未覆盖 query await 窗口的成功路径 | ✅ 已修复（R13 批：queryStarted await 后补同款代际复核，与失败分支守卫对称；回归 4297/4297） |
+| **DEF-126** | SearchPopupWindow 关闭观察器子类钩子从不移除：`_isPopupCloseWatcherInstalled` 只写死状态，OnWindowClosed 全量清理链缺 RemoveWindowSubclass——全仓 10 处 comctl32 子类化唯一无对称卸载（其余 9 处含 WM_NC_DESTROY 兜底先例）；当前「永不主动关闭只隐藏」模型下无即时危害，隐患在卸载顺序变化时残留 thunk | P3 | `SearchPopupWindow.xaml.cs:79-80,168-176,4508-4542` | 「永不主动关闭」模型清理清单漏 Win32 对称项 | ✅ 已修复（R13 批：OnWindowClosed 顶部三行卸载 + 字段复位，NC_DESTROY 兜底省略理由留档） |
+
+### 已知模式新位点（并入既有编号，不新立案）
+
+- **ANI-06 家族**：+9 位点（R12 仅记 5/14，本轮全量补齐）。
+- **DEF-080 家族**：+4 位点（TodoItemViewModel 显示级）。
+
+### 存量条目状态变更（round-13 复核）
+
+- **无改判**。round-12 修复批复核：DEF-120/121/122/124 正确落地；DEF-123 主目标达成、守卫链全排列推演自洽（仅成功分支残留即 DEF-125）；O-20 解除（本轮唯一观察项解除）。EverythingSearchService 全文、WidgetManager 主文件+Storage 全文、Todo DetailAndAttachments 全文、100 个零提及 Services 文件全模式扫描零新增立案。
+- **正面结论**：2897 键 ×12 parity、占位符 arity 0 失配、Format 调用点 230+3 处 0 失配、XAML 197 资源键/757 事件绑定零失效、Rust ABI 与 scripts/installer 零漂移。**连续第八轮 P0/P1 = 0。**
+
+### round-13 整改批（2026-09-27，随轮完成）
+
+- **方案**：`rectify/R13-remediation-plan.md`（独立完善性审查**首审 GO**，3 条建议全采纳：成功分支行号更正 :302-312、WatchedPath 可接受性留档、NC_DESTROY 兜底省略理由）。
+- **落地**：DEF-125（queryStarted await 后补代际复核，与失败分支守卫对称）；DEF-126（OnWindowClosed 顶部三行对称卸载 + 字段复位）。
+- **门禁**：构建 0 错误；x64 全量回归 **4297/4297**；`static_gate.py` **PASS**（五项与基线持平，留档 `rectify/r13-static-gate.json`）；新实例 PID 32244 @ 规范 Debug 路径。报告 `rectify/R13-remediation-report.md`。
