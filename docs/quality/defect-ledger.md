@@ -132,6 +132,7 @@
 - **2026-09-13 全面深度代码审查新增**：16 项（5 P2 + 11 P3，无 P0/P1，全部经主线逐条亲验后入账），详见「2026-09-13 全面深度代码审查」分节；其中 DEF-072（本地化键缺失）为唯一已发布版本用户可见项，修复成本极低
 - **round-08（2026-09-25）全量并行代码缺陷深度审查新增**：23 项（3 P2 + 20 P3，无 P0/P1），详见下节；raw 立案 30 条经去重合并（10 专项报告见 `docs/quality/rounds/round-08/`，总报告同目录）
 - **round-09（2026-09-27）双路全量代码缺陷深度审查新增**：5 项（P0×0、P1×0、P2×0、**P3×5**：DEF-110~114），详见下节；4 条存量挂账改判「已修复（现状核实）」（DEF-040/077/081/088）、2 项遗留观察解除；连续第四轮 P0/P1 = 0
+- **round-10（2026-09-27）双路全量代码缺陷深度审查新增**：2 项（P0×0、P1×0、P2×0、**P3×2**：DEF-115/116），详见下节；round-09 修复批经双代理独立复核零回归；无存量改判；连续第五轮 P0/P1 = 0，立案数收敛 5 → 2
 
 ---
 
@@ -285,3 +286,35 @@
 - **新增**：5 项（P0×0、P1×0、P2×0、P3×5）；**连续第四轮 P0/P1 = 0，首次 P2 = 0**。
 - **正面结论**：12 语言 2896 键 parity / 占位符 arity / 日期格式字母 / 引用键完整性四项机械校验全绿；XAML 资源引用 0 失效；Rust ABI 十导出 / 掩码 511 / panic=abort 零漂移；R8-AB + 历史 P2 批整改（147 文件 diff）逐文件审读无回归；文件安全与持久化面处于历史最高加固水位。
 - **整改（R9 批，随轮完成）**：DEF-110~114 全部 ✅ 已修复 + DEF-078 两处新位点收口。方案 `rectify/R9-remediation-plan.md`（独立完善性审查 NO-GO→按指令修订→GO）；报告 `rectify/R9-remediation-report.md`。门禁：Debug x64 构建 0 错误（22 警告 ≤ 基线）；`static_gate.py` PASS（Windows 侧首次留档运行，脚本盘符路径兼容修复 + 基线刷新留档 `rectify/r9-static-gate.json`）；x64 全量回归 **4295/4295**；DEF-114 用例 3 连跑稳定；新实例 PID 31372 @ 规范 Debug 路径。
+
+---
+
+## round-10 双路全量代码缺陷深度审查（2026-09-27，2 路并行）
+
+> 代码基线 `wip/fix-bug` @ `e3ad11ad`。纯静态审查，未运行测试。R10-A「核心服务与数据面」+ R10-B「界面交互与工程面」两专项报告与总报告见 `docs/quality/rounds/round-10/`。全部立案经主流程当前树核验后入账。
+
+### 新增缺陷
+
+| 编号 | 标题 | 优先级 | 位置 | 根因/机制 | 状态 |
+|---|---|---|---|---|---|
+| **DEF-115** | TodoRecurrenceService 克隆附件遗漏 `StorageMode`（默认变 linked）且跨事项浅共享托管物理文件无删除协调：下一期附件误分类致删除不清理成孤儿、健康扫描归因失真（对照 `CloneTodoItem` 规范克隆正确复制该字段，属遗漏）；两侧共享同一 FilePath，源事项删附件 `File.Delete` 致下一期悬空，行为不对称 | P3 | `TodoRecurrenceService.cs:79-88`；`Models/TodoAttachment.cs:18`；`TodoWidgetViewModel.DetailAndAttachments.cs:391-399` | 手写初始化器漏字段 + 浅共享无引用协调；托管目录按事项分目录、事项删除无整目录清理 | ✅ 已修复（R10 批：克隆补 StorageMode + 删除托管文件前同 store 引用扫描；2 个新契约用例钉死，回归 4297/4297） |
+| **DEF-116** | Format 调用点实参数与键占位符失配：①`TodoItemViewModel.cs:582` Collapse 分支传 1 参而 `Todo.RecurrenceHistory.Collapse` 无占位符；②`SearchPopupViewModel.cs:691-697` 以 2 实参服务 `Search.Status.PartialResults`（仅 {0}）——`string.Format` 静默吞多余实参，契约靠容错维系（当前无用户可见破损） | P3 | `ViewModels/TodoItemViewModel.cs:582`、`ViewModels/SearchPopupViewModel.cs:691-697` | 调用点按分支并集最大占位符数书写；「调用点实参 ↔ 键占位符」层此前无任何校验覆盖（本轮首扫） | ✅ 已修复（R10 批：Collapse 去死实参；PartialResults 分支单独 Format 只传 {0}；展示文本零变化） |
+
+### 已知模式新位点（并入既有编号，不新立案）
+
+- **DEF-080 家族**：`CloudBackupService.cs:607`（快照名 current-culture 时间戳 → ar-SA 下 InvariantCulture 解析恒失败、优雅回退 LastModified 排序——唯一有解析消费方的位点，修复 DEF-080 时首选）；`AppUpdateService.cs:395`；`AttachmentStorageService.cs:45`、`DeskBoxDataBackupService.cs:263,319,380,2897`、`DeskBoxDragData.cs:264,535`、`ResilientJsonStore.cs:372`（外观级）。
+- **DEF-101 家族**：`CloudBackupService.cs:207,284,358`、`AppUpdateService.cs:644`（同文件 `FileTransferSessionRegistry.RaiseStateChanged` :318-330 已是隔离范式）。
+- **THR-06 同族**：`AppDiagnosticsService.cs:121-160`（纯诊断字段）。
+- **DEF-078 家族**：`GlanceWidgetSettingsSection.xaml.cs:73-78` OnLoaded async void → RefreshFromStoreAsync 无 catch（存储已弹性自愈，残余 UI 段，理论性较强）。
+- **孤儿键**：重扫 573 候选（R9 报 443，方法差异），簇分布一致，维持观察。
+
+### 存量条目状态变更（round-10 复核）
+
+- **无改判**。round-09 修复批（DEF-110/111/112/113/114 + DEF-078 两处收口）经双代理独立逐行复核**全部正确落地、无回归**（字节级/diff 级/grep 级验证）；R8-AB 关键修复（DEF-086/087/102/104/105/108/109）再证在位；维持类条目（DEF-048/049/050/051/052/053/055/076/078/079/080/082/083/084/090、EVT-02、MEM-01/02、EXC-06、THR-06）均给当前树证据；无已修复项回退。
+- **正面结论**：12 语言六项机械校验全绿（2896 parity / 占位符 arity / 日期字母 / 1500 引用键 0 缺失含动态键族展开验证 / Format 调用点 arity 首扫 / 孤立花括号 0）；XAML 197 资源键 0 失效、799 事件绑定 0 缺失处理器；Rust ABI 零漂移（十导出/ABI 2/掩码 511/panic=abort）；渲染事件 7 对全配对、订阅生命周期纪律全面良好；scripts/installer 自 round-08 零漂移。**连续第五轮 P0/P1 = 0，立案数收敛 5 → 2。**
+
+### round-10 整改批（2026-09-27，随轮完成）
+
+- **方案**：`rectify/R10-remediation-plan.md`（独立完善性审查首审 **GO**，5 条建议全采纳：文件数笔误、SearchPopup 行号校正 ：689-694、AOT 契约字面串顺序约束留痕、新增 VM 删除用例、防御姿态）。
+- **落地**：DEF-115（克隆补 `StorageMode` + `DeleteAttachmentAsync` 删除前同 store 引用扫描 + 2 个新契约用例：`TryCreateNextOccurrence_PreservesAttachmentStorageModes`、`DeleteAttachmentAsync_KeepsSharedManagedFileWhileOtherItemReferencesIt`）；DEF-116（Collapse 去死实参；PartialResults 分支单独 Format，展示文本零变化）。
+- **门禁**：构建 0 错误（22 警告 ≤ 基线 24）；`static_gate.py` **PASS**（五项与基线持平，留档 `rectify/r10-static-gate.json`）；x64 全量回归 **4297/4297**（+2 用例）；新实例 PID 29740 @ 规范 Debug 路径。报告 `rectify/R10-remediation-report.md`。
