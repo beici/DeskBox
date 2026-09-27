@@ -131,6 +131,7 @@
 - **本轮新增**：4 项（1 P1 + 3 P2）
 - **2026-09-13 全面深度代码审查新增**：16 项（5 P2 + 11 P3，无 P0/P1，全部经主线逐条亲验后入账），详见「2026-09-13 全面深度代码审查」分节；其中 DEF-072（本地化键缺失）为唯一已发布版本用户可见项，修复成本极低
 - **round-08（2026-09-25）全量并行代码缺陷深度审查新增**：23 项（3 P2 + 20 P3，无 P0/P1），详见下节；raw 立案 30 条经去重合并（10 专项报告见 `docs/quality/rounds/round-08/`，总报告同目录）
+- **round-09（2026-09-27）双路全量代码缺陷深度审查新增**：5 项（P0×0、P1×0、P2×0、**P3×5**：DEF-110~114），详见下节；4 条存量挂账改判「已修复（现状核实）」（DEF-040/077/081/088）、2 项遗留观察解除；连续第四轮 P0/P1 = 0
 
 ---
 
@@ -236,6 +237,51 @@
 ### 遗留观察（下波裁决）
 
 1. `QuickCapture.TextFileNamePrefix/LinkFileNamePrefix` 孤儿键（helper 删除连带，未删）。
-2. `WidgetShell.xaml.cs:1836` 预热的三个缓存模板经 DEF-089 per-start 改造后不再被消费。
-3. `FolderWatcherService.LastEventAt` 改 UTC ticks 存储（仅诊断消费方）。
+2. ~~`WidgetShell.xaml.cs:1836` 预热的三个缓存模板经 DEF-089 per-start 改造后不再被消费~~ **已解除（round-09 复核）**：`PrewarmCompactTransitionCompositionResources`（WidgetShell.CompositionResources.cs:32-48）与 `StartCompactOpacity/Scale/TranslationAnimation`（WidgetShell.xaml.cs:2069-2121）消费同一 `_compositionResources` 实例。
+3. ~~`FolderWatcherService.LastEventAt` 改 UTC ticks 存储~~ **已落地（round-09 复核）**：`_lastEventAtTicks` 以 UTC ticks 经 Interlocked 存取（FolderWatcherService.cs:97,145-153）。
 4. `scripts/extract_widgetmanager.ps1` 名单含已删方法名（脚本告警继续）。
+
+---
+
+## round-09 双路全量代码缺陷深度审查（2026-09-27，2 路并行）
+
+> 代码基线 `wip/fix-bug` @ `097b04a3`。纯静态审查，未运行测试。R9-A「核心服务与数据面」+ R9-B「界面交互与工程面」两专项报告与总报告见 `docs/quality/rounds/round-09/`。全部立案经主流程当前树核验后入账。
+
+### 新增缺陷
+
+| 编号 | 标题 | 优先级 | 位置 | 根因/机制 | 状态 |
+|---|---|---|---|---|---|
+| **DEF-110** | TodoReminderService 提醒去重集合 `_sessionNotifiedKeys` 跨线程无同步：`Clear` 三处在 UI 线程（Start/Refresh），`Add` 在 `store.MutateAsync`（内部 `ConfigureAwait(false)`）线程池回调；并发 Clear+Add 可损坏 HashSet（漏/重提醒或当轮异常被吞） | P3 | `TodoReminderService.cs:26,91,119,133,439`；`TodoWidgetStore.cs:177-180` | 无锁 HashSet 双线程读写；触发需 30s 扫描 tick 与设置变更毫秒级重叠 | ✅ 已修复（R9 批：`ConcurrentDictionary<string,byte>` TryAdd/Clear，语义不变） |
+| **DEF-111** | `LocalizationService.cs` 文件头连写 4 个 UTF-8 BOM（od 字节级实证，全仓唯一双 BOM 以上文件）；编译无碍但破坏字节级工具链预期 | P3 | `LocalizationService.cs:1` | 带 BOM 追加式重写累积 | ✅ 已修复（R9 批：归一为单 BOM，零内容变更） |
+| **DEF-112** | SearchEngineService `GetRecentNotesAsync`/`GetUpcomingTodosAsync` 零调用死代码（约 90 行，grep 仅命中声明处），内含直连 store 旧模式，有旁路复活风险（DEF-092 同族、DEF-108/109 反面教材） | P3 | `SearchEngineService.cs:400-440,742-791` | 搜索空态推荐改版遗留 | ✅ 已修复（R9 批：两方法整段删除；`TruncateText`/`Search.Todo.Due` 活代码仍在用，保留） |
+| **DEF-113** | 更新器安装成功路径 `_ = RestartApp(options.AppPath)` 丢弃布尔返回值且不回传 outcome：安装成功但重启失败（exe 损坏/杀软拦截/ACL）时应用保持关闭且主程序无任何信号；对照失败路径有 `RestartAfterIncompleteUpdate`、手动渠道 `:45` 检查布尔 | P3 | `DeskBox.Updater/Program.cs:58-61` | 成功路径未对称处理重启失败分支 | ✅ 已修复（R9 批：布尔检查 + `restart-failed` outcome，无需新键） |
+| **DEF-114** | 云备份「运行中跳过」测试以 50ms 时间窗 + `Assert.Single(Files)` 断言「无第二次运行」：错误排队若 50ms 内未完成上传则假通过——漏报方向弱断言，违背 DEF-067 确立的「显式同步点代替时间窗」纪律 | P3 | `tests/DeskBox.Tests/CloudBackupTransportTests.cs:296-307` | 断言的是完成数而非启动信号，且无排队信号可等待 | ✅ 已修复（R9 批：第二次上传启动信号 + 250ms 有界负向断言，3 连跑稳定） |
+
+### 已知模式新位点（并入既有编号，不新立案）
+
+- **DEF-078 家族**：`QuickCaptureSurfaceContent.xaml.cs:1234` `ItemsList_ItemClick`（async void）与 `:2298` 上下文菜单 Edit lambda 两处 `OpenDetailAfterSavingAsync` 调用无外层守卫。**主流程复核勘误（完善性审查 NO-GO 改判）**：磁盘写失败路径已被 `SaveDetailAsync` 内部 catch（`:1566-1575`，`App.Log` + `quick-detail-save-error` 反馈，commit `618ccba5` 起）覆盖、非静默；真实残余逃逸面为详情打开的同步 UI 段异常与 `_detailSaveGate.WaitAsync()`（try 之前）异常——**R9 批已收口**（两处调用点 try/catch + `quick-detail-open-error` 反馈，与 `Root_Drop` 同型；DEF-078 记「部分修复（新位点收口）」），其余位点维持。
+- **DEF-070 家族**：`WidgetManager.FeatureWidgets.cs:707,709,759-760,890`（`Widgets.Remove/RemoveAll/DeletedWidgetIds.Add` 仍锁外）；`DesktopOrganizationTransaction.cs:180-184,275-277` 与 `.Restore.cs:361,368-373`（持 OperationGate 不持 SettingsService._lock）——维持挂账（低频维护路径，与台账既有残留同水位）。
+- **EXC-06 家族**：`LocalizationService.cs:313-467` 12 个语言表 getter 双检锁无 volatile，与 CitySearchService 同型——并入 EXC-06 维持。
+- **孤儿键**：443 候选键（2896 键中约 15.3%）无直接/前缀引用，含整簇死键——维持观察（清理需先排除反射/动态拼接面）。
+
+### 存量条目状态变更（round-09 复核）
+
+| 编号 | 变更 | 依据 |
+|---|---|---|
+| **DEF-040** | 📌 挂账 → **✅ 已修复（现状核实）** | `FileSurfaceContent.ItemVisuals.cs:1553,1578,1604,1614-1619` 订阅前先退订 + 字典跟踪 + XamlRoot 守卫；Dispose 链至 `FileSurfaceContent.xaml.cs:5287` |
+| **DEF-077** | 📌 挂账 → **✅ 已修复（现状核实）** | `SearchHistoryService.cs:258,302` Load/Save 均走 ResilientJsonStore（双代理独立复核一致） |
+| **DEF-081** | 📌 挂账 → **✅ 已修复（现状核实）** | `OrganizerService.cs:465-467` undo 以 `UndoReceiptStillMatches` + `DestinationIdentity` 校验对象身份 |
+| **DEF-088** | 📌 挂账 → **✅ 已修复（现状核实）** | `NativeFileDragOut.cs:259-271` watchdog 改显式 Timer，全拖拽期存活、每退出路径释放 |
+| 遗留观察 #2 / #3 | **解除 / 已落地** | 见上节删除线标注 |
+| DEF-074/075/087/102/103/104/105/106/108/109 | 再证闭环（无回退） | A 报告 §3 逐条当前树证据 |
+| MEM-01（位点更新至 App.Tray.cs:1026-1030）/ MEM-02 / DEF-048/049/050/051/052/053/056/076/078/079/080/082 / THR-06 / EVT-02 / EXC-06 | 维持 | 两专项报告 §3 逐条证据；DEF-052 部分改善（在途不淘汰已修） |
+
+### 证伪留档（避免后续轮次重复怀疑）
+
+- `FileService.ShellTransfer.cs` IFileOperation 裸 vtable 槽位（MoveItem=14/CopyItem=16/PerformOperations=21/GetAnyOperationsAborted=22、IShellItem::GetDisplayName=5）经 Microsoft Learn IFileOperation 方法全集（20 方法、无 SetApplicationName）逐槽核对**全部正确**，不立案（round-09 A 报告 §1.3）。
+
+### round-09 统计
+
+- **新增**：5 项（P0×0、P1×0、P2×0、P3×5）；**连续第四轮 P0/P1 = 0，首次 P2 = 0**。
+- **正面结论**：12 语言 2896 键 parity / 占位符 arity / 日期格式字母 / 引用键完整性四项机械校验全绿；XAML 资源引用 0 失效；Rust ABI 十导出 / 掩码 511 / panic=abort 零漂移；R8-AB + 历史 P2 批整改（147 文件 diff）逐文件审读无回归；文件安全与持久化面处于历史最高加固水位。
+- **整改（R9 批，随轮完成）**：DEF-110~114 全部 ✅ 已修复 + DEF-078 两处新位点收口。方案 `rectify/R9-remediation-plan.md`（独立完善性审查 NO-GO→按指令修订→GO）；报告 `rectify/R9-remediation-report.md`。门禁：Debug x64 构建 0 错误（22 警告 ≤ 基线）；`static_gate.py` PASS（Windows 侧首次留档运行，脚本盘符路径兼容修复 + 基线刷新留档 `rectify/r9-static-gate.json`）；x64 全量回归 **4295/4295**；DEF-114 用例 3 连跑稳定；新实例 PID 31372 @ 规范 Debug 路径。
