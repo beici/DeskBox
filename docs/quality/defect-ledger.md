@@ -133,6 +133,7 @@
 - **round-08（2026-09-25）全量并行代码缺陷深度审查新增**：23 项（3 P2 + 20 P3，无 P0/P1），详见下节；raw 立案 30 条经去重合并（10 专项报告见 `docs/quality/rounds/round-08/`，总报告同目录）
 - **round-09（2026-09-27）双路全量代码缺陷深度审查新增**：5 项（P0×0、P1×0、P2×0、**P3×5**：DEF-110~114），详见下节；4 条存量挂账改判「已修复（现状核实）」（DEF-040/077/081/088）、2 项遗留观察解除；连续第四轮 P0/P1 = 0
 - **round-10（2026-09-27）双路全量代码缺陷深度审查新增**：2 项（P0×0、P1×0、P2×0、**P3×2**：DEF-115/116），详见下节；round-09 修复批经双代理独立复核零回归；无存量改判；连续第五轮 P0/P1 = 0，立案数收敛 5 → 2
+- **round-11（2026-09-27）双路全量代码缺陷深度审查新增**：3 项（P0×0、P1×0、P2×0、**P3×3**：DEF-117~119），详见下节；round-10 修复批经双代理独立复核零回归；无存量改判；连续第六轮 P0/P1 = 0（R8→R11 = 23→5→2→3，P3 平台期）
 
 ---
 
@@ -318,3 +319,39 @@
 - **方案**：`rectify/R10-remediation-plan.md`（独立完善性审查首审 **GO**，5 条建议全采纳：文件数笔误、SearchPopup 行号校正 ：689-694、AOT 契约字面串顺序约束留痕、新增 VM 删除用例、防御姿态）。
 - **落地**：DEF-115（克隆补 `StorageMode` + `DeleteAttachmentAsync` 删除前同 store 引用扫描 + 2 个新契约用例：`TryCreateNextOccurrence_PreservesAttachmentStorageModes`、`DeleteAttachmentAsync_KeepsSharedManagedFileWhileOtherItemReferencesIt`）；DEF-116（Collapse 去死实参；PartialResults 分支单独 Format，展示文本零变化）。
 - **门禁**：构建 0 错误（22 警告 ≤ 基线 24）；`static_gate.py` **PASS**（五项与基线持平，留档 `rectify/r10-static-gate.json`）；x64 全量回归 **4297/4297**（+2 用例）；新实例 PID 29740 @ 规范 Debug 路径。报告 `rectify/R10-remediation-report.md`。
+
+---
+
+## round-11 双路全量代码缺陷深度审查（2026-09-27，2 路并行）
+
+> 代码基线 `wip/fix-bug` @ `8a8a5bde`。纯静态审查，未运行测试。R11-A「核心服务与数据面」+ R11-B「界面交互与工程面」两专项报告与总报告见 `docs/quality/rounds/round-11/`。全部立案经主流程当前树核验后入账。
+
+### 新增缺陷
+
+| 编号 | 标题 | 优先级 | 位置 | 根因/机制 | 状态 |
+|---|---|---|---|---|---|
+| **DEF-117** | FolderWatcherService 重连/双失败路径在 UI 线程同步探测失效文件夹（含 UNC 阻塞）：StartAsync 双失败分支裸用同步 `ProbeFolderAccess`（Directory.Exists + 属性枚举，离线 SMB 阻塞数秒），主路径已用 Task.Run 版 `ProbeFolderAccessAsync`；`ReconnectTimer_Tick`（UI 线程）与 StartAsync 入口同步 `TryResolveExistingPathForTraversal`——离线路径每轮重连 tick 重复阻塞 UI（THR-07/DEF-035 同族，触发面限网络离线） | P3 | `FolderWatcherService.cs:265-271,288-310,861-866,211-216` | 同文件主路径/分支探测方式不一致；`ProbeFolderAccessAsync` 即现成 Task.Run 等价物 | ✅ 已修复（R11 批：双失败分支改异步探测 + 代际守卫镜像；入口/重连解析包 Task.Run，回退语义钉死 path；回归 4297/4297） |
+| **DEF-118** | DragDropPermissionService 诊断路径 Process 对象未 Dispose：`GetProcessesByName("explorer").FirstOrDefault()` 数组其余元素与选中实例均无 using——每次拖放诊断泄漏 ≥1 个进程句柄至终结器（低频非增长）；同仓 QuickLookPreviewService/MemoryReclaimer 已确立 using 规范 | P3 | `DragDropPermissionService.cs:804-828` | Process 句柄依赖终结器兜底；FirstOrDefault 遗弃数组其余元素 | ✅ 已修复（R11 批：try/finally 全量 Dispose 数组元素——比报告建议的 using var 首实例更彻底） |
+| **DEF-119** | 安装器 .NET 运行时检测只覆盖机器级布局：仅探 `{autopf}\dotnet` 与 `{pf}\dotnet`，漏 `%LOCALAPPDATA%\Microsoft\dotnet`（未提权 .NET 安装器/dotnet-install/VS 组件默认落位）→ 用户级 .NET 10 误判缺失：冗余下载约 55MB + 计划外 UAC + 机器级重复安装（应用最终可用）；对照同文件 App Runtime 检测有 -AllUsers 兜底 | P3 | `installer/DeskBox.Dependencies.iss:105-107`、`installer/DeskBox.Dependencies.arm64.iss:105-107` | 检测点集合固定两布局；x64/arm64 同位点 | ✅ 已修复（R11 批：增补 `{localappdata}\Microsoft` 探测点 ×2 变体 + 提权上下文注释；PATH 兜底留痕） |
+
+### 已知模式新位点（并入既有编号，不新立案）
+
+- **DEF-078 家族**：`MusicWidgetContent.xaml.cs:432` 进度条拖放提交链（async void → CommitSeekAsync → `MusicSessionService.cs:266` TrySeekAsync 裸调陈旧 SMTC 会话）——seek 入口补入家族清单。
+- **孤儿键**：本轮 172 候选（方法差异），簇分布与 R9/R10 一致，维持观察。
+
+### 存量条目状态变更（round-11 复核）
+
+- **无改判**。round-10 修复批（DEF-115/116）双代理独立复核正确落地、无回归（并为 DEF-115 引用扫描补充作用域充分性论证：循环历史候选同在 Items、托管目录按事项隔离使跨格子共享不可能）；DEF-110~113 抽样在位；DEF-054 自 R8 后首次实读维持。
+- **证伪留档**：`DirectStartupTaskXmlReader` 裸 vtable 五槽位（GetFolder=7/Connect=10/GetTask=13/GetXml=20/Release=2）经 Windows SDK taskschd.h 逐槽核对全部正确；**QuickCaptureService（2,207 行）首次全文审读零立案**（tombstone/undo-window/附件 GC 逐路径自洽）。
+- **正面结论**：12 语言六项机械校验全绿（含 Format 调用点三形态 arity 复跑）；XAML 709 事件绑定与 195 资源键零失效；Rust ABI 零漂移；publish-aot-retail.ps1 全文通过。**连续第六轮 P0/P1 = 0。**
+
+### round-11 整改批（2026-09-27，随轮完成）
+
+- **方案**：`rectify/R11-remediation-plan.md`（独立完善性审查 GO）。
+- **落地**：DEF-117（双失败分支 `await ProbeFolderAccessAsync`；ReconnectTimer_Tick 与 StartAsync 的 `TryResolveExistingPathForTraversal` 包 Task.Run，生成代际守卫保持）；DEF-118（GetExplorerTokenSnapshot try/finally 全量 Dispose Process 数组）；DEF-119（两个 Dependencies .iss 增补 `{localappdata}\Microsoft` 探测点）。
+- **门禁**：构建 0 错误；`static_gate.py` PASS；x64 全量回归全绿；新实例核验。报告 `rectify/R11-remediation-report.md`。
+
+### round-11 整改批收口（同日）
+
+- **审查**：`rectify/R11-remediation-plan.md` 独立完善性审查首审 **GO**（5 条建议全采纳——A1 tick 回退语义钉死、A2 双失败分支代际守卫镜像、A3 提权上下文注释、S2 文件计数更正、S1 验证措辞对齐）。
+- **门禁**：构建 0 错误（22 警告 ≤ 基线 24）；x64 全量回归 **4297/4297**；`static_gate.py` **PASS**（五项与基线持平，留档 `rectify/r11-static-gate.json`）；新实例 PID 19732 @ 规范 Debug 路径。报告 `rectify/R11-remediation-report.md`。
