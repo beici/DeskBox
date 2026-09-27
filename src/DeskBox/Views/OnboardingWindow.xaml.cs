@@ -27,7 +27,6 @@ public sealed partial class OnboardingWindow : Window
     private const int MinWindowHeight = 540;
     private const int WindowWorkAreaMargin = 96;
     private const int CompactLayoutThreshold = 880;
-    private const uint WmReservedHotkeyCapture = 0x8443;
     private static readonly UIntPtr OnboardingWindowSubclassId = new(0xD05C0B01);
 
     private readonly SettingsService _settingsService;
@@ -38,26 +37,19 @@ public sealed partial class OnboardingWindow : Window
     private Storyboard? _introStoryboard;
     private Storyboard? _brandLogoShineStoryboard;
     private Storyboard? _stepTransitionStoryboard;
-    private Storyboard? _keycapPulseStoryboard;
     private Storyboard? _stepAmbientStoryboard;
     private Storyboard? _statusFeedbackStoryboard;
-    private System.Threading.CancellationTokenSource? _hotkeyDemoCts;
     private int _introGeneration;
-    private int _startupToggleRefreshGeneration;
     private int _stepIndex;
     private bool _hasLoaded;
     private bool _isClosed;
     private bool _isSubclassInstalled;
     private bool _isAnimating;
-    private bool _isRecordingHotkey;
     private bool _hasInitializedFeatureToggles;
     private bool _isSynchronizingFeatureToggles;
     private Task _featureWidgetSelectionUpdateTask = Task.CompletedTask;
     private readonly Win32Helper.SubclassProc _windowSubclassProc;
-    private readonly ReservedHotkeyHookService _hotkeyRecordingHook = new();
 
-    // Accent color preset list
-    private static readonly string[] PresetAccentColors = { "#0078D4", "#E81123", "#107C10", "#5D2E9B", "#FF8C00", "#0099BC" };
 
     public OnboardingWindow(
         SettingsService settingsService,
@@ -95,8 +87,6 @@ public sealed partial class OnboardingWindow : Window
         }
 
         SizeChanged += (_, _) => ApplyResponsiveLayout();
-        Activated += OnboardingWindow_Activated;
-        RootGrid.KeyDown += (_, e) => OnHotkeyKeyDown(e.Key);
         RootGrid.Loaded += (_, _) =>
         {
             _hasLoaded = true;
@@ -133,22 +123,14 @@ public sealed partial class OnboardingWindow : Window
         Closed += (_, _) =>
         {
             _isClosed = true;
-            Activated -= OnboardingWindow_Activated;
             _introGeneration++;
             _storageEntryStateRefreshGeneration++;
             _introStoryboard?.Stop();
             _brandLogoShineStoryboard?.Stop();
             _stepTransitionStoryboard?.Stop();
-            _keycapPulseStoryboard?.Stop();
             _stepAmbientStoryboard?.Stop();
             _statusFeedbackStoryboard?.Stop();
-            _hotkeyDemoCts?.Cancel();
-            _hotkeyDemoCts?.Dispose();
-            _hotkeyDemoCts = null;
-            _isRecordingHotkey = false;
-            _hotkeyRecordingHook.Dispose();
             ReleaseFilePracticeWidget();
-            DetachDesktopOrganizationWindow();
             IntroMarkHost.Children.Clear();
             RemoveMinimumSizeHook();
             _localizationService.LanguageChanged -= OnLanguageChanged;
@@ -208,31 +190,6 @@ public sealed partial class OnboardingWindow : Window
         IntroOverlay.Margin = compact ? new Thickness(-28) : new Thickness(-40);
         IntroOverlay.Padding = compact ? new Thickness(28) : new Thickness(40);
         FooterNav.Margin = compact ? new Thickness(0, 18, 0, 0) : new Thickness(0, 24, 0, 0);
-
-        // Step 3: stack columns vertically in compact mode
-        if (Step3Panel.ColumnDefinitions.Count > 0)
-        {
-            if (compact)
-            {
-                Step3Panel.ColumnSpacing = 0;
-                Step3Panel.RowSpacing = 20;
-                Step3Panel.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
-                Step3Panel.ColumnDefinitions[1].Width = new GridLength(1, GridUnitType.Star);
-                Grid.SetRow(Step3PreviewHost, 1);
-                Grid.SetColumn(Step3PreviewHost, 0);
-                Step3PreviewHost.HorizontalAlignment = HorizontalAlignment.Center;
-            }
-            else
-            {
-                Step3Panel.ColumnSpacing = 32;
-                Step3Panel.RowSpacing = 0;
-                Step3Panel.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
-                Step3Panel.ColumnDefinitions[1].Width = GridLength.Auto;
-                Grid.SetRow(Step3PreviewHost, 0);
-                Grid.SetColumn(Step3PreviewHost, 1);
-                Step3PreviewHost.HorizontalAlignment = HorizontalAlignment.Center;
-            }
-        }
 
         ApplyTaskFlowResponsiveLayout(compact, width);
 
@@ -379,11 +336,6 @@ public sealed partial class OnboardingWindow : Window
             _isAnimating)
         {
             return;
-        }
-
-        if (_isRecordingHotkey)
-        {
-            EndHotkeyRecording();
         }
 
         if (_stepIndex == 0 && newStep != 0)
@@ -539,133 +491,14 @@ public sealed partial class OnboardingWindow : Window
 
     private void StopStepAnimations()
     {
-        _keycapPulseStoryboard?.Stop();
-        _keycapPulseStoryboard = null;
         _stepAmbientStoryboard?.Stop();
         _stepAmbientStoryboard = null;
         _statusFeedbackStoryboard?.Stop();
         _statusFeedbackStoryboard = null;
-        _hotkeyDemoCts?.Cancel();
-        _hotkeyDemoCts?.Dispose();
-        _hotkeyDemoCts = null;
-        _searchDemoCts?.Cancel();
-        _searchDemoCts?.Dispose();
-        _searchDemoCts = null;
     }
 
-    // ════════════════════════════════════════════════════════════
-    //  Step 1: Value Card Stagger Animation
-    // ════════════════════════════════════════════════════════════
 
-    private void StartStep1CardAnimation()
-    {
-        Border[] cards = [Step1Card1, Step1Card2, Step1Card3];
-        for (int i = 0; i < cards.Length; i++)
-        {
-            var card = cards[i];
-            var transform = GetElementTransform(card);
-            transform.TranslateY = 14;
-            card.Opacity = 0;
 
-            var storyboard = new Storyboard();
-            var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
-            int delay = 100 + i * 120;
-
-            var opacityAnim = new DoubleAnimation
-            {
-                From = 0,
-                To = 1,
-                Duration = new Duration(TimeSpan.FromMilliseconds(360)),
-                BeginTime = TimeSpan.FromMilliseconds(delay),
-                EasingFunction = easing
-            };
-            Storyboard.SetTarget(opacityAnim, card);
-            Storyboard.SetTargetProperty(opacityAnim, "Opacity");
-            storyboard.Children.Add(opacityAnim);
-
-            var translateAnim = new DoubleAnimation
-            {
-                From = 14,
-                To = 0,
-                Duration = new Duration(TimeSpan.FromMilliseconds(420)),
-                BeginTime = TimeSpan.FromMilliseconds(delay),
-                EasingFunction = easing
-            };
-            Storyboard.SetTarget(translateAnim, transform);
-            Storyboard.SetTargetProperty(translateAnim, "TranslateY");
-            storyboard.Children.Add(translateAnim);
-
-            storyboard.Begin();
-        }
-    }
-
-    // ════════════════════════════════════════════════════════════
-    //  Step 5: Search Demo Typewriter Animation
-    // ════════════════════════════════════════════════════════════
-
-    private System.Threading.CancellationTokenSource? _searchDemoCts;
-
-    private void StartSearchDemoAnimation()
-    {
-        _searchDemoCts?.Cancel();
-        _searchDemoCts?.Dispose();
-        var cts = new System.Threading.CancellationTokenSource();
-        _searchDemoCts = cts;
-        _ = RunSearchDemoAsync(cts.Token);
-    }
-
-    private async Task RunSearchDemoAsync(System.Threading.CancellationToken ct)
-    {
-        try
-        {
-            string demoText = "\u5468\u62a5.docx";
-            Step5SearchDemoText.Text = "";
-            Step5SearchResults.Opacity = 0;
-
-            await Task.Delay(600, ct);
-
-            // Typewriter effect
-            for (int i = 0; i < demoText.Length; i++)
-            {
-                ct.ThrowIfCancellationRequested();
-                Step5SearchDemoText.Text = demoText[..(i + 1)];
-                await Task.Delay(110, ct);
-            }
-
-            await Task.Delay(400, ct);
-
-            // Fade in results
-            var transform = GetElementTransform(Step5SearchResults);
-            transform.TranslateY = 8;
-            var storyboard = new Storyboard();
-            var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
-
-            var opacityAnim = new DoubleAnimation
-            {
-                From = 0,
-                To = 1,
-                Duration = new Duration(TimeSpan.FromMilliseconds(380)),
-                EasingFunction = easing
-            };
-            Storyboard.SetTarget(opacityAnim, Step5SearchResults);
-            Storyboard.SetTargetProperty(opacityAnim, "Opacity");
-            storyboard.Children.Add(opacityAnim);
-
-            var translateAnim = new DoubleAnimation
-            {
-                From = 8,
-                To = 0,
-                Duration = new Duration(TimeSpan.FromMilliseconds(420)),
-                EasingFunction = easing
-            };
-            Storyboard.SetTarget(translateAnim, transform);
-            Storyboard.SetTargetProperty(translateAnim, "TranslateY");
-            storyboard.Children.Add(translateAnim);
-
-            storyboard.Begin();
-        }
-        catch (OperationCanceledException) { }
-    }
 
     /// <summary>
     /// Starts ambient (looping) animations specific to a step.
@@ -978,18 +811,6 @@ public sealed partial class OnboardingWindow : Window
     {
         const uint WmGetMinMaxInfo = 0x0024;
         const uint WmNcDestroy = 0x0082;
-
-        if (message == WmReservedHotkeyCapture)
-        {
-            if (_isRecordingHotkey)
-            {
-                _ = ApplyRecordedHotkeyAsync(new GlobalHotkeyGesture(
-                    HotkeyModifierKeys.Windows,
-                    (int)VirtualKey.Space));
-            }
-
-            return IntPtr.Zero;
-        }
 
         if (message == WmGetMinMaxInfo)
         {

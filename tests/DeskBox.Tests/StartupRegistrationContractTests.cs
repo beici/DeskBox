@@ -29,9 +29,9 @@ public sealed class StartupRegistrationContractTests
         string settingsStartup = File.ReadAllText(Path.Combine(
             root,
             "src/DeskBox/Views/SettingsWindow.Startup.cs"));
-        string onboarding = File.ReadAllText(Path.Combine(
-            root,
-            "src/DeskBox/Views/OnboardingWindow.Hotkey.cs"));
+        // R14: OnboardingWindow.Hotkey.cs was retired with the dead legacy
+        // five-step flow (DEF-128); the Windows-startup-apps recovery contract
+        // is carried by the Settings surface below.
 
         Assert.Contains(
             "AutoStartSystemSettingsVisibility",
@@ -44,14 +44,6 @@ public sealed class StartupRegistrationContractTests
         Assert.Contains(
             "RefreshAutoStartState()",
             settingsStartup,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "result.RequiresSystemSettings",
-            onboarding,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "RefreshStartupToggleFromSystem()",
-            onboarding,
             StringComparison.Ordinal);
     }
 

@@ -121,14 +121,9 @@ public sealed class GlobalHotkeySafetyContractTests
             settingsHandler.IndexOf("IsInternalMaskKey", StringComparison.Ordinal) <
             settingsHandler.IndexOf("ApplyRecordedHotkeyAsync", StringComparison.Ordinal));
 
-        string onboardingSource = Read("src/DeskBox/Views/OnboardingWindow.Hotkey.cs");
-        string onboardingHandler = Slice(
-            onboardingSource,
-            "private void OnHotkeyKeyDown",
-            "private void Step4HotkeyToggle_Toggled");
-        Assert.True(
-            onboardingHandler.IndexOf("IsInternalMaskKey", StringComparison.Ordinal) <
-            onboardingHandler.IndexOf("ApplyRecordedHotkeyAsync", StringComparison.Ordinal));
+        // R14: the onboarding recorder chain was retired with the dead
+        // legacy five-step flow (DEF-128); the Settings-side ordering guard
+        // above remains the live contract.
     }
 
     [Fact]

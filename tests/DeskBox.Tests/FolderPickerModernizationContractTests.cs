@@ -43,7 +43,6 @@ public sealed class FolderPickerModernizationContractTests
         {
             ["src/DeskBox/App.Tray.cs"] = 1,
             ["src/DeskBox/Services/JumpListService.cs"] = 1,
-            ["src/DeskBox/Views/OnboardingWindow.Storage.cs"] = 1,
             ["src/DeskBox/Views/SettingsSections/GlanceWidgetSettingsSection.xaml.cs"] = 1,
             ["src/DeskBox/Views/SettingsWindow.Maintenance.cs"] = 3,
             ["src/DeskBox/Views/SettingsWindow.StorageAndUpdates.cs"] = 1
@@ -67,7 +66,7 @@ public sealed class FolderPickerModernizationContractTests
             totalCalls += callCount;
         }
 
-        Assert.Equal(8, totalCalls);
+        Assert.Equal(7, totalCalls);
     }
 
     [Fact]

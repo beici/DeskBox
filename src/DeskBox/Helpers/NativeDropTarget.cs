@@ -510,12 +510,16 @@ public sealed class NativeDropTarget : IDisposable
         App.LogVerbose(
             $"[DropTarget] NativeDrop paths={string.Join(" | ", paths)}");
 
-        // A launch consumer (drop onto an application shortcut) delegates to the
-        // Shell drop target synchronously while the source data object is alive.
-        // Handled=true means the drop never becomes an import. Consumed=true
-        // means a shortcut owned the gesture and did not launch it: refuse at
-        // the OLE level so the drag source keeps its files, and never let the
-        // import pipeline run - importing relocates the user's files.
+        // A launch consumer (drop onto an application shortcut) launches the
+        // shortcut target itself via ShellExecuteEx with the dropped files as
+        // arguments (ShortcutFileLauncher). Handled=true means the drop never
+        // becomes an import. Consumed=true means a shortcut owned the gesture
+        // and did not launch it: refuse at the OLE level so the drag source
+        // keeps its files, and never let the import pipeline run - importing
+        // relocates the user's files. (The Shell IDropTarget delegation
+        // alternative was measured on real hardware and rejected: its Drop
+        // answers DROPEFFECT_NONE and Windows shows the "Open with" picker -
+        // see docs/architecture/drop_on_shortcut_open.md §10.2.)
         if (paths.Count > 0 &&
             LaunchDropHandler is { } launchHandler &&
             !shellApplicationDrop)

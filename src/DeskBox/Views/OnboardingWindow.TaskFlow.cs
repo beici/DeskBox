@@ -26,10 +26,6 @@ public sealed partial class OnboardingWindow
     // after this long so the guide stays interactive.
     private static readonly TimeSpan StorageEntryStateQueryTimeout = TimeSpan.FromSeconds(8);
 
-    private void SetupTaskStep1()
-    {
-    }
-
     private void SetupTaskStep2()
     {
     }

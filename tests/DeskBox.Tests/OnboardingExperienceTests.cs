@@ -71,7 +71,7 @@ public sealed class OnboardingExperienceTests
         string activeFlow = xaml[xaml.IndexOf(
             "x:Name=\"TaskStep2Panel\"",
             StringComparison.Ordinal)..xaml.IndexOf(
-            "x:Name=\"Step1Panel\"",
+            "x:Name=\"FooterNav\"",
             StringComparison.Ordinal)];
         Assert.DoesNotContain("Onboarding.Task.Step4.FeatureEntry", activeFlow, StringComparison.Ordinal);
         Assert.Contains("Click=\"TaskStep4OpenTrayMenu_Click\"", activeFlow, StringComparison.Ordinal);
@@ -105,7 +105,7 @@ public sealed class OnboardingExperienceTests
         string activeFlow = xaml[xaml.IndexOf(
             "x:Name=\"TaskStep2Panel\"",
             StringComparison.Ordinal)..xaml.IndexOf(
-            "x:Name=\"Step1Panel\"",
+            "x:Name=\"FooterNav\"",
             StringComparison.Ordinal)];
         Assert.Contains("Onboarding.Step4.PinTitle", activeFlow, StringComparison.Ordinal);
         Assert.Contains("Settings.ManagedPath.DesktopShortcut.Title", activeFlow, StringComparison.Ordinal);
@@ -278,7 +278,7 @@ public sealed class OnboardingExperienceTests
         string activeFlow = xaml[xaml.IndexOf(
             "x:Name=\"TaskStep2Panel\"",
             StringComparison.Ordinal)..xaml.IndexOf(
-            "x:Name=\"Step1Panel\"",
+            "x:Name=\"FooterNav\"",
             StringComparison.Ordinal)];
 
         Assert.Contains("Onboarding.Task.Step3.DragTitle", activeFlow, StringComparison.Ordinal);
