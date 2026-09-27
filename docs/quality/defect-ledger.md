@@ -134,6 +134,7 @@
 - **round-09（2026-09-27）双路全量代码缺陷深度审查新增**：5 项（P0×0、P1×0、P2×0、**P3×5**：DEF-110~114），详见下节；4 条存量挂账改判「已修复（现状核实）」（DEF-040/077/081/088）、2 项遗留观察解除；连续第四轮 P0/P1 = 0
 - **round-10（2026-09-27）双路全量代码缺陷深度审查新增**：2 项（P0×0、P1×0、P2×0、**P3×2**：DEF-115/116），详见下节；round-09 修复批经双代理独立复核零回归；无存量改判；连续第五轮 P0/P1 = 0，立案数收敛 5 → 2
 - **round-11（2026-09-27）双路全量代码缺陷深度审查新增**：3 项（P0×0、P1×0、P2×0、**P3×3**：DEF-117~119），详见下节；round-10 修复批经双代理独立复核零回归；无存量改判；连续第六轮 P0/P1 = 0（R8→R11 = 23→5→2→3，P3 平台期）
+- **round-12（2026-09-27）双路全量代码缺陷深度审查新增**：5 项（P0×0、P1×0、P2×0、**P3×5**：DEF-120~124，其中 DEF-123 为 round-11 DEF-117 修复引入的回归——「下轮审上轮」机制首次捕获跨轮回归），详见下节；连续第七轮 P0/P1 = 0
 
 ---
 
@@ -355,3 +356,38 @@
 
 - **审查**：`rectify/R11-remediation-plan.md` 独立完善性审查首审 **GO**（5 条建议全采纳——A1 tick 回退语义钉死、A2 双失败分支代际守卫镜像、A3 提权上下文注释、S2 文件计数更正、S1 验证措辞对齐）。
 - **门禁**：构建 0 错误（22 警告 ≤ 基线 24）；x64 全量回归 **4297/4297**；`static_gate.py` **PASS**（五项与基线持平，留档 `rectify/r11-static-gate.json`）；新实例 PID 19732 @ 规范 Debug 路径。报告 `rectify/R11-remediation-report.md`。
+
+---
+
+## round-12 双路全量代码缺陷深度审查（2026-09-27，2 路并行）
+
+> 代码基线 `wip/fix-bug` @ `7d201074`。纯静态审查，未运行测试。R12-A + R12-B 两专项报告与总报告见 `docs/quality/rounds/round-12/`。全部立案经主流程当前树核验后入账。
+
+### 新增缺陷
+
+| 编号 | 标题 | 优先级 | 位置 | 根因/机制 | 状态 |
+|---|---|---|---|---|---|
+| **DEF-120** | LocalizationService 默认「跟随系统」（出厂默认）下每次 T() 取词都同步读一次注册表（无记忆化），被 1,200+ 调用点放大为热路径重复系统调用；注册表值仅安装器写入、进程内恒定 | P3 | `LocalizationService.cs:159-174,37-49,265-297`；`CoreSettingsSlice.cs:21` | 安装语言特性接入时未记忆化解析结果 | ✅ 已修复（R12 批：Lazy<string> 静态记忆化，仅 System 分支触发求值，语义零变化） |
+| **DEF-121** | 桌面整理三处硬编码 CJK 顿号「、」作列表分隔符，违反同仓 `IsChinese ? "、" : ", "` 既有范式（SettingsViewModel 两处对照），11 个非中文语言 UI 全部可见 | P3 | `DesktopOrganizationSettingsSection.xaml.cs:844,865`、`DesktopOrganizationTaskView.xaml.cs:295` | Join 分隔符未走语言分支 | ✅ 已修复（R12 批：两类各加 ListSeparator 静态属性对齐 IsChinese 范式） |
+| **DEF-122** | 快捷方式文件名后缀硬编码英文 `" - Shortcut.lnk"`（Alt 拖放创建），中文 UI 下也带英文命名（Explorer 原生「 - 快捷方式」）；同文件已用 `Widget.CreateShortcut` 键，后缀漏配 | P3 | `FileSurfaceContent.ShortcutDrop.cs:107-109` | 后缀未本地化 | ✅ 已修复（R12 批：新增键 `Widget.CreateShortcutSuffix` ×12（键集 2897×12 对齐），后缀参数传入静态助手，空名兜底同键 TrimStart 覆盖） |
+| **DEF-123** | **round-11 DEF-117 修复引入的重入竞态**：StartAsync 入口解析改 await 后，「Stop→写 _requestedPath→读代际」移到首个 await 之后——离线 UNC 慢解析的旧调用让出 UI 线程期间新目录可完整插队启动；旧调用恢复后 Stop 掉新目录 watcher、覆写 _requestedPath、此刻才读代际=最新值、守卫恒通过 → watcher 持久错挂旧目录且新目录静默失刷新（健康显示 Watching；重新导航自愈）。修复前该段同步执行、语义天然「后到者赢」 | P3 | `FolderWatcherService.cs:213-231`（交错面 :267-279、:851-914） | 代际认领在 await 之后，守卫无法识别「await 期间已被取代」；Stop() 锁内 `_watchGeneration++`（:583）提供守卫基础 | 📌 挂账（R12 批修复：入口快照 entryGeneration + await 后、Stop 前校验；ReconnectTimer_Tick 解析 await 同款） |
+| **DEF-124** | CompleteTrackedImportAsync 跨线程封送 lambda 无守卫：非 UI 线程完成路径经 TryEnqueue(async) 封送，被 await 调用抛异常时（同文件 :322-334 已证实 Cancel 可抛 AggregateException 且有防御先例）`TrySetResult` 永不执行 → 后台调用方永久挂起 + 导入忙态卡死 | P3 | `FileSurfaceContent.ImportProgress.cs:238-243` | 结果置位在 await 之后且无 finally | ✅ 已修复（R12 批：try/finally 包裹，TrySetResult 移入 finally） |
+
+### 已知模式新位点（并入既有编号，不新立案）
+
+- **DEF-097 家族**：`FileSurfaceContent.SelectionAndMenus.cs:1313-1341` CopyPathsToClipboard（SetContent+Flush 无守卫，3 入口；同仓其余剪贴板写点均已守卫）。
+- **DEF-078 家族**：`FileSurfaceContent.xaml.cs:4719` QuickLook 键盘导航 TryEnqueue 无内层守卫（本轮 25 处全量盘点闭合）。
+- **ANI-06 家族**：3 文件 5 位点 SetIsTranslationEnabled(true) 从不复位（Navigation.cs:330/368/392、StackAnimations.cs:270、SearchPopupWindow.xaml.cs:2375）。
+- **DEF-080 家族**：显示级 current-culture 时间戳 7 位点（OrganizationHistoryEntry.cs:90、QuickCaptureItemViewModel.cs:395、SettingsViewModel.AboutAndUpdates.cs:518/521、RuntimeDiagnostics.cs:68、QuickCaptureDiagnostics.cs:105）。
+- **O-9 家族**：SearchResultRanker.cs:63、WidgetStackGroupingService.cs:280 CurrentCulture 排序（纯展示序）。
+
+### 存量条目状态变更（round-12 复核）
+
+- **无改判**。round-11 修复批复核：DEF-118/119 正确落地；DEF-117 目标达成但引入 DEF-123 回归（立案随轮修复）。DesktopOrganization 自动整理引擎 10 文件首次全文审读零立案；FileService.PathResolution 驱动器根链接疑点经 dotnet/runtime 源码契约证伪留档。
+- **正面结论**：12 语言机械校验全绿（Format arity 三形态复跑 0 失配）；XAML 709 事件绑定与 195 资源键零失效；Rust ABI 零漂移；25 处 TryEnqueue(async) 全量盘点闭合。**连续第七轮 P0/P1 = 0。**
+
+### round-12 整改批（2026-09-27，随轮完成）
+
+- **方案**：`rectify/R12-remediation-plan.md`（独立完善性审查：**首审不通过**——W1 tick 探测 await 残留窗口（probe 成功路径可复现 DEF-123）+ 台账预写流程问题；按指令修订（tick 两个 await 后均校验 + 台账改待实施占位）后复审 **通过**，另采纳 5 条建议：W4 字段核正、W5 参数化后缀 + 兜底覆盖、W1 残留语义留档、W5 验证措辞、DEF-123 行回填表述绑定）。
+- **落地**：DEF-123（StartAsync 入口快照 + 解析 await 后校验；ReconnectTimer_Tick 顶部快照 + 解析/探测两个 await 后均校验）、DEF-124（封送 lambda try/finally）、DEF-120（Lazy 记忆化）、DEF-121（两类 ListSeparator + 3 站点）、DEF-122（新键 ×12 + 参数化后缀 + 兜底覆盖）。
+- **门禁**：构建 0 错误（22 警告 ≤ 基线 24）；`static_gate.py` **PASS**（12 语言 2897 键对齐，其余五项与基线持平，留档 `rectify/r12-static-gate.json`）；x64 全量回归 **4297/4297**；新实例 PID 21488 @ 规范 Debug 路径。报告 `rectify/R12-remediation-report.md`。
