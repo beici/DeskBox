@@ -759,6 +759,20 @@ public sealed partial class WidgetManager
                 return false;
             }
 
+            // DEF-131: cancel any in-flight surface member switch on both
+            // sides before mutating the topology - this is the one topology
+            // change that previously did neither (mirrors
+            // RemoveWidgetFromGroupAsync / DissolveWidgetGroupContainingAsync).
+            if (sourceGroup is not null)
+            {
+                _widgetGroupSwitchRequests.Cancel(sourceGroup.SurfaceId);
+            }
+
+            if (targetGroup is not null)
+            {
+                _widgetGroupSwitchRequests.Cancel(targetGroup.SurfaceId);
+            }
+
             bool preserveRaisedLayer = ShouldPreserveRaisedWidgetLayer(
                 sourceGroup?.ActiveMemberId ?? sourceWidgetId,
                 targetGroup?.ActiveMemberId ?? targetWidgetId);

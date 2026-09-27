@@ -29,7 +29,7 @@ public sealed class ModuleBoundaryContractTests
         ["src/DeskBox/Helpers/NativeDropDescriptionWriter.cs"] = 7,
         ["src/DeskBox/Helpers/NativeDropTarget.cs"] = 12,
         ["src/DeskBox/Helpers/ShellClipboardHelper.cs"] = 12,
-        ["src/DeskBox/Helpers/ShellDataObjectBuilder.cs"] = 5,
+        // ShellDataObjectBuilder went away with the dead drop-delegation path (DEF-127).
         ["src/DeskBox/Services/DesktopBlankHitTest.cs"] = 6,
         // Fork-only DEF-062 (desktop icon geometry) predates this manifest's
         // 2026-09-18 measurement, so the merged 1.5.5 tree legitimately carries
