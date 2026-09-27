@@ -283,6 +283,19 @@ public sealed class FolderWatcherService : IDisposable
         StartDesktopIniWatcher(folderPath);
         bool nativeStarted = TryStartLegacyWatcher(folderPath);
         bool queryStarted = await TryStartQueryWatcherAsync(folderPath, generation);
+        // DEF-125: the query start above is an await too — without this
+        // re-check a superseded call would settle here, overwriting the
+        // newer call's health and clearing its scheduled reconnect
+        // (mirrors the failure-branch guard below, which covers the probe
+        // await window).
+        lock (_lock)
+        {
+            if (_isDisposed || startGeneration != _watchGeneration)
+            {
+                return;
+            }
+        }
+
         if (!nativeStarted && !queryStarted)
         {
             FolderWatcherHealth probeHealth = await ProbeFolderAccessAsync(folderPath);

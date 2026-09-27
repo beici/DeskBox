@@ -4510,6 +4510,17 @@ public sealed partial class SearchPopupWindow : Window
         App.Log(
             $"[Search] Popup window closed visible={IsPopupVisible} " +
             $"hwnd=0x{_hwnd.ToInt64():X}");
+        // DEF-126: symmetrical teardown of the close-watcher subclass, as
+        // every other comctl32 subclassing site in the repo does.
+        if (_isPopupCloseWatcherInstalled)
+        {
+            _ = Win32Helper.RemoveWindowSubclass(
+                _hwnd,
+                _popupCloseWatcherProc,
+                PopupCloseWatcherSubclassId);
+            _isPopupCloseWatcherInstalled = false;
+        }
+
         _viewModel.ActionRequested -= OnViewModelActionRequested;
         _viewModel.ContentRequested -= OnViewModelContentRequested;
         _viewModel.QueryApplied -= OnViewModelQueryApplied;
