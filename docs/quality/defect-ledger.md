@@ -79,7 +79,7 @@
 
 | 编号 | 标题 | 状态 | 优先级 | 根因分类 | 位置 | 说明 |
 |---|---|---|---|---|---|---|
-| DEF-016 | QuickCapture 失活回落缺门控 | 待修 | P2 | 渲染/生命周期 | QuickCaptureWidgetWindow（已随 DEF-027 删除，此缺陷无生产触发面） |
+| DEF-016 | QuickCapture 失活回落缺门控 | **✅ 已消除（R15 复核改判）** | P2 | 渲染/生命周期 | QuickCaptureWidgetWindow（已随 DEF-027 整体删除，缺陷载体不复存在于任何代码路径） |
 | MEM-01 | 托盘旧 Icon 未确定性 Dispose | 挂账 | P3 | 资源管理/S1 | `src/DeskBox/App.Tray.cs:866` — 析构路径已有 Dispose，热替换时旧 Icon 仍延迟释放 |
 | MEM-02 | 3 处 SoftwareBitmap 未确定性释放 | 挂账 | P3 | 资源管理/S1 | `src/DeskBox/Services/IQuickCaptureClipboardReader.cs:99,124` — 两处 SetSoftwareBitmap(await decoder.GetSoftwareBitmapAsync()) 均未 using，与 QuickCaptureService.cs:1842 已有 using var 规范不一致 |
 | ANI-03 | 每帧委托分配 | 挂账 | P3 | 动画卫生/S2 | 未触及 |
@@ -137,6 +137,7 @@
 - **round-12（2026-09-27）双路全量代码缺陷深度审查新增**：5 项（P0×0、P1×0、P2×0、**P3×5**：DEF-120~124，其中 DEF-123 为 round-11 DEF-117 修复引入的回归——「下轮审上轮」机制首次捕获跨轮回归），详见下节；连续第七轮 P0/P1 = 0
 - **round-13（2026-09-27）双路全量代码缺陷深度审查新增**：2 项（P0×0、P1×0、P2×0、**P3×2**：DEF-125/126），详见下节；round-12 修复批经双代理独立复核零回归（DEF-123 主目标达成，成功分支残留单列 DEF-125 随轮收口）；无存量改判；连续第八轮 P0/P1 = 0
 - **round-14（2026-09-27）双路全量代码缺陷深度审查新增**：3 项（P0×0、P1×0、P2×0、**P3×3**：DEF-127~129，全部为死代码/清理类且互相关联须按序整批处置），详见下节；round-13 修复批经双代理独立复核零回归；无存量改判；连续第九轮 P0/P1 = 0
+- **round-15（2026-09-27）双路全量代码缺陷深度审查新增**：2 项（P0×0、P1×0、P2×0、**P3×2**：DEF-130/131；A-01 前半与 B-01 为同一发现去重合并），详见下节；DEF-016 改判「已消除」；round-14 大删除批经双代理交叉验证干净；连续第十轮 P0/P1 = 0
 
 ---
 
@@ -454,3 +455,34 @@
 - **方案**：`rectify/R14-remediation-plan.md`（独立完善性审查**首审 NO-GO**——M1 漏 DesktopOrganization.cs/3 个活方法死分支/未声明 AutoStart 自纠退役，M2 契约爆炸半径 4 文件非计数类缺失；按指令重写 v2 后复审 **GO**，S1~S5 全采纳）。
 - **落地**：W1 DEF-127（死子系统 ~540 行 + 死测试 6 用例删除）；W2 DEF-129（BrandLogoHost 迁至标题行，deskbox.svg 恢复可见）；W3 DEF-128（七个 Collapsed 死面板——含实施发现的第七面板 StepOrganizationPanel、5 分部整文件、孤儿字段 7 项、3 活方法死分支删除；孤儿键 230 ×12；契约测试 4 文件「保 Settings 半段」裁剪；**AutoStart 激活期自纠行为随旧流退役**）。实施中发现的计划外事实：第七死面板 StepOrganizationPanel（B 代理与首轮审查均未单列），经引用图核验后纳入死集。
 - **门禁**：构建 0 错误（20 警告净降 2）；x64 全量回归 **4291/4291**（4297 − 6 死路径用例）；`static_gate.py` **PASS**（12 语言 2667 键；async void −2/空 catch −4 均删除驱动；留档 `rectify/r14-static-gate.json`）；`publish-aot-audit.ps1 -Platform x64` **通过**（WMC1510=742=上限、ABI 2/掩码 511/十导出、260 秒）；新实例 PID 2696。报告 `rectify/R14-remediation-report.md`。
+
+---
+
+## round-15 双路全量代码缺陷深度审查（2026-09-27，2 路并行）
+
+> 代码基线 `wip/fix-bug` @ `08bdd98e`。纯静态审查，未运行测试。R15-A + R15-B 两专项报告与总报告见 `docs/quality/rounds/round-15/`。全部立案经主流程当前树核验后入账。
+
+### 新增缺陷
+
+| 编号 | 标题 | 优先级 | 位置 | 根因/机制 | 状态 |
+|---|---|---|---|---|---|
+| **DEF-130** | round-14 删除批遗漏收缩两张契约 manifest，6 条死条目指向已删除文件（ModuleBoundary: ShellDataObjectBuilder.cs=5；SettingsSlice: OnboardingWindow.Appearance/Completion/DesktopOrganization/Features/Hotkey/Storage 五分部）——ratchet 记忆失真，同名文件复活即获静默豁免；违反「删文件必须退役预算」既定惯例。**A-01 前半与 B-01 同一发现，去重合并** | P3 | `ModuleBoundaryContractTests.cs:32`、`SettingsSliceOwnershipContractTests.cs:344-349` | round-14 收缩了 FolderPickerModernization 但遗漏这两张 manifest | ✅ 已修复（R15 批：6 条死条目退役 + 先例注释；`Completion.cs=5` 合法 slack 按审查钉死保留；回归 4291/4291） |
+| **DEF-131** | `MergeWidgetsAsync` 是唯一不取消在途 Surface 切换请求的群组拓扑变更入口（全仓取消点清单 :1315/:1506/:1727/WidgetManager.cs:2214/Surfaces.cs:219,229 均不含 merge）：合并持全局 _widgetGroupGate、切换持 per-surface switchGate，两锁不相交；切换结算段（:1156-1237）无取消检查，期间合并可退休窗口/改写 ActiveMemberId/重排 capsule order，最坏瞬时身份错挂（可自愈，DEF-123 家族同级） | P3 | `WidgetManager.Groups.cs:722-927`（对照取消点） | 合并漏配「请求协调器取消 + switchGate」双防线，防御网系统性不对称 | ✅ 已修复（R15 批：MergeWidgetsAsync 同组校验后对两侧 surface 各补 Cancel，全仓拓扑入口防线闭合；回归 4291/4291） |
+
+### 已知模式新位点（并入既有编号，不新立案）
+
+- **DEF-116 家族**：`SettingsWindow.Maintenance.cs:493-504`（局部变量键选择形态——Format-arity 扫描器加固候选）。
+- **DEF-078 家族**：`SettingsWindow.DataTools.cs:39/78/112`（破坏性维护按钮 async void 无 catch）+ `OnboardingWindow.TaskFlow.cs:110/147`（理论）。
+- **DEF-080 家族**：`Maintenance.cs:248/407/419`、`Feedback.cs:470`（显示级）。
+
+### 存量条目状态变更（round-15 复核）
+
+- **DEF-016 → ✅ 已消除（R15 复核改判）**：唯一载体 QuickCaptureWidgetWindow 已随 DEF-027 整体删除。
+- **round-14 大删除批验证干净（本轮主目标）**：删除键 230 ×12 零反向残留、2,667 键 parity 抽验通过、已删符号/面板/字段零残余引用、XAML 嵌套平衡、63 命名元素零悬空、435 事件绑定与 189 资源键零失效、BrandLogoHost 交接协议自洽、TaskStep 活流闭合、契约裁剪断言成立；唯一残余 DEF-130。`WidgetManager.Groups.cs`（2,771 行）首次全文审读；App.Aot*Smoke 27 装置三向一致性全绿。
+- **正面结论**：机械校验全绿（2667 键 ×12 parity、Format arity、XAML 资源/事件绑定、Rust ABI 零漂移）。**连续第十轮 P0/P1 = 0。**
+
+### round-15 整改批（2026-09-27，随轮完成）
+
+- **方案**：`rectify/R15-remediation-plan.md`（独立完善性审查**首审不通过**——R1：W1 把仍存在的 `Completion.cs=5` 合法松弛误列进死条目（门禁不可拦截的静默漂移面）；按 R1~R3 修订（死条目钉死到行 + Completion 保留 + ModuleBoundary 新注释 + 锚点更正）后复审 **GO**）。
+- **落地**：DEF-130（6 条死条目退役，`Completion.cs=5` 保留为合法 slack）；DEF-131（MergeWidgetsAsync 双侧 Cancel，全仓拓扑入口防线闭合）。
+- **门禁**：构建 0 错误；x64 全量回归 **4291/4291**；`static_gate.py` **PASS**（五项与基线持平，留档 `rectify/r15-static-gate.json`）；新实例 PID 25320。报告 `rectify/R15-remediation-report.md`。
