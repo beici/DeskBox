@@ -168,8 +168,32 @@ public sealed partial class FileService
                 continue;
             }
 
+            // DEF-071: ResolveLinkTarget(returnFinalTarget: false) reconstructs
+            // the target from the reparse point's substitute name. Some
+            // filesystem filter drivers (observed with third-party HIPS
+            // products on Windows) write a substitute name that carries a
+            // namespace prefix such as "\??\Global\E:\...", and the runtime
+            // then hands back "Global\E:\..." which is relative and resolves
+            // against the current directory. The final-target variant asks the
+            // filesystem to follow the link itself, so it is immune to that
+            // corruption. Use it only as a fallback: a relative or missing
+            // single-hop target must not be trusted, while a healthy
+            // single-hop target keeps the existing hop-by-hop semantics (each
+            // link is still visited and cycle-checked).
+            string targetPath = target.FullName;
+            if (!Path.IsPathFullyQualified(targetPath) || !IsResolvableExistingPath(targetPath))
+            {
+                FileSystemInfo? finalTarget = ResolveFinalLinkTarget(candidate, attributes);
+                if (finalTarget is null || !Path.IsPathFullyQualified(finalTarget.FullName))
+                {
+                    return false;
+                }
+
+                targetPath = finalTarget.FullName;
+            }
+
             if (!TryResolvePathSegments(
-                    target.FullName,
+                    targetPath,
                     allowMissingSuffix: false,
                     visitedReparsePoints: visitedReparsePoints,
                     resolvedPath: out current))
@@ -185,5 +209,45 @@ public sealed partial class FileService
     private static string NormalizeResolvedPath(string path)
     {
         return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+    }
+
+    /// <summary>
+    /// DEF-071: asks the filesystem to follow the reparse point instead of
+    /// reconstructing the target from the reparse data. Returns <c>null</c>
+    /// when the link cannot be followed or is not a filesystem link.
+    /// </summary>
+    private static FileSystemInfo? ResolveFinalLinkTarget(
+        string candidate,
+        FileAttributes attributes)
+    {
+        try
+        {
+            FileSystemInfo info = (attributes & FileAttributes.Directory) != 0
+                ? new DirectoryInfo(candidate)
+                : new FileInfo(candidate);
+            return info.ResolveLinkTarget(returnFinalTarget: true);
+        }
+        catch (Exception ex) when (
+            ex is IOException or UnauthorizedAccessException or
+            ArgumentException or NotSupportedException or
+            System.Security.SecurityException)
+        {
+            return null;
+        }
+    }
+
+    private static bool IsResolvableExistingPath(string path)
+    {
+        try
+        {
+            return File.Exists(path) || Directory.Exists(path);
+        }
+        catch (Exception ex) when (
+            ex is IOException or UnauthorizedAccessException or
+            ArgumentException or NotSupportedException or
+            System.Security.SecurityException)
+        {
+            return false;
+        }
     }
 }

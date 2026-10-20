@@ -90,6 +90,11 @@
                     <SolidColorBrush x:Key="WidgetOverlayStrokeBrush" Color="#52FFFFFF" />
                     <SolidColorBrush x:Key="WidgetLayerFillSecondaryBrush" Color="#0DFFFFFF" />
                     <SolidColorBrush x:Key="WidgetLayerStrokeBrush" Color="#20FFFFFF" />
+                    <SolidColorBrush x:Key="TodoCardReadabilitySurfaceBrush" Color="#C21D2025" />
+                    <SolidColorBrush x:Key="TodoCardReadabilityStrokeBrush" Color="#38FFFFFF" />
+                    <SolidColorBrush x:Key="WidgetTitleStateHoverBrush" Color="#12FFFFFF" />
+                    <SolidColorBrush x:Key="WidgetTitleStatePressedBrush" Color="#20FFFFFF" />
+                    <SolidColorBrush x:Key="WidgetTitleStateOpenBrush" Color="#18FFFFFF" />
                     <SolidColorBrush x:Key="DeskBoxNeutralFillSecondaryBrush" Color="#0FFFFFFF" />
                     <SolidColorBrush x:Key="DeskBoxNeutralFillTertiaryBrush" Color="#0AFFFFFF" />
                     <SolidColorBrush x:Key="DeskBoxNeutralLineBrush" Color="#8BFFFFFF" />
@@ -115,7 +120,11 @@
                      DeskBoxNeutral washes map to Transparent. The DeskBoxNeutral*
                      entries are inert here today: they are resolved from code by
                      element ActualTheme (Light/Dark only) and are mirrored
-                     solely to keep the four dictionaries' key sets identical. -->
+                     solely to keep the four dictionaries' key sets identical.
+                     The TodoCardReadability* and WidgetTitleState* fork brushes
+                     are mirrored for the same reason: the readability surface and
+                     stroke map to the system window/text colors, and the
+                     WidgetTitleState washes map to Transparent. -->
                                 <ResourceDictionary x:Key="HighContrast">
                     <SolidColorBrush x:Key="DeskBoxMenuFallbackBackgroundBrush" Color="{ThemeResource SystemColorWindowColor}" />
                     <SolidColorBrush x:Key="WidgetDragHandleBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
@@ -124,6 +133,11 @@
                     <SolidColorBrush x:Key="WidgetOverlayStrokeBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
                     <SolidColorBrush x:Key="WidgetLayerFillSecondaryBrush" Color="{ThemeResource SystemColorWindowColor}" />
                     <SolidColorBrush x:Key="WidgetLayerStrokeBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                    <SolidColorBrush x:Key="TodoCardReadabilitySurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="TodoCardReadabilityStrokeBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                    <SolidColorBrush x:Key="WidgetTitleStateHoverBrush" Color="Transparent" />
+                    <SolidColorBrush x:Key="WidgetTitleStatePressedBrush" Color="Transparent" />
+                    <SolidColorBrush x:Key="WidgetTitleStateOpenBrush" Color="Transparent" />
                     <SolidColorBrush x:Key="DeskBoxNeutralFillSecondaryBrush" Color="Transparent" />
                     <SolidColorBrush x:Key="DeskBoxNeutralFillTertiaryBrush" Color="Transparent" />
                     <SolidColorBrush x:Key="DeskBoxNeutralLineBrush" Color="{ThemeResource SystemColorWindowTextColor}" />

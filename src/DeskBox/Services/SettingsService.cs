@@ -409,6 +409,11 @@ public const int DefaultSearchMaxResults = 100;
                 [nameof(AppSettings.OnboardingStepIndex)] = DefaultPreferencePreservationReason.RuntimeState,
                 [nameof(AppSettings.CompletedOnboardingVersion)] = DefaultPreferencePreservationReason.RuntimeState,
                 [nameof(AppSettings.HasResolvedInitialFileWidgetSetup)] = DefaultPreferencePreservationReason.RuntimeState,
+                // Device-local navigation state: the id names the file widget
+                // the Quick Capture editor last attached from, and the widget
+                // it names may not exist on the machine "reset defaults" runs
+                // on — same rationale as WidgetDefaultBoundScreenId above.
+                [nameof(AppSettings.LastQuickCaptureFileWidgetId)] = DefaultPreferencePreservationReason.RuntimeState,
                 [nameof(AppSettings.LastUpdateCheckAt)] = DefaultPreferencePreservationReason.RuntimeState,
                 [nameof(AppSettings.SchemaVersion)] = DefaultPreferencePreservationReason.RuntimeState
             };
@@ -427,7 +432,10 @@ public const int DefaultSearchMaxResults = 100;
     /// </summary>
     private bool _widgetLayoutMerged = true;
     // Set at load when the on-disk settings.json carries a schema version
-    // from a newer build; every save is refused for the session.
+    // from a newer build; the load-time log names the condition once, and
+    // SaveToFileOnlyAsync reports every refused save through
+    // LastPersistenceFailure / PersistenceFailed using the schema version it
+    // captured in _loadedDiskSchemaVersion.
     private bool _settingsSchemaNewerThanBuild;
     private readonly object _lock = new();
 
@@ -1105,15 +1113,6 @@ settings.FocusClickedWidgetOnRaise = false;
 
     private async Task<bool> SaveToFileOnlyAsync()
     {
-        if (_settingsSchemaNewerThanBuild)
-        {
-            App.Log(
-                "[SettingsService] Save refused: settings.json schema " +
-                $"{_settings.SchemaVersion} is newer than this build understands; " +
-                "settings changes cannot persist");
-            return false;
-        }
-
         await FileWriteLock.WaitAsync();
         try
         {

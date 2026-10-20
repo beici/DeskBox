@@ -1897,7 +1897,7 @@ Text="DeskBox" />
 
                             <toolkit:SettingsExpander
                                 Tag="QuickCapture"
-                                IsEnabled="{Binding QuickCaptureEnabled}"
+                                IsEnabled="{Binding Enabled}"
                                 Loaded="QuickCaptureRecordColors_Loaded"
                                 HorizontalContentAlignment="Stretch"
                                 svc:Localized.DescriptionKey="Settings.QuickCapture.RecordColors.Description"
@@ -1943,7 +1943,7 @@ Text="DeskBox" />
 
                             <toolkit:SettingsExpander
                                 Tag="QuickCapture"
-                                IsEnabled="{Binding QuickCaptureEnabled}"
+                                IsEnabled="{Binding Enabled}"
                                 Loaded="FeatureSettingsExpander_Loaded"
                                 HorizontalContentAlignment="Stretch"
                                 Description="{Binding TabsSummaryText}"

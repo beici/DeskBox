@@ -1034,7 +1034,7 @@ public static class DragDropPermissionService
                     return ProcessTokenSnapshot.Unknown(0, "explorer", "not-running");
                 }
 
-                IntPtr processHandle = OpenProcess(ProcessQueryLimitedInformation, false, (uint)explorer.Id);
+                IntPtr processHandle = DragDropPermissionNativeMethods.OpenProcess(ProcessQueryLimitedInformation, false, (uint)explorer.Id);
                 if (processHandle == IntPtr.Zero)
                 {
                     return ProcessTokenSnapshot.Unknown(explorer.Id, explorer.ProcessName, $"open-error:{Marshal.GetLastWin32Error()}");
@@ -1046,7 +1046,7 @@ public static class DragDropPermissionService
                 }
                 finally
                 {
-                    CloseHandle(processHandle);
+                    DragDropPermissionNativeMethods.CloseHandle(processHandle);
                 }
             }
             finally

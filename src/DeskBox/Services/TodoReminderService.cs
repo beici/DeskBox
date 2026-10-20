@@ -39,12 +39,6 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
     /// </summary>
     public event Action<string, TodoItem?, TodoItem?>? TodoStoreChanged;
 
-    // The 30s scan used to read and deserialize every todo store on every
-    // tick. The files only change when the user edits a widget, so a
-    // last-write probe answers "unchanged" cheaply while the cached snapshot
-    // still lets time-based due transitions fire on schedule.
-    private readonly Dictionary<string, (DateTime WrittenAtUtc, TodoWidgetData Data)> _storeSnapshots = new(StringComparer.Ordinal);
-
     private DispatcherQueueTimer? _timer;
     private bool _isChecking;
     private bool _disposed;
@@ -186,22 +180,6 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
                     !widget.IsDisabled &&
                     !settings.DeletedWidgetIds.Contains(widget.Id))
                 .ToList();
-
-            // A deleted todo widget's snapshot would otherwise live as long
-            // as the reminder service does; the scan sees the authoritative
-            // widget set, so prune everything it did not just enumerate.
-            if (_storeSnapshots.Count > 0)
-            {
-                var liveWidgetIds = widgets
-                    .Select(widget => widget.Id)
-                    .ToHashSet(StringComparer.Ordinal);
-                foreach (string staleId in _storeSnapshots.Keys
-                             .Where(id => !liveWidgetIds.Contains(id))
-                             .ToArray())
-                {
-                    _storeSnapshots.Remove(staleId);
-                }
-            }
 
             if (widgets.Count == 0)
             {
@@ -465,25 +443,6 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
         await CheckNowAsync(_clock());
     }
 
-    private async Task<TodoWidgetData> LoadStoreSnapshotAsync(
-        string widgetId,
-        TodoWidgetStore store)
-    {
-        DateTime writtenAtUtc = File.GetLastWriteTimeUtc(store.StorePath);
-        if (_storeSnapshots.TryGetValue(widgetId, out (DateTime WrittenAtUtc, TodoWidgetData Data) cached) &&
-            cached.WrittenAtUtc == writtenAtUtc)
-        {
-            return cached.Data;
-        }
-
-        TodoWidgetData data = await store.LoadAsync();
-        // Stamp after the load: a write racing the read shows up as a newer
-        // timestamp and forces one more reload on the next tick.
-        _storeSnapshots[widgetId] =
-            (File.GetLastWriteTimeUtc(store.StorePath), data);
-        return data;
-    }
-
     private async Task CollectWidgetCandidatesAsync(
         WidgetConfig widget,
         DateTimeOffset now,
@@ -495,6 +454,16 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
         TodoItem? lastChangedItem = null;
         _ = await store.MutateAsync(current =>
         {
+            // The owner may disable the feature or dispose this service while
+            // the store gate is still being awaited (the check already
+            // captured its widget list). Persisting reminder bookkeeping after
+            // that point would mark items notified for a notification nobody
+            // will ever show, so the mutation is abandoned instead.
+            if (_disposed || !ShouldBeRunning())
+            {
+                return false;
+            }
+
             bool changed = false;
             foreach (var item in current.Items)
             {

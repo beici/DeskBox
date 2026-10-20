@@ -109,8 +109,13 @@ public sealed class CapsuleClickAndMorphContinuityTests
 
         int persistGuard = release.IndexOf("if (hasMoved)", StringComparison.Ordinal);
         Assert.True(persistGuard > 0, "The persist guard is gone.");
+        // Upstream 1.5.8 replaced the direct CapturePositionAnchor +
+        // UpdateConfigBoundsFromPhysical pair with the unified placement commit.
+        // WidgetManager.CommitUserPlacement performs the same anchor capture and
+        // physical-bounds sync, and additionally marks the surface entry
+        // authoritative and persists, so the guarded write is still there.
         Assert.Contains(
-            "UpdateConfigBoundsFromPhysical",
+            "CommitUserPlacementFromWindow",
             release[persistGuard..guard],
             StringComparison.Ordinal);
     }

@@ -151,7 +151,11 @@ public sealed class ModuleBoundaryContractTests
         ["src/DeskBox/Services/PerformanceLogger.cs"] = 1,
         ["src/DeskBox/Services/Localized.cs"] = 1,
         ["src/DeskBox/Services/ResizeGuideOverlayService.cs"] = 4,
-        ["src/DeskBox/Services/ThemeService.cs"] = 3,
+        // Fork keeps the DEF-010 cross-thread re-post guard in RefreshAppearance
+        // (App.UiDispatcherQueue is { HasThreadAccess: false }): upstream only
+        // carries the two OnColorValuesChanged marshals plus EnsureUiThread.
+        // The merged tree deliberately keeps both sides, so the budget is 4.
+        ["src/DeskBox/Services/ThemeService.cs"] = 4,
         ["src/DeskBox/Services/StoreAppUpdateService.cs"] = 1,
         ["src/DeskBox/Services/SearchHotkeyService.cs"] = 3,
         ["src/DeskBox/Services/WeatherService.cs"] = 1,
@@ -164,7 +168,11 @@ public sealed class ModuleBoundaryContractTests
         // watchdog timer creation (13 → 14); enqueues use UiDispatch.
         // Shutdown self-redispatch fix (#530/#532): four marshals moved
         // onto UiDispatch.RunOrDefer (14 → 10).
-        ["src/DeskBox/Services/WidgetManager.ZOrder.cs"] = 10,
+        // Fork keeps its interaction-leak watchdog (field, null guard and
+        // App.UiDispatcherQueue.CreateTimer at the timer creation); upstream
+        // replaced it with _desktopPinnedBeddingWatchdog. Both sides ship, so
+        // the budget is upstream 10 + the 2 watchdog accesses.
+        ["src/DeskBox/Services/WidgetManager.ZOrder.cs"] = 12,
         ["src/DeskBox/Services/WidgetManager.Surfaces.cs"] = 1,
         ["src/DeskBox/Services/WidgetManager.Storage.cs"] = 1,
         // UiDispatch migration: the enable-state marshal and the feature

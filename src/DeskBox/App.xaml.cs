@@ -2366,12 +2366,24 @@ public partial class App : Application
             !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(
                 AotTodoRecurrenceReminderSmokeEnvironmentVariable));
 #endif
+        // The runtime creates a fresh session on every reactivation, so the
+        // relay subscribed in CreateTodoReminderService must be detached from
+        // the exact instance being retired. Otherwise a released session keeps
+        // forwarding its last mutations to live widgets, and every reactivation
+        // would stack one more relay onto the surviving sessions.
+        TodoReminderService? previousService = _todoReminderService;
         bool hadSession = _todoReminderRuntime.Current is not null;
         _todoReminderRuntime.Reconcile(_todoSettings.Read(), forceActive);
         if (!hadSession && _todoReminderRuntime.Current is not null)
             Log("[TodoReminder] Service initialized on demand");
         else if (hadSession && _todoReminderRuntime.Current is null)
+        {
+            if (previousService is not null)
+            {
+                previousService.TodoStoreChanged -= RelayTodoStoreChangedByReminder;
+            }
             Log("[TodoReminder] Inactive service released");
+        }
 
         if (checkNow)
         {
@@ -2411,7 +2423,8 @@ public partial class App : Application
         // so live todo widgets must observe its mutations instead of holding a
         // stale projection until the next manual refresh (DEF-043 family).
         // The runtime creates a fresh session on every reactivation, so the
-        // subscription is attached per instance and detached on dispose.
+        // subscription is attached per instance and detached from that exact
+        // instance in RefreshTodoReminderService when the runtime retires it.
         service.TodoStoreChanged += RelayTodoStoreChangedByReminder;
         return service;
     }

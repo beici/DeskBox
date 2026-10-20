@@ -79,17 +79,29 @@ public sealed class ArchitectureContractTests
             // Models/<Feature>SettingsSlice.cs per feature (Glance already
             // carried its settings elsewhere), so each feature below is +1.
             ["Weather"] = 18,
-            ["Todo"] = 37,
+            // 1.5.8 adds Services/TodoSettingsCoordinator.cs (+1): upstream
+            // moved the Todo settings writes into a coordinator.
+            ["Todo"] = 38,
             ["Music"] = 16,
-            ["Glance"] = 19,
-            ["Search"] = 21,
+            // 1.5.8 adds three upstream services: GlanceCalendarDayChangePolicy.cs,
+            // GlanceCalendarDayDecorationBuilder.cs and GlanceImageStreamLoader.cs
+            // (consumed by GlanceWidgetViewModel and GlanceWidgetContent).
+            ["Glance"] = 22,
+            // 1.5.8 adds Services/SearchSettingsCoordinator.cs (constructed by
+            // App.xaml.cs) and Services/SettingsSearchChannelPolicy.cs (read by
+            // SettingsWindow.Navigation.cs).
+            ["Search"] = 23,
             // The 1.5.0 merge added the record-colors trio: the settings store
             // (Services), the shared editor (re-homed into WidgetContents) and
             // the host settings code-behind. Net +3 over the frozen 22.
             // 1.5.5 adds Models/QuickCaptureSettingsSlice.cs (+1).
             // R8-AB: -1 — the dead QuickCaptureClipboardActivationHelper.cs was
             // deleted (FQC-09), deliberately shrinking the frozen inventory.
-            ["QuickCapture"] = 25,
+            // 1.5.8 adds two upstream files (QuickCaptureWidgetContentAdapter.cs
+            // and QuickCaptureSettingsCoordinator.cs) and the merge re-added the
+            // dead helper; the helper is deleted again as part of the merge
+            // acceptance, so the net is +2 over the frozen 25.
+            ["QuickCapture"] = 27,
         };
 
     private static readonly Dictionary<string, int> FrozenAmbientWidgetManagerAccess =
@@ -134,7 +146,10 @@ public sealed class ArchitectureContractTests
     private static readonly Dictionary<string, string[]> RegisteredSubdirectories =
         new(StringComparer.Ordinal)
         {
-            ["src/DeskBox/Views"] = ["SettingsSections"],
+            // Upstream 1.5.8 added the shared HotkeyRecorderDialog under
+            // Views/Dialogs; it is enumerated by the recursive Views scan
+            // above, so the tree test must know the directory is registered.
+            ["src/DeskBox/Views"] = ["SettingsSections", "Dialogs"],
             ["src/DeskBox/Controls"] = ["WidgetContents"],
         };
 
@@ -160,9 +175,25 @@ public sealed class ArchitectureContractTests
         {
             foreach (string file in EnumerateFeatureFiles(feature))
             {
+                // Same carve-out the namespace-declaration guard already makes:
+                // these files are host settings code-behind that predates the
+                // boundary guard and is retired by roadmap stage 2.
+                if (GrandfatheredHostViewNamespaceFiles.Contains(
+                        RepositoryRelative(file), StringComparer.Ordinal))
+                {
+                    continue;
+                }
+
                 foreach (string usingDirective in ExtractDeskBoxUsings(file))
                 {
+                    // Upstream 1.5.8 re-homed each settings editor into its own
+                    // DeskBox.Features.<Feature> namespace. That namespace is
+                    // feature-owned, not host-owned, so a feature may reference its
+                    // own slice; every other DeskBox.* namespace stays frozen.
+                    bool isOwnFeatureNamespace =
+                        usingDirective == "DeskBox.Features." + feature.Name;
                     Assert.True(
+                        isOwnFeatureNamespace ||
                         HostNamespaceAllowList.Contains(usingDirective, StringComparer.Ordinal),
                         $"{file}: feature code may not depend on host namespace '{usingDirective}'. " +
                         "Feature sources must stay within " + string.Join(", ", HostNamespaceAllowList) +
@@ -180,6 +211,15 @@ public sealed class ArchitectureContractTests
         {
             foreach (string file in EnumerateFeatureFiles(feature))
             {
+                // Grandfathered host view code-behind is exempt here as well:
+                // its DeskBox.Views.* dependency is the pre-guard status quo that
+                // the shrink-to-zero list tracks.
+                if (GrandfatheredHostViewNamespaceFiles.Contains(
+                        RepositoryRelative(file), StringComparer.Ordinal))
+                {
+                    continue;
+                }
+
                 int lineNumber = 0;
                 foreach (string line in File.ReadLines(file))
                 {

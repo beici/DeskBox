@@ -7,10 +7,15 @@ public sealed class WidgetRaiseBandContractTests
     {
         string layerService = File.ReadAllText(TestPaths.FromRepository(
             "src/DeskBox/Services/WidgetLayerService.cs"));
+        // The merged tree inserts the fork-only BringTitleActivatedGroupToFront
+        // between the group raise and ApplyPeerOrderHighestToLowest, so the
+        // slice must end at that method: otherwise it swallows the single
+        // widget transient raise (which legitimately pulses TOPMOST) and the
+        // assertion below stops testing the group path.
         string groupRaise = SliceMethod(
             layerService,
             "public static void BringGroupTemporarilyToFront",
-            "public static bool ApplyPeerOrderHighestToLowest");
+            "public static void BringTitleActivatedGroupToFront");
 
         // #375: the historical 2N+2 TOPMOST/NOTOPMOST pulse storm contested
         // the topmost band tail with resident topmost floaters (IME bars).
@@ -92,9 +97,20 @@ public sealed class WidgetRaiseBandContractTests
 
     private static string SliceMethod(string source, string startMarker, string endMarker)
     {
-        int start = source.IndexOf(startMarker, StringComparison.Ordinal);
-        int end = source.IndexOf(endMarker, start, StringComparison.Ordinal);
+        // WidgetLayerService.cs is checked in with LF endings; markers written
+        // with the checkout default would never match on an autocrlf=true clone.
+        // Normalize both sides the way CapsuleClickAndMorphContinuityTests does.
+        string normalizedSource = NormalizeNewlines(source);
+        string normalizedStart = NormalizeNewlines(startMarker);
+        string normalizedEnd = NormalizeNewlines(endMarker);
+        int start = normalizedSource.IndexOf(normalizedStart, StringComparison.Ordinal);
+        int end = normalizedSource.IndexOf(normalizedEnd, start, StringComparison.Ordinal);
         Assert.True(start >= 0 && end > start);
-        return source[start..end];
+        return normalizedSource[start..end];
+    }
+
+    private static string NormalizeNewlines(string source)
+    {
+        return source.Replace("\r\n", "\n").Replace('\r', '\n');
     }
 }

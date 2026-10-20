@@ -20,7 +20,18 @@ public sealed class ToggleSwitchAccessibleNameContractTests
         { "src/DeskBox/Views/SettingsSections/FileWidgetSettingsSection.xaml", 1 },
         { "src/DeskBox/Views/SettingsSections/DesktopOrganizationSettingsSection.xaml", 2 },
         { "src/DeskBox/Views/SettingsSections/CapsuleModeSettingsSection.xaml", 1 },
-        { "src/DeskBox/Views/OnboardingWindow.xaml", 6 },
+        // The fork keeps its own five-step onboarding flow instead of upstream's
+        // (docs/architecture/upstream-merge-1.5.8.md: onboarding is local), and
+        // that flow hosts eight switches: the two Step-3 toggles
+        // (Quick Access / desktop shortcut) plus the six Step-5 feature
+        // toggles. Upstream's flow had six, all named from the feature title
+        // keys; the local ones must carry the same AutomationNameKey contract.
+        { "src/DeskBox/Views/OnboardingWindow.xaml", 8 },
+        // The fork extracted the music section into its own UserControl; the
+        // merged SettingsWindow also renders that section inline, so this file
+        // is a retained duplicate. It still hosts two switches and they carry
+        // the same AutomationNameKey contract as the inline copies.
+        { "src/DeskBox/Views/SettingsSections/MusicSettingsSection.xaml", 2 },
     };
 
     [Theory]
