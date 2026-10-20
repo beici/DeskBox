@@ -430,16 +430,22 @@ public sealed class OnboardingExperienceTests
             "src/DeskBox/Services/WidgetManager.cs"));
         string featureManager = File.ReadAllText(TestPaths.SourceFile(
             "src/DeskBox/Services/WidgetManager.FeatureWidgets.cs"));
+        // Batch-51 settings-facade retirement deleted
+        // SettingsViewModel.FeatureCallbacks.cs and moved the feature-toggle
+        // callback into the per-section FeatureOptions editor. The
+        // serialization guarantee is unchanged: the editor still routes
+        // through the widget manager's lock-guarded
+        // SetFeatureWidgetEnabledAsync instead of writing the slice directly.
         string settingsCallbacks = File.ReadAllText(Path.Combine(
             root,
-            "src/DeskBox/ViewModels/SettingsViewModel.FeatureCallbacks.cs"));
+            "src/DeskBox/ViewModels/SettingsViewModel.FeatureOptions.cs"));
 
         Assert.Contains("_featureWidgetUpdateLocks", featureManager, StringComparison.Ordinal);
         Assert.Contains("await updateLock.WaitAsync()", featureManager, StringComparison.Ordinal);
         Assert.Contains("updateLock.Release()", featureManager, StringComparison.Ordinal);
         Assert.Contains("config.IsVisible = true;", manager, StringComparison.Ordinal);
         Assert.Contains(
-            "SetFeatureWidgetEnabledAsync(\n                    WidgetKind.QuickCapture",
+            "await widgetManager.SetFeatureWidgetEnabledAsync(kind, enabled, reveal: enabled);",
             settingsCallbacks.ReplaceLineEndings("\n"),
             StringComparison.Ordinal);
     }

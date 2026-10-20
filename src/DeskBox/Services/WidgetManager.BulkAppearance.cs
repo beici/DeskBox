@@ -22,7 +22,8 @@ public sealed partial class WidgetManager
         foreach (ContentWidgetWindow window in _contentWidgets.Values)
         {
             if (window.Config.WidgetKind is WidgetKind.QuickCapture &&
-                window.CurrentContent is QuickCaptureSurfaceContent quickCaptureSurface)
+                window.CurrentContent is QuickCaptureWidgetContentAdapter
+                { MaterializedSurface: { } quickCaptureSurface })
             {
                 quickCaptureSurface.ApplyClipboardItemColors();
             }

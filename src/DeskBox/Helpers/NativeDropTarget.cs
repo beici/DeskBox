@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
+using DeskBox.Platform;
 using DeskBox.Services;
 
 namespace DeskBox.Helpers;
@@ -19,7 +20,8 @@ public sealed record NativeDropIntentEventArgs(
     bool ShortcutRequested,
     bool RightButtonDrag,
     uint FeedbackEffect,
-    uint KeyState);
+    uint KeyState,
+    uint AllowedEffects);
 
 /// <summary>
 /// Everything a shortcut-launch consumer needs to delegate a drop to the
@@ -100,51 +102,14 @@ public sealed class NativeDropTarget : IDisposable
         "shell:::{4234d49b-0245-4df3-b780-3893943456e1}\\";
 
     // ── P/Invoke ──
-
-    [DllImport("ole32.dll")]
-    private static extern int OleInitialize(IntPtr reserved);
-
-    [DllImport("ole32.dll")]
-    private static extern void OleUninitialize();
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern uint RegisterClipboardFormatW(string lpszFormat);
-
-    [DllImport("ole32.dll")]
-    private static extern void ReleaseStgMedium(ref NativeStorageMedium medium);
-
-    [DllImport("ole32.dll")]
-    private static extern void CoTaskMemFree(IntPtr value);
-
-    [DllImport("kernel32.dll")]
-    private static extern IntPtr GlobalLock(IntPtr hMem);
-
-    [DllImport("kernel32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GlobalUnlock(IntPtr hMem);
-
-    [DllImport("kernel32.dll")]
-    private static extern IntPtr GlobalSize(IntPtr hMem);
-
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
-    private static extern uint DragQueryFile(IntPtr hDrop, uint fileIndex, System.Text.StringBuilder? fileName, uint bufferSize);
-
-    [DllImport("shell32.dll")]
-    private static extern IntPtr ILCombine(IntPtr parent, IntPtr child);
-
-    [DllImport("shell32.dll")]
-    private static extern void ILFree(IntPtr itemIdList);
-
-    [DllImport("shell32.dll", PreserveSig = true)]
-    private static extern int SHGetNameFromIDList(
-        IntPtr itemIdList,
-        uint displayNameType,
-        out IntPtr displayName);
+    // ole32/user32/kernel32/shell32 entry points live in
+    // DeskBox.Platform.OleDropTargetNativeMethods.
 
     private const uint CF_HDROP = 15;
     private static readonly ushort s_fileGroupDescriptorFormat;
     private static readonly ushort s_fileContentsFormat;
     private static readonly ushort s_shellIdListFormat;
+    private static readonly ushort s_performedDropEffectFormat;
 
     // ── State ──
 
@@ -203,9 +168,33 @@ public sealed class NativeDropTarget : IDisposable
     public event Action<int>? UndisplayableDropBlocked;
 
     /// <summary>
+    /// Optional probe consulted inside DragEnter/DragOver/Drop to decide
+    /// whether the dragged paths and the destination live on the same
+    /// volume. When unset the feedback assumes same-volume semantics.
+    /// </summary>
+    internal Func<IReadOnlyList<string>, bool>? SameVolumeProbe { get; set; }
+
+    /// <summary>
+    /// Optional gate consulted inside the OLE Drop callback before the
+    /// completion effect is committed. Returning true refuses the drop so a
+    /// busy import pipeline is never silently dropped after the source was
+    /// told the drop succeeded.
+    /// </summary>
+    internal Func<bool>? ImportBusyProbe { get; set; }
+
+    /// <summary>
+    /// Returns the shortcut tile currently under the drag hover (if any) so
+    /// the deferred-materialization completion can verify the hover target
+    /// has not been replaced by a newer gesture before delegating the launch.
+    /// Without this continuity check the completion-time claim would stamp
+    /// consumption windows onto a *later* drop's gesture state.
+    /// </summary>
+    internal Func<string?>? LaunchTargetPathProbe { get; set; }
+
+    /// <summary>
     /// Runs inside the OLE Drop callback before the import events, while the
-    /// source data object is alive, so the handler can delegate the drop to a
-    /// Shell drop target (drop onto an application shortcut). Returning
+    /// source data object is alive, so the handler can delegate the drop to
+    /// a Shell drop target (drop onto an application shortcut). Returning
     /// Handled=true consumes the drop; no import events are raised.
     /// </summary>
     internal Func<NativeDropLaunchRequest, ShellDropLaunchResult>? LaunchDropHandler
@@ -214,17 +203,7 @@ public sealed class NativeDropTarget : IDisposable
         set;
     }
 
-    /// <summary>
-    /// Returns the widget id currently hosted by this drop target's window, or
-    /// null when unknown. A native drag-out stamped with the same id is the
-    /// drag returning to its own widget: the drag is refused (no launch, no
-    /// import, no relocation) so the source files stay untouched.
-    /// </summary>
-    internal Func<string?>? SelfDragSourceWidgetProvider { get; set; }
 
-    private bool _isSelfSourceDrag;
-
-    private const uint DropeffectNone = 0;
 
     /// <summary>
     /// Whether the current drag payload contains file drop data (CF_HDROP).
@@ -252,15 +231,16 @@ public sealed class NativeDropTarget : IDisposable
 
     static NativeDropTarget()
     {
-        s_fileGroupDescriptorFormat = (ushort)RegisterClipboardFormatW("FileGroupDescriptorW");
-        s_fileContentsFormat = (ushort)RegisterClipboardFormatW("FileContents");
-        s_shellIdListFormat = (ushort)RegisterClipboardFormatW("Shell IDList Array");
+        s_fileGroupDescriptorFormat = (ushort)OleDropTargetNativeMethods.RegisterClipboardFormatW("FileGroupDescriptorW");
+        s_fileContentsFormat = (ushort)OleDropTargetNativeMethods.RegisterClipboardFormatW("FileContents");
+        s_shellIdListFormat = (ushort)OleDropTargetNativeMethods.RegisterClipboardFormatW("Shell IDList Array");
+        s_performedDropEffectFormat = (ushort)OleDropTargetNativeMethods.RegisterClipboardFormatW("Performed DropEffect");
 
         // Ensure OLE is initialized (WinUI 3 usually does this, but call
         // again is harmless if already initialized).
         try
         {
-            OleInitialize(IntPtr.Zero);
+            OleDropTargetNativeMethods.OleInitialize(IntPtr.Zero);
         }
         catch
         {
@@ -358,12 +338,28 @@ public sealed class NativeDropTarget : IDisposable
         POINT point,
         ref uint effect)
     {
+        CallbackDepth.Enter();
+        try
+        {
+            return OnDragEnterCore(dataObject, keyState, point, ref effect);
+        }
+        finally
+        {
+            CallbackDepth.Exit();
+        }
+    }
+
+    private int OnDragEnterCore(
+        nint dataObject,
+        uint keyState,
+        POINT point,
+        ref uint effect)
+    {
         EndNativeDragVisual();
         _rightButtonDragActive =
             NativeDropEffectPolicy.IsRightButtonDrag(keyState);
         uint allowedEffects = effect;
         InspectDragData(dataObject);
-        _isSelfSourceDrag = IsSelfSourceDrag(dataObject);
         _dragPathHints = HasFileData && !HasVirtualFileData
             ? TryExtractHDropPathHints(dataObject)
             : [];
@@ -376,16 +372,8 @@ public sealed class NativeDropTarget : IDisposable
             allowedEffects,
             HasShellApplicationData,
             _defaultMoveProvider(),
-            followWindows: GetFollowWindowsSetting());
-        if (_isSelfSourceDrag)
-        {
-            // The drag left this widget and came back; nothing here may
-            // accept it. 1a scope: reorder-through-native-drag is not wired
-            // yet, so the honest feedback is the "no drop" cursor.
-            effect = DropeffectNone;
-            return S_OK;
-        }
-
+            followWindows: GetFollowWindowsSetting(),
+            sameVolume: GetSameVolume(_dragPathHints));
         if (HasFileData)
         {
             RetainActiveDataObject(dataObject);
@@ -395,6 +383,22 @@ public sealed class NativeDropTarget : IDisposable
     }
 
     internal int OnDragOver(
+        uint keyState,
+        POINT point,
+        ref uint effect)
+    {
+        CallbackDepth.Enter();
+        try
+        {
+            return OnDragOverCore(keyState, point, ref effect);
+        }
+        finally
+        {
+            CallbackDepth.Exit();
+        }
+    }
+
+    private int OnDragOverCore(
         uint keyState,
         POINT point,
         ref uint effect)
@@ -411,18 +415,26 @@ public sealed class NativeDropTarget : IDisposable
             allowedEffects,
             HasShellApplicationData,
             _defaultMoveProvider(),
-            followWindows: GetFollowWindowsSetting());
-        if (_isSelfSourceDrag)
-        {
-            effect = DropeffectNone;
-            return S_OK;
-        }
-
+            followWindows: GetFollowWindowsSetting(),
+            sameVolume: GetSameVolume(_dragPathHints));
         UpdateShellVisual(point, effect);
         return S_OK;
     }
 
     internal int OnDragLeave()
+    {
+        CallbackDepth.Enter();
+        try
+        {
+            return OnDragLeaveCore();
+        }
+        finally
+        {
+            CallbackDepth.Exit();
+        }
+    }
+
+    private int OnDragLeaveCore()
     {
         EndNativeDragVisual();
         ResetDragDataState();
@@ -437,22 +449,23 @@ public sealed class NativeDropTarget : IDisposable
         POINT point,
         ref uint effect)
     {
-        if (_isSelfSourceDrag)
+        CallbackDepth.Enter();
+        try
         {
-            // The drag returned to its own widget: refuse before the launch
-            // delegate and the import pipeline can touch anything, and keep
-            // the source files exactly where they are.
-            ClearActiveDropDescriptionAndReleaseDataObject();
-            _shellVisualActive = false;
-            ResetDragDataState();
-            _rightButtonDragActive = false;
-            _isSelfSourceDrag = false;
-            effect = DropeffectNone;
-            App.Log(
-                "[DropTarget] NativeDrop refused self-source drag " +
-                "(returned to its own widget)");
-            return S_OK;
+            return OnDropCore(dataObject, keyState, point, ref effect);
         }
+        finally
+        {
+            CallbackDepth.Exit();
+        }
+    }
+
+    private int OnDropCore(
+        nint dataObject,
+        uint keyState,
+        POINT point,
+        ref uint effect)
+    {
 
         uint allowedEffects = effect;
         bool shellApplicationDrop = HasShellApplicationData;
@@ -468,21 +481,50 @@ public sealed class NativeDropTarget : IDisposable
             allowedEffects,
             shellApplicationDrop,
             defaultMove,
-            followWindows: followWindows);
-        IReadOnlyList<string> paths = shellApplicationDrop
-            ? TryExtractShellApplicationShortcuts(dataObject)
-            : [];
-        bool createdShellApplicationLinks = paths.Count > 0;
-        bool containsTemporaryFiles = createdShellApplicationLinks;
-        if (paths.Count == 0)
+            followWindows: followWindows,
+            sameVolume: GetSameVolume(_dragPathHints));
+        if ((virtualFileDrop || shellApplicationDrop) && dataObject != 0)
         {
-            (paths, containsTemporaryFiles) = TryExtractFilePaths(dataObject);
+            // Virtual-only drops (browser downloads, shell virtual files) and
+            // shell-application links both pay their extraction inside the
+            // source's drag loop — cross-process FILECONTENTS streams, or PIDL
+            // parsing plus .lnk materialization. Both leave the OLE callback
+            // frame entirely, per the shell's asynchronous drop protocol
+            // (IDataObjectAsyncCapability): negotiate StartOperation before
+            // returning, extract on the dedicated MTA worker, write the
+            // receipt and EndOperation after extraction, and only then run
+            // the launch/import continuation on the UI thread.
+            return HandleDeferredDropMaterialization(
+                dataObject,
+                keyState,
+                point,
+                ref effect,
+                allowedEffects,
+                feedbackEffect,
+                rightButtonDrag,
+                defaultMove,
+                followWindows,
+                shellApplicationDrop);
         }
+
+        IReadOnlyList<string> paths = [];
+        bool createdShellApplicationLinks = false;
+        bool containsTemporaryFiles = false;
+        (paths, containsTemporaryFiles) = TryExtractFilePaths(dataObject);
+        // The transfer decision must respect the allowed effects the source
+        // announced (the same constraint the feedback effect applies). A
+        // copy-only source whose files are moved would delete originals the
+        // source never sanctioned for deletion.
+        bool sourceCanCopy = (allowedEffects & NativeDropEffectPolicy.Copy) != 0;
+        bool sourceCanMove = (allowedEffects & NativeDropEffectPolicy.Move) != 0;
         bool copyRequested = NativeDropEffectPolicy.ShouldCopyMappedTransfer(
             containsTemporaryFiles,
             keyState,
             defaultMove,
-            followWindows: followWindows);
+            followWindows: followWindows,
+            sameVolume: GetSameVolume(_dragPathHints),
+            canCopy: sourceCanCopy,
+            canMove: sourceCanMove);
         bool shortcutRequested = createdShellApplicationLinks ||
             NativeDropEffectPolicy.ShouldCreateMappedShortcut(
                 containsTemporaryFiles,
@@ -536,12 +578,14 @@ public sealed class NativeDropTarget : IDisposable
             if (launch.Consumed)
             {
                 effect = NativeDropEffectPolicy.None;
+                WritePerformedDropEffect(dataObject, effect);
                 return S_OK;
             }
 
             if (launch.Handled)
             {
                 effect = launch.Effect;
+                WritePerformedDropEffect(dataObject, effect);
                 return S_OK;
             }
         }
@@ -572,8 +616,22 @@ public sealed class NativeDropTarget : IDisposable
                 }
 
                 effect = NativeDropEffectPolicy.None;
+                WritePerformedDropEffect(dataObject, effect);
                 return S_OK;
             }
+        }
+
+        // A busy import pipeline cannot accept a drop: refuse it before the
+        // completion effect commits so the source is never told the drop
+        // succeeded while the files are silently skipped.
+        if (paths.Count > 0 && IsImportBusy())
+        {
+            App.Log(
+                $"[DropTarget] Refused drop: import pipeline busy " +
+                $"count={paths.Count}");
+            effect = NativeDropEffectPolicy.None;
+            WritePerformedDropEffect(dataObject, effect);
+            return S_OK;
         }
 
         if (paths.Count > 0)
@@ -587,7 +645,8 @@ public sealed class NativeDropTarget : IDisposable
                 shortcutRequested,
                 rightButtonDrag,
                 feedbackEffect,
-                keyState));
+                keyState,
+                allowedEffects));
             DropEvent?.Invoke(
                 paths,
                 point.X,
@@ -604,7 +663,390 @@ public sealed class NativeDropTarget : IDisposable
             effect = NativeDropEffectPolicy.None;
         }
 
+        WritePerformedDropEffect(dataObject, effect);
         return S_OK;
+    }
+
+    /// <summary>
+    /// The deferred half of the drop for virtual-only data and
+    /// shell-application links: hands the data object to the materialization
+    /// worker and returns from the OLE callback without extracting anything.
+    /// Runs inside OnDropCore (callback frame); the only heavy work done here
+    /// is the async-capability handshake, whose StartOperation call is only
+    /// valid exactly here — before the callback returns.
+    /// </summary>
+    private int HandleDeferredDropMaterialization(
+        nint dataObject,
+        uint keyState,
+        POINT point,
+        ref uint effect,
+        uint allowedEffects,
+        uint feedbackEffect,
+        bool rightButtonDrag,
+        bool defaultMove,
+        bool followWindows,
+        bool shellApplicationDrop)
+    {
+        // Capacity is checked BEFORE the marshal: a refused stream that is
+        // never unmarshaled would leak the marshal packet plus its hold on
+        // the source object (CoReleaseMarshalData on a hung source would
+        // block the UI thread, so the packet is simply never created).
+        if (!NativeDropMaterializationWorker.CanAcceptJob)
+        {
+            App.Log(
+                "[DropTarget] Refused deferred drop: materialization queue " +
+                "is full");
+            FinishDragVisualAndState(dataObject, point, feedbackEffect);
+            effect = NativeDropEffectPolicy.None;
+            WritePerformedDropEffect(dataObject, effect);
+            return S_OK;
+        }
+
+        // A busy import pipeline cannot accept the drop; refuse synchronously
+        // with a none receipt so the source is never told the drop succeeded.
+        if (IsImportBusy())
+        {
+            App.Log("[DropTarget] Refused virtual drop: import pipeline busy");
+            FinishDragVisualAndState(dataObject, point, feedbackEffect);
+            effect = NativeDropEffectPolicy.None;
+            WritePerformedDropEffect(dataObject, effect);
+            return S_OK;
+        }
+
+        // Capture the hover target now, inside the callback: the completion
+        // only delegates to the launch handler when the hover target survived
+        // the materialization window unchanged, so a later gesture's state
+        // is never stamped by this drop's completion.
+        string? launchTargetPathAtDrop =
+            !shellApplicationDrop && !rightButtonDrag
+                ? LaunchTargetPathProbe?.Invoke()
+                : null;
+
+        // StartOperation must happen before this callback returns: it is what
+        // tells an async source (browser download drags) to keep serving
+        // FILECONTENTS after DoDragDrop returns. Sources without the
+        // capability take the plain marshal-and-worker path — the remote stub
+        // manager keeps the source object alive while the marshaled
+        // reference exists.
+        bool asyncStarted = false;
+        if (NativeDropAsyncCapability.TryQuery(dataObject, out NativeDropAsyncCapability capability))
+        {
+            try
+            {
+                if (capability.GetAsyncMode())
+                {
+                    if (capability.StartOperation() >= 0)
+                    {
+                        asyncStarted = true;
+                        App.LogVerbose(
+                            "[DropTarget] Async drop negotiated with the source");
+                    }
+                    else
+                    {
+                        // An async-capable source rejecting the handshake is
+                        // the single most useful ecosystem-conflict signal
+                        // (delayed-render CF_HDROP sources et al.); default
+                        // level so field logs see it without verbose.
+                        App.Log(
+                            "[DropTarget] Async source rejected " +
+                            "StartOperation; falling back to the marshal " +
+                            "path.");
+                    }
+                }
+            }
+            finally
+            {
+                // The worker re-queries the capability for EndOperation on its
+                // own apartment; this thread's reference ends here.
+                _ = capability.Release();
+            }
+        }
+
+        bool sourceCanCopy = (allowedEffects & NativeDropEffectPolicy.Copy) != 0;
+        bool sourceCanMove = (allowedEffects & NativeDropEffectPolicy.Move) != 0;
+        bool copyRequested = NativeDropEffectPolicy.ShouldCopyMappedTransfer(
+            containsTemporaryFiles: true,
+            keyState,
+            defaultMove,
+            followWindows: followWindows,
+            sameVolume: GetSameVolume(_dragPathHints),
+            canCopy: sourceCanCopy,
+            canMove: sourceCanMove);
+        bool shortcutRequested = shellApplicationDrop ||
+            NativeDropEffectPolicy.ShouldCreateMappedShortcut(
+                containsTemporaryFiles: true,
+                keyState);
+        uint completionEffect = NativeDropEffectPolicy.ResolveCompletionEffect(
+            hasExtractedPaths: true,
+            allowedEffects,
+            createdShellApplicationLinks: shellApplicationDrop);
+        int dropX = point.X;
+        int dropY = point.Y;
+        uint capturedKeyState = keyState;
+        uint capturedAllowedEffects = allowedEffects;
+        uint capturedFeedbackEffect = feedbackEffect;
+        bool capturedRightButtonDrag = rightButtonDrag;
+
+        if (shellApplicationDrop)
+        {
+            // Shell namespace APIs used by the AppsFolder extraction
+            // (SHGetNameFromIDList & friends) bind in-proc shell COM objects
+            // that fail on the MTA worker (2026-10-15 field incident:
+            // start-menu drags extracted zero items on the worker). The
+            // extraction therefore stays on the UI STA, one dispatcher turn
+            // out of the callback frame; a plain AddRef keeps the data object
+            // alive across the hop (same thread, no marshal needed) and the
+            // receipt/EndOperation run here too, satisfying the async
+            // protocol (everything happens after the Drop callback returned).
+            _ = System.Runtime.InteropServices.Marshal.AddRef(dataObject);
+            FinishDragVisualAndState(dataObject, point, feedbackEffect);
+            App.Log(
+                "[DropTarget] NativeDrop deferred shell-app extraction to " +
+                "UI turn");
+            UiDispatch.PostAfterCallback(() =>
+            {
+                IReadOnlyList<string> extractedPaths = [];
+                try
+                {
+                    extractedPaths = TryExtractShellApplicationShortcuts(dataObject);
+                    WritePerformedDropEffect(
+                        dataObject,
+                        extractedPaths.Count > 0
+                            ? completionEffect
+                            : NativeDropEffectPolicy.None);
+                    EndAsyncOperationIfStarted(dataObject, asyncStarted);
+                }
+                catch (Exception ex)
+                {
+                    App.Log(
+                        "[DropTarget] Deferred shell-app extraction failed: " +
+                        ex.Message);
+                    try
+                    {
+                        WritePerformedDropEffect(
+                            dataObject,
+                            NativeDropEffectPolicy.None);
+                    }
+                    catch
+                    {
+                        // Best effort; the source keeps its files.
+                    }
+
+                    EndAsyncOperationIfStarted(dataObject, asyncStarted);
+                }
+                finally
+                {
+                    _ = System.Runtime.InteropServices.Marshal.Release(dataObject);
+                }
+
+                OnDeferredMaterializationCompleted(
+                    extractedPaths,
+                    dropX,
+                    dropY,
+                    copyRequested,
+                    shortcutRequested,
+                    capturedKeyState,
+                    capturedAllowedEffects,
+                    capturedFeedbackEffect,
+                    capturedRightButtonDrag,
+                    shellApplicationDrop,
+                    launchTargetPathAtDrop);
+            });
+
+            effect = completionEffect;
+            return S_OK;
+        }
+
+        nint marshalStream = 0;
+        try
+        {
+            int hr = Win32Helper.CoMarshalInterThreadInterfaceInStream(
+                in Win32Helper.IDataObjectComInterfaceId,
+                dataObject,
+                out marshalStream);
+            if (hr < 0 || marshalStream == 0)
+            {
+                App.Log(
+                    $"[DropTarget] Virtual drop marshal failed hr=0x{hr:X8}");
+                FinishDragVisualAndState(dataObject, point, feedbackEffect);
+                effect = NativeDropEffectPolicy.None;
+                WritePerformedDropEffect(dataObject, effect);
+                EndAsyncOperationIfStarted(dataObject, asyncStarted);
+                return S_OK;
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[DropTarget] Virtual drop marshal threw: {ex.Message}");
+            FinishDragVisualAndState(dataObject, point, feedbackEffect);
+            effect = NativeDropEffectPolicy.None;
+            WritePerformedDropEffect(dataObject, effect);
+            EndAsyncOperationIfStarted(dataObject, asyncStarted);
+            return S_OK;
+        }
+
+        if (!NativeDropMaterializationWorker.TryEnqueue(
+                marshalStream,
+                asyncStarted,
+                completionEffect,
+                extractedPaths => OnDeferredMaterializationCompleted(
+                    extractedPaths,
+                    dropX,
+                    dropY,
+                    copyRequested,
+                    shortcutRequested,
+                    capturedKeyState,
+                    capturedAllowedEffects,
+                    capturedFeedbackEffect,
+                    capturedRightButtonDrag,
+                    shellApplicationDrop,
+                    launchTargetPathAtDrop)))
+        {
+            // Unreachable in practice (capacity pre-check above; only the UI
+            // thread enqueues), kept as a hard stop: the marshal packet is
+            // abandoned rather than risk a blocking rewind on a hung source.
+            App.Log(
+                "[DropTarget] Refused deferred drop after marshal: queue " +
+                "full; marshal packet abandoned");
+            FinishDragVisualAndState(dataObject, point, feedbackEffect);
+            effect = NativeDropEffectPolicy.None;
+            WritePerformedDropEffect(dataObject, effect);
+            EndAsyncOperationIfStarted(dataObject, asyncStarted);
+            return S_OK;
+        }
+
+        FinishDragVisualAndState(dataObject, point, feedbackEffect);
+        App.Log("[DropTarget] NativeDrop deferred virtual materialization to worker");
+
+        // The OLE effect commits optimistically (copy semantics — a receipt
+        // never lets a virtual source delete anything); the worker rewrites
+        // the final receipt after extraction really finished.
+        effect = completionEffect;
+        return S_OK;
+    }
+
+    /// <summary>
+    /// The shared drag-visual/state teardown every exit of the drop path must
+    /// run — success, refusal, and failure alike. Skipping it on a refusal
+    /// keeps the DragEnter AddRef on the data object alive until the next
+    /// drag (or window close), pinning the source's object for no reason.
+    /// </summary>
+    private void FinishDragVisualAndState(nint dataObject, POINT point, uint feedbackEffect)
+    {
+        if (_shellVisualActive)
+        {
+            _dropImageManager?.Drop(dataObject, point, feedbackEffect);
+        }
+
+        ClearActiveDropDescriptionAndReleaseDataObject();
+        _shellVisualActive = false;
+        ResetDragDataState();
+        _rightButtonDragActive = false;
+    }
+
+    private static void EndAsyncOperationIfStarted(nint dataObject, bool asyncStarted)
+    {
+        if (!asyncStarted)
+        {
+            return;
+        }
+
+        if (NativeDropAsyncCapability.TryQuery(dataObject, out NativeDropAsyncCapability capability))
+        {
+            try
+            {
+                _ = capability.EndOperation(
+                    unchecked((int)0x80004005),
+                    NativeDropEffectPolicy.None);
+            }
+            finally
+            {
+                _ = capability.Release();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Lands on the UI thread after the worker finished materializing. Runs
+    /// the same gating the synchronous path ran inside the callback: the
+    /// shortcut-launch consumer first (never for shell-application links —
+    /// the synchronous path excluded them from launching too), then the
+    /// import events. The receipt and EndOperation were already written by
+    /// the worker before this runs.</summary>
+    private void OnDeferredMaterializationCompleted(
+        IReadOnlyList<string> extractedPaths,
+        int dropX,
+        int dropY,
+        bool copyRequested,
+        bool shortcutRequested,
+        uint keyState,
+        uint allowedEffects,
+        uint feedbackEffect,
+        bool rightButtonDrag,
+        bool shellApplicationDrop,
+        string? launchTargetPathAtDrop)
+    {
+        if (extractedPaths.Count == 0)
+        {
+            return;
+        }
+
+        // Launch delegation only when the hover target survived the
+        // materialization window unchanged: a newer gesture may have replaced
+        // it, and stamping consumption windows from THIS drop's completion
+        // would swallow the newer gesture's release.
+        if (!shellApplicationDrop &&
+            launchTargetPathAtDrop is not null &&
+            LaunchTargetPathProbe?.Invoke() == launchTargetPathAtDrop &&
+            LaunchDropHandler is { } launchHandler &&
+            !rightButtonDrag)
+        {
+            ShellDropLaunchResult launch = launchHandler(new NativeDropLaunchRequest(
+                extractedPaths,
+                DataObject: 0,
+                keyState,
+                dropX,
+                dropY,
+                allowedEffects,
+                RightButtonDrag: false,
+                ContainsTemporaryFiles: true));
+            if (launch.Consumed || launch.Handled)
+            {
+                return;
+            }
+        }
+
+        if (IsImportBusy())
+        {
+            App.Log(
+                $"[DropTarget] Refused deferred drop: import pipeline " +
+                $"busy count={extractedPaths.Count}");
+            // The worker already receipted optimistically; the least-bad
+            // recovery is deleting the materialized files so they do not
+            // linger forever in the temp root.
+            IReadOnlyList<string> refusedPaths = extractedPaths;
+            _ = Task.Run(() => NativeDropMaterializationWorker
+                .CleanupVirtualDropDirectories(refusedPaths));
+            return;
+        }
+
+        DropIntentEvent?.Invoke(new NativeDropIntentEventArgs(
+            extractedPaths,
+            dropX,
+            dropY,
+            true,
+            copyRequested,
+            shortcutRequested,
+            rightButtonDrag,
+            feedbackEffect,
+            keyState,
+            allowedEffects));
+        DropEvent?.Invoke(
+            extractedPaths,
+            dropX,
+            dropY,
+            true,
+            copyRequested);
     }
 
     private bool GetFollowWindowsSetting()
@@ -619,6 +1061,79 @@ public sealed class NativeDropTarget : IDisposable
         }
     }
 
+    // The OLE drop protocol asks the target to record the effect it
+    // actually performed back onto the source's data object. Explorer reads
+    // this receipt when present; our own guarded data object consumes it.
+    // Internal for the materialization worker, which writes the receipt on
+    // its own thread after extraction completes (async-drop protocol).
+    internal static void WritePerformedDropEffect(nint dataObject, uint effect)
+    {
+        if (dataObject == 0 || s_performedDropEffectFormat == 0)
+        {
+            return;
+        }
+
+        nint buffer = 0;
+        try
+        {
+            buffer = Marshal.AllocHGlobal(sizeof(uint));
+            Marshal.WriteInt32(buffer, unchecked((int)effect));
+            var format = new NativeFormatEtc
+            {
+                ClipboardFormat = s_performedDropEffectFormat,
+                TargetDevice = 0,
+                Aspect = DVASPECT_CONTENT,
+                Index = -1,
+                MediumType = TYMED_HGLOBAL
+            };
+            var medium = new NativeStorageMedium
+            {
+                MediumType = TYMED_HGLOBAL,
+                Content = buffer,
+                ReleaseUnknown = 0
+            };
+            int result = new NativeOleDataObject(dataObject)
+                .SetData(ref format, ref medium, release: true);
+            if (result < 0)
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+        catch
+        {
+            if (buffer != 0)
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+    }
+
+    private bool GetSameVolume(IReadOnlyList<string> paths)
+    {
+        try
+        {
+            return SameVolumeProbe?.Invoke(paths) ?? true;
+        }
+        catch
+        {
+            // Unknown volume pairing is the same-volume default this path
+            // has always reported; a wrong guess only affects the glyph.
+            return true;
+        }
+    }
+
+    private bool IsImportBusy()
+    {
+        try
+        {
+            return ImportBusyProbe?.Invoke() == true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private void InspectDragData(nint dataObject)
     {
         bool hasHDropData = TryHasHDropData(dataObject);
@@ -626,6 +1141,14 @@ public sealed class NativeDropTarget : IDisposable
         HasVirtualFileData = NativeDropEffectPolicy.IsVirtualOnlyFileData(
             hasHDropData,
             hasVirtualDescriptorData);
+        // Strict AppsFolder classification (2026-10-15 field incident
+        // reinstated): a presence-only probe made every IDList-only drag
+        // (Explorer zip folders et al.) promise a copy/link hover it could
+        // not honor. The strict parse is gated on !hasHDrop, so its cost only
+        // ever applies to the rare shell-object drag class — ordinary file
+        // drags never pay it. The Drop-side AppsFolder extraction runs on the
+        // UI STA (see HandleDeferredDropMaterialization); zip-folder drags
+        // carry no format DeskBox can consume and correctly read as no-drop.
         HasShellApplicationData =
             !hasHDropData && TryHasShellApplicationData(dataObject);
         HasFileData =
@@ -638,27 +1161,6 @@ public sealed class NativeDropTarget : IDisposable
         HasVirtualFileData = false;
         HasShellApplicationData = false;
         _dragPathHints = [];
-        _isSelfSourceDrag = false;
-    }
-
-    private bool IsSelfSourceDrag(nint dataObject)
-    {
-        if (SelfDragSourceWidgetProvider is null)
-        {
-            return false;
-        }
-
-        if (!NativeFileDragOut.TryReadSourceTag(
-                dataObject,
-                out string sourceWidgetId,
-                out _))
-        {
-            return false;
-        }
-
-        string? hostedWidgetId = SelfDragSourceWidgetProvider();
-        return hostedWidgetId is not null &&
-            string.Equals(sourceWidgetId, hostedWidgetId, StringComparison.Ordinal);
     }
 
     private bool ShouldUseShellVisual()
@@ -881,7 +1383,7 @@ public sealed class NativeDropTarget : IDisposable
             }
             finally
             {
-                ReleaseStgMedium(ref medium);
+                OleDropTargetNativeMethods.ReleaseStgMedium(ref medium);
             }
         }
         catch (Exception ex)
@@ -928,7 +1430,7 @@ public sealed class NativeDropTarget : IDisposable
             }
             finally
             {
-                ReleaseStgMedium(ref medium);
+                OleDropTargetNativeMethods.ReleaseStgMedium(ref medium);
             }
         }
         catch
@@ -995,7 +1497,7 @@ public sealed class NativeDropTarget : IDisposable
                 }
                 finally
                 {
-                    ReleaseStgMedium(ref medium);
+                    OleDropTargetNativeMethods.ReleaseStgMedium(ref medium);
                 }
             }
 
@@ -1009,7 +1511,9 @@ public sealed class NativeDropTarget : IDisposable
         }
     }
 
-    private static IReadOnlyList<string> TryExtractShellApplicationShortcuts(
+    // Internal for the materialization worker, which runs the PIDL parse
+    // and .lnk writes on its own apartment after the drop callback returned.
+    internal static IReadOnlyList<string> TryExtractShellApplicationShortcuts(
         IntPtr pDataObj)
     {
         if (pDataObj == IntPtr.Zero || s_shellIdListFormat == 0)
@@ -1028,11 +1532,12 @@ public sealed class NativeDropTarget : IDisposable
                 Index = -1,
                 MediumType = TYMED_HGLOBAL,
             };
-            if (dataObject.GetData(
-                    ref format,
-                    out NativeStorageMedium medium) != S_OK ||
-                medium.Content == IntPtr.Zero)
+            int shellIdListHr = dataObject.GetData(ref format, out NativeStorageMedium medium);
+            if (shellIdListHr != S_OK || medium.Content == IntPtr.Zero)
             {
+                App.LogVerbose(
+                    "[DropTarget] ShellApps extraction: SHELLIDLIST GetData " +
+                    $"failed hr=0x{shellIdListHr:X8} empty={medium.Content == IntPtr.Zero}");
                 return [];
             }
 
@@ -1043,7 +1548,14 @@ public sealed class NativeDropTarget : IDisposable
             }
             finally
             {
-                ReleaseStgMedium(ref medium);
+                OleDropTargetNativeMethods.ReleaseStgMedium(ref medium);
+            }
+
+            if (applications.Count == 0)
+            {
+                App.LogVerbose(
+                    "[DropTarget] ShellApps extraction: PIDL parse produced " +
+                    "no items (structure or AppsFolder-normalize rejection)");
             }
 
             return MaterializeShellApplicationShortcuts(applications);
@@ -1059,14 +1571,14 @@ public sealed class NativeDropTarget : IDisposable
     private static IReadOnlyList<ShellApplicationDropItem>
         ReadShellApplicationDropItems(IntPtr shellIdListHandle)
     {
-        long bufferSize = GlobalSize(shellIdListHandle).ToInt64();
+        long bufferSize = OleDropTargetNativeMethods.GlobalSize(shellIdListHandle).ToInt64();
         if (bufferSize < sizeof(uint) + (2 * sizeof(uint)) ||
             bufferSize > int.MaxValue)
         {
             return [];
         }
 
-        IntPtr bufferStart = GlobalLock(shellIdListHandle);
+        IntPtr bufferStart = OleDropTargetNativeMethods.GlobalLock(shellIdListHandle);
         if (bufferStart == IntPtr.Zero)
         {
             return [];
@@ -1119,7 +1631,7 @@ public sealed class NativeDropTarget : IDisposable
                     continue;
                 }
 
-                IntPtr absolutePidl = ILCombine(parentPidl, childPidl);
+                IntPtr absolutePidl = OleDropTargetNativeMethods.ILCombine(parentPidl, childPidl);
                 if (absolutePidl == IntPtr.Zero)
                 {
                     continue;
@@ -1152,7 +1664,7 @@ public sealed class NativeDropTarget : IDisposable
                 }
                 finally
                 {
-                    ILFree(absolutePidl);
+                    OleDropTargetNativeMethods.ILFree(absolutePidl);
                 }
             }
 
@@ -1160,7 +1672,7 @@ public sealed class NativeDropTarget : IDisposable
         }
         finally
         {
-            _ = GlobalUnlock(shellIdListHandle);
+            _ = OleDropTargetNativeMethods.GlobalUnlock(shellIdListHandle);
         }
     }
 
@@ -1216,7 +1728,7 @@ public sealed class NativeDropTarget : IDisposable
         uint displayNameType)
     {
         IntPtr value = IntPtr.Zero;
-        int hresult = SHGetNameFromIDList(
+        int hresult = OleDropTargetNativeMethods.SHGetNameFromIDList(
             itemIdList,
             displayNameType,
             out value);
@@ -1231,7 +1743,7 @@ public sealed class NativeDropTarget : IDisposable
         }
         finally
         {
-            CoTaskMemFree(value);
+            OleDropTargetNativeMethods.CoTaskMemFree(value);
         }
     }
 
@@ -1329,17 +1841,17 @@ public sealed class NativeDropTarget : IDisposable
     private static IReadOnlyList<string> GetDroppedFiles(IntPtr hDrop)
     {
         var paths = new List<string>();
-        uint count = DragQueryFile(hDrop, 0xFFFFFFFF, null, 0);
+        uint count = OleDropTargetNativeMethods.DragQueryFile(hDrop, 0xFFFFFFFF, null, 0);
         for (uint i = 0; i < count; i++)
         {
-            uint length = DragQueryFile(hDrop, i, null, 0);
+            uint length = OleDropTargetNativeMethods.DragQueryFile(hDrop, i, null, 0);
             if (length == 0)
             {
                 continue;
             }
 
             var builder = new System.Text.StringBuilder((int)length + 1);
-            uint copied = DragQueryFile(hDrop, i, builder, (uint)builder.Capacity);
+            uint copied = OleDropTargetNativeMethods.DragQueryFile(hDrop, i, builder, (uint)builder.Capacity);
             if (copied > 0)
             {
                 paths.Add(builder.ToString());
@@ -1349,7 +1861,9 @@ public sealed class NativeDropTarget : IDisposable
         return paths;
     }
 
-    private static IReadOnlyList<string> ExtractVirtualFiles(NativeOleDataObject dataObject)
+    // Internal for the materialization worker, which runs the whole stream
+    // read on its own apartment after the drop callback returned.
+    internal static IReadOnlyList<string> ExtractVirtualFiles(NativeOleDataObject dataObject)
     {
         var descriptorFormat = new NativeFormatEtc
         {
@@ -1359,11 +1873,14 @@ public sealed class NativeDropTarget : IDisposable
             Index = -1,
             MediumType = TYMED_HGLOBAL,
         };
-        if (dataObject.GetData(
-                ref descriptorFormat,
-                out NativeStorageMedium descriptorMedium) != S_OK ||
-            descriptorMedium.Content == IntPtr.Zero)
+        int descriptorHr = dataObject.GetData(
+            ref descriptorFormat,
+            out NativeStorageMedium descriptorMedium);
+        if (descriptorHr != S_OK || descriptorMedium.Content == IntPtr.Zero)
         {
+            App.LogVerbose(
+                "[DropTarget] Virtual extraction: FILEGROUPDESCRIPTOR GetData " +
+                $"failed hr=0x{descriptorHr:X8} empty={descriptorMedium.Content == IntPtr.Zero}");
             return [];
         }
 
@@ -1374,11 +1891,14 @@ public sealed class NativeDropTarget : IDisposable
         }
         finally
         {
-            ReleaseStgMedium(ref descriptorMedium);
+            OleDropTargetNativeMethods.ReleaseStgMedium(ref descriptorMedium);
         }
 
         if (descriptors.Count == 0)
         {
+            App.LogVerbose(
+                "[DropTarget] Virtual extraction: descriptor parse produced " +
+                "no entries");
             return [];
         }
 
@@ -1439,6 +1959,10 @@ public sealed class NativeDropTarget : IDisposable
 
         if (paths.Count == 0)
         {
+            App.LogVerbose(
+                $"[DropTarget] Virtual extraction: {descriptors.Count} " +
+                "descriptor(s) but no stream saved (FILECONTENTS reads all " +
+                "failed)");
             try { Directory.Delete(temporaryDirectory, recursive: true); } catch { }
         }
 
@@ -1447,8 +1971,8 @@ public sealed class NativeDropTarget : IDisposable
 
     internal static List<FILEDESCRIPTORW> ReadVirtualFileDescriptors(IntPtr descriptorHandle)
     {
-        long bufferSize = GlobalSize(descriptorHandle).ToInt64();
-        IntPtr pointer = GlobalLock(descriptorHandle);
+        long bufferSize = OleDropTargetNativeMethods.GlobalSize(descriptorHandle).ToInt64();
+        IntPtr pointer = OleDropTargetNativeMethods.GlobalLock(descriptorHandle);
         if (pointer == IntPtr.Zero)
         {
             return [];
@@ -1498,7 +2022,7 @@ public sealed class NativeDropTarget : IDisposable
         }
         finally
         {
-            GlobalUnlock(descriptorHandle);
+            OleDropTargetNativeMethods.GlobalUnlock(descriptorHandle);
         }
     }
 
@@ -1539,7 +2063,7 @@ public sealed class NativeDropTarget : IDisposable
             // different tymed (GetData may have set unionMember on failure).
             if (contentsMedium.Content != IntPtr.Zero)
             {
-                ReleaseStgMedium(ref contentsMedium);
+                OleDropTargetNativeMethods.ReleaseStgMedium(ref contentsMedium);
                 contentsMedium = default;
             }
         }
@@ -1587,7 +2111,7 @@ public sealed class NativeDropTarget : IDisposable
         }
         finally
         {
-            ReleaseStgMedium(ref contentsMedium);
+            OleDropTargetNativeMethods.ReleaseStgMedium(ref contentsMedium);
         }
     }
 
@@ -1614,7 +2138,7 @@ public sealed class NativeDropTarget : IDisposable
 
     private static void SaveGlobalMemory(IntPtr memoryHandle, string destinationPath, ref long remainingBudgetBytes)
     {
-        long size = GlobalSize(memoryHandle).ToInt64();
+        long size = OleDropTargetNativeMethods.GlobalSize(memoryHandle).ToInt64();
         if (size < 0 || size > int.MaxValue)
         {
             throw new IOException("Virtual file memory payload is too large.");
@@ -1627,7 +2151,7 @@ public sealed class NativeDropTarget : IDisposable
                 $"Virtual file memory payload of {size} bytes exceeds the budget.");
         }
 
-        IntPtr pointer = GlobalLock(memoryHandle);
+        IntPtr pointer = OleDropTargetNativeMethods.GlobalLock(memoryHandle);
         if (pointer == IntPtr.Zero)
         {
             throw new IOException("Could not lock virtual file memory payload.");
@@ -1642,7 +2166,7 @@ public sealed class NativeDropTarget : IDisposable
         }
         finally
         {
-            GlobalUnlock(memoryHandle);
+            OleDropTargetNativeMethods.GlobalUnlock(memoryHandle);
         }
     }
 }

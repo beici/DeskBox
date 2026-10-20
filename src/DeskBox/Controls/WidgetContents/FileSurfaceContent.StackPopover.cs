@@ -584,6 +584,11 @@ public sealed partial class FileSurfaceContent
 
             _stackPopoverKey = currentStack.StackKey;
             _stackPopoverMembers = currentStack.Members.ToArray();
+            // The popover is the only surface that displays every folded
+            // member at once; acquiring their icons here keeps the
+            // release/acquire pairing intact when a release ran while the
+            // stack was collapsed (group switch, long-hidden maintenance).
+            ViewModel.HealReleasedItemIconsIfIdle();
             _stackPopoverLayout = layout;
             _stackPopoverPopupClosing = false;
             _stackPopoverCleanupPending = false;
@@ -1024,7 +1029,6 @@ public sealed partial class FileSurfaceContent
         view.HorizontalAlignment = HorizontalAlignment.Center;
         view.VerticalAlignment = VerticalAlignment.Stretch;
         view.IsItemClickEnabled = true;
-        view.CanDragItems = true;
         view.CanReorderItems = false;
         view.AllowDrop = true;
         view.IsMultiSelectCheckBoxEnabled = false;
@@ -1044,9 +1048,7 @@ public sealed partial class FileSurfaceContent
             force: true);
 
         view.ItemClick += Items_ItemClick;
-        view.DragItemsCompleted += Items_DragItemsCompleted;
-        view.DragItemsStarting += Items_DragItemsStarting;
-        view.DragStarting += Items_DragStarting;
+        view.ContainerContentChanging += ItemsView_ContainerContentChanging;
         view.DragOver += StackPopoverItems_DragOver;
         view.DragLeave += StackPopoverItems_DragLeave;
         view.Drop += StackPopoverItems_Drop;
@@ -2176,6 +2178,19 @@ public sealed partial class FileSurfaceContent
 
     private void ReleaseStackPopover()
     {
+        // A popover member drag can outlive the popover: once the events are
+        // detached below, DropCompleted can never arrive and the drag-session
+        // fields would stay armed until the next gesture. Complete the
+        // session first so the in-flight drop's observation, suppression and
+        // reorder cleanup still run.
+        if (_sourceDragSession.ReleaseRecoveryPending || _stackPopoverDragActive)
+        {
+            CompleteDragItemsSession(
+                DataPackageOperation.None,
+                _stackPopoverDragActive,
+                eventItems: []);
+        }
+
         CancelStackPopoverReveal();
         ReleaseStackPopoverItemRenameEditor();
         if (_stackPopoverTitleHost is not null)
@@ -2202,9 +2217,9 @@ public sealed partial class FileSurfaceContent
             DetachStackPopoverItemSurfaces(view);
             view.Loaded -= StackPopoverItemsView_Loaded;
             view.ItemClick -= Items_ItemClick;
-            view.DragItemsCompleted -= Items_DragItemsCompleted;
-            view.DragItemsStarting -= Items_DragItemsStarting;
+            view.ContainerContentChanging -= ItemsView_ContainerContentChanging;
             view.DragStarting -= Items_DragStarting;
+            view.DropCompleted -= Items_DropCompleted;
             view.DragOver -= StackPopoverItems_DragOver;
             view.DragLeave -= StackPopoverItems_DragLeave;
             view.Drop -= StackPopoverItems_Drop;
@@ -2497,7 +2512,10 @@ public sealed partial class FileSurfaceContent
                     payload.DataView,
                     e.AllowedOperations,
                     destinationFolderPath: ViewModel.CurrentFolderPath);
-                e.AcceptedOperation = ToDataPackageOperation(resolvedIntent);
+                e.AcceptedOperation = DeskBoxDragData.ResolveFileDragFeedbackOperation(
+                    e.DataView,
+                    ToDataPackageOperation(resolvedIntent),
+                    e.AllowedOperations);
                 if (payload.IsDeskBoxFileDrag)
                 {
                     e.DragUIOverride.IsGlyphVisible =
@@ -2528,7 +2546,6 @@ public sealed partial class FileSurfaceContent
 
         e.Handled = true;
         e.AcceptedOperation = ResolveInternalArrangementFeedbackOperation(
-            payload.IsDeskBoxFileDrag,
             e.AllowedOperations,
             e.DataView.RequestedOperation);
         TraceInternalDragDecision("stack-reorder", payload, e);
@@ -2706,9 +2723,57 @@ public sealed partial class FileSurfaceContent
         if (reordered)
         {
             UpdateStackPopoverKeyAfterReorder(items);
+            ScheduleStackPopoverReorderSelectionRestore(items);
         }
 
         return reordered;
+    }
+
+    // The projection-change wrapper around a popover reorder clears the
+    // popover selection, including a deferred reset that runs after
+    // container recycling. The restore therefore hops twice through the
+    // low-priority queue: the first hop queues behind that reset's
+    // enqueue, and the second runs after the reset itself, so the same
+    // members stay selected for a follow-up drag.
+    private void ScheduleStackPopoverReorderSelectionRestore(
+        IReadOnlyList<WidgetItem> items)
+    {
+        string[] paths = items
+            .Select(item => Path.GetFullPath(item.Path))
+            .ToArray();
+        DispatcherQueue.TryEnqueue(
+            Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+            () => DispatcherQueue.TryEnqueue(
+                Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+                () =>
+                {
+                    if (_isDisposed ||
+                        _stackPopoverItemsView is not { } view ||
+                        !IsStackPopoverInteractionActive)
+                    {
+                        return;
+                    }
+
+                    HashSet<string> pathSet = paths
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    List<WidgetItem> restored = view.Items
+                        .OfType<WidgetItem>()
+                        .Where(item => item is not WidgetStackItem &&
+                            pathSet.Contains(Path.GetFullPath(item.Path)))
+                        .ToList();
+                    if (restored.Count == 0)
+                    {
+                        return;
+                    }
+
+                    view.SelectedItems.Clear();
+                    foreach (WidgetItem item in restored)
+                    {
+                        view.SelectedItems.Add(item);
+                    }
+
+                    UpdateSelectionCommandBar();
+                }));
     }
 
     private int ResolveStackPopoverMemberInsertionIndex(

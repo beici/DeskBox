@@ -1,4 +1,4 @@
-namespace DeskBox.Tests;
+﻿namespace DeskBox.Tests;
 
 public sealed class AotStage4E5ContractTests
 {
@@ -30,7 +30,7 @@ public sealed class AotStage4E5ContractTests
     }
 
     [Fact]
-    public void SearchResultRow_UsesEightManuallyRefreshedOneTimeCompiledBindings()
+    public void SearchResultRow_UsesNineManuallyRefreshedOneTimeCompiledBindings()
     {
         string xaml = ReadRepositoryFile(
             "src/DeskBox/Controls/SearchResultRowControl.xaml");
@@ -43,11 +43,13 @@ public sealed class AotStage4E5ContractTests
             "Subtitle",
             "TypeDisplay",
             "SizeDisplay",
-            "DateDisplay"
+            "DateDisplay",
+            // Tooltip carries the full path for truncated subtitles.
+            "DetailPath"
         ];
 
         Assert.DoesNotContain("{Binding ", xaml, StringComparison.Ordinal);
-        Assert.Equal(8, CountOccurrences(xaml, "{x:Bind Item."));
+        Assert.Equal(9, CountOccurrences(xaml, "{x:Bind Item."));
         foreach (string leaf in leaves.Distinct(StringComparer.Ordinal))
         {
             int expected = leaf == "Title" ? 2 : 1;
@@ -154,7 +156,7 @@ public sealed class AotStage4E5ContractTests
         string app = ReadRepositoryFile("src/DeskBox/App.xaml");
         string contentWindow = ReadRepositoryFile("src/DeskBox/Views/ContentWidgetWindow.xaml");
 
-        Assert.Equal(2, CountOccurrences(app, "{Binding "));
+        Assert.Equal(0, CountOccurrences(app, "{Binding "));
         Assert.Equal(1, CountOccurrences(contentWindow, "{Binding "));
     }
 

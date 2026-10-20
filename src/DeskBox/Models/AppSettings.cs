@@ -8,6 +8,19 @@ namespace DeskBox.Models;
 /// properties below are the serialization facade and the legacy access
 /// surface. Declaration order here defines the on-disk member order.
 /// </summary>
+/// <remarks>
+/// Batch 51 adjudication (schema-equivalent narrowing): the 220 passthrough
+/// properties below are the frozen settings.json wire contract, not removable
+/// facade weight. Serializing slice members directly was evaluated and
+/// rejected — the flat member order interleaves all 13 slices, and the one
+/// legacy wire-attribute pair (<see cref="LegacyWidgetCapsuleModeEnabled"/>
+/// JsonPropertyName + WhenWritingNull) lives here — so no byte-equivalent
+/// path removes these properties. Adding or removing a passthrough is a
+/// disk-schema change and requires a schema-versioned migration; runtime code
+/// reads the slices (<c>Settings.&lt;Slice&gt;.&lt;Prop&gt;</c>) and the
+/// SettingsSliceOwnershipContractTests access ratchet keeps facade references
+/// shrinking toward that end state.
+/// </remarks>
 public class AppSettings
 {
     /// <summary>
@@ -83,6 +96,9 @@ public class AppSettings
 
     /// <inheritdoc cref="CoreSettingsSlice.AutoStartMode"/>
     public StartupMode? AutoStartMode { get => Core.AutoStartMode; set => Core.AutoStartMode = value; }
+
+    /// <inheritdoc cref="CoreSettingsSlice.SilentStartup"/>
+    public bool SilentStartup { get => Core.SilentStartup; set => Core.SilentStartup = value; }
 
     /// <inheritdoc cref="PerformanceSettingsSlice.PerformanceMode"/>
     public string PerformanceMode { get => Performance.PerformanceMode; set => Performance.PerformanceMode = value; }
@@ -276,6 +292,12 @@ public class AppSettings
     /// <inheritdoc cref="MusicSettingsSlice.MusicDisplayMode"/>
     public string MusicDisplayMode { get => Music.MusicDisplayMode; set => Music.MusicDisplayMode = value; }
 
+    /// <inheritdoc cref="MusicSettingsSlice.MusicHideTimelineWhenUnavailable"/>
+    public bool MusicHideTimelineWhenUnavailable { get => Music.MusicHideTimelineWhenUnavailable; set => Music.MusicHideTimelineWhenUnavailable = value; }
+
+    /// <inheritdoc cref="QuickCaptureSettingsSlice.LastQuickCaptureFileWidgetId"/>
+    public string LastQuickCaptureFileWidgetId { get => QuickCapture.LastQuickCaptureFileWidgetId; set => QuickCapture.LastQuickCaptureFileWidgetId = value; }
+
     /// <inheritdoc cref="CoreSettingsSlice.GlobalHotkeyEnabled"/>
     public bool GlobalHotkeyEnabled { get => Core.GlobalHotkeyEnabled; set => Core.GlobalHotkeyEnabled = value; }
 
@@ -336,6 +358,29 @@ public class AppSettings
     /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetBorderStyle"/>
     public string WidgetBorderStyle { get => WidgetShell.WidgetBorderStyle; set => WidgetShell.WidgetBorderStyle = value; }
 
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetBackgroundMode"/>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? WidgetBackgroundMode { get => WidgetShell.WidgetBackgroundMode; set => WidgetShell.WidgetBackgroundMode = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetBackgroundUnifiedImage"/>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? WidgetBackgroundUnifiedImage { get => WidgetShell.WidgetBackgroundUnifiedImage; set => WidgetShell.WidgetBackgroundUnifiedImage = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetBackgroundPanoramaImage"/>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? WidgetBackgroundPanoramaImage { get => WidgetShell.WidgetBackgroundPanoramaImage; set => WidgetShell.WidgetBackgroundPanoramaImage = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetBackgroundDim"/>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? WidgetBackgroundDim { get => WidgetShell.WidgetBackgroundDim; set => WidgetShell.WidgetBackgroundDim = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetBackgroundUnifiedFit"/>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? WidgetBackgroundUnifiedFit { get => WidgetShell.WidgetBackgroundUnifiedFit; set => WidgetShell.WidgetBackgroundUnifiedFit = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetTextShadowEnabled"/>
+    public bool WidgetTextShadowEnabled { get => WidgetShell.WidgetTextShadowEnabled; set => WidgetShell.WidgetTextShadowEnabled = value; }
+
     /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetCornerPreference"/>
     public string WidgetCornerPreference { get => WidgetShell.WidgetCornerPreference; set => WidgetShell.WidgetCornerPreference = value; }
 
@@ -350,6 +395,9 @@ public class AppSettings
 
     /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetAnimationEasingIntensity"/>
     public string WidgetAnimationEasingIntensity { get => WidgetShell.WidgetAnimationEasingIntensity; set => WidgetShell.WidgetAnimationEasingIntensity = value; }
+
+    /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetAnimationStaggerEnabled"/>
+    public bool WidgetAnimationStaggerEnabled { get => WidgetShell.WidgetAnimationStaggerEnabled; set => WidgetShell.WidgetAnimationStaggerEnabled = value; }
 
     /// <inheritdoc cref="WidgetShellSettingsSlice.WidgetLayerMode"/>
     public string WidgetLayerMode { get => WidgetShell.WidgetLayerMode; set => WidgetShell.WidgetLayerMode = value; }
@@ -491,6 +539,15 @@ public class AppSettings
     /// <inheritdoc cref="FileWidgetSettingsSlice.ManagedDropAction"/>
     public string ManagedDropAction { get => FileWidget.ManagedDropAction; set => FileWidget.ManagedDropAction = value; }
 
+    /// <inheritdoc cref="FileWidgetSettingsSlice.ManagedDragOutAction"/>
+    public string ManagedDragOutAction { get => FileWidget.ManagedDragOutAction; set => FileWidget.ManagedDragOutAction = value; }
+
+    /// <inheritdoc cref="FileWidgetSettingsSlice.DragOutModifierTipEnabled"/>
+    public bool DragOutModifierTipEnabled { get => FileWidget.DragOutModifierTipEnabled; set => FileWidget.DragOutModifierTipEnabled = value; }
+
+    /// <inheritdoc cref="FileWidgetSettingsSlice.DragOutResultHintEnabled"/>
+    public bool DragOutResultHintEnabled { get => FileWidget.DragOutResultHintEnabled; set => FileWidget.DragOutResultHintEnabled = value; }
+
     /// <inheritdoc cref="FileWidgetSettingsSlice.DefaultManagedStorageRootPath"/>
     public string DefaultManagedStorageRootPath { get => FileWidget.DefaultManagedStorageRootPath; set => FileWidget.DefaultManagedStorageRootPath = value; }
 
@@ -520,6 +577,9 @@ public class AppSettings
 
     /// <inheritdoc cref="DesktopOrganizationSettingsSlice.DesktopAutoOrganizationEnabled"/>
     public bool DesktopAutoOrganizationEnabled { get => DesktopOrganization.DesktopAutoOrganizationEnabled; set => DesktopOrganization.DesktopAutoOrganizationEnabled = value; }
+
+    /// <inheritdoc cref="DesktopOrganizationSettingsSlice.DesktopAutoOrganizationDelaySeconds"/>
+    public int DesktopAutoOrganizationDelaySeconds { get => DesktopOrganization.DesktopAutoOrganizationDelaySeconds; set => DesktopOrganization.DesktopAutoOrganizationDelaySeconds = value; }
 
     /// <inheritdoc cref="DesktopOrganizationSettingsSlice.DesktopAutoOrganizationBaselineUtc"/>
     public DateTimeOffset? DesktopAutoOrganizationBaselineUtc { get => DesktopOrganization.DesktopAutoOrganizationBaselineUtc; set => DesktopOrganization.DesktopAutoOrganizationBaselineUtc = value; }
@@ -557,6 +617,27 @@ public class AppSettings
     /// <inheritdoc cref="WidgetLayoutSettingsSlice.Widgets"/>
     public List<WidgetConfig> Widgets { get => WidgetLayout.Widgets; set => WidgetLayout.Widgets = value; }
 
+    /// <inheritdoc cref="WidgetLayoutSettingsSlice.WidgetDefaultBoundScreenId"/>
+    public string? WidgetDefaultBoundScreenId
+    {
+        get => WidgetLayout.WidgetDefaultBoundScreenId;
+        set => WidgetLayout.WidgetDefaultBoundScreenId = value;
+    }
+
+    /// <inheritdoc cref="WidgetLayoutSettingsSlice.WidgetNewPlacementTarget"/>
+    public string WidgetNewPlacementTarget
+    {
+        get => WidgetLayout.WidgetNewPlacementTarget;
+        set => WidgetLayout.WidgetNewPlacementTarget = value;
+    }
+
+    /// <inheritdoc cref="WidgetLayoutSettingsSlice.WidgetDisplayDisconnectBehavior"/>
+    public string WidgetDisplayDisconnectBehavior
+    {
+        get => WidgetLayout.WidgetDisplayDisconnectBehavior;
+        set => WidgetLayout.WidgetDisplayDisconnectBehavior = value;
+    }
+
     /// <inheritdoc cref="WidgetLayoutSettingsSlice.WidgetGroups"/>
     public List<WidgetGroupConfig> WidgetGroups { get => WidgetLayout.WidgetGroups; set => WidgetLayout.WidgetGroups = value; }
 
@@ -580,6 +661,9 @@ public class AppSettings
 
     /// <inheritdoc cref="WidgetLayoutSettingsSlice.WidgetGroupHoverSwitchEnabled"/>
     public bool WidgetGroupHoverSwitchEnabled { get => WidgetLayout.WidgetGroupHoverSwitchEnabled; set => WidgetLayout.WidgetGroupHoverSwitchEnabled = value; }
+
+    /// <inheritdoc cref="WidgetLayoutSettingsSlice.WidgetGroupSwitchAnimationStyle"/>
+    public string WidgetGroupSwitchAnimationStyle { get => WidgetLayout.WidgetGroupSwitchAnimationStyle; set => WidgetLayout.WidgetGroupSwitchAnimationStyle = value; }
 
     /// <inheritdoc cref="WidgetShellSettingsSlice.FocusClickedWidgetOnRaise"/>
     public bool FocusClickedWidgetOnRaise { get => WidgetShell.FocusClickedWidgetOnRaise; set => WidgetShell.FocusClickedWidgetOnRaise = value; }
@@ -614,6 +698,9 @@ public class AppSettings
 
     /// <inheritdoc cref="WeatherSettingsSlice.WeatherSkin"/>
     public string WeatherSkin { get => Weather.WeatherSkin; set => Weather.WeatherSkin = value; }
+
+    /// <inheritdoc cref="WeatherSettingsSlice.WeatherIconStyle"/>
+    public string WeatherIconStyle { get => Weather.WeatherIconStyle; set => Weather.WeatherIconStyle = value; }
 
     /// <inheritdoc cref="WeatherSettingsSlice.WeatherShowForecast"/>
     public bool WeatherShowForecast { get => Weather.WeatherShowForecast; set => Weather.WeatherShowForecast = value; }

@@ -82,6 +82,8 @@ public sealed partial class ContentWidgetWindow
             ContentWidgetShell.SizeLockActionIcon,
             ContentWidgetShell.SizeLockFilledActionIcon,
             _config.IsSizeLocked);
+        // The lock button accessible names flip between lock/unlock wording.
+        ApplyTitleActionAccessibleNames();
     }
 
     // ── Button click handlers ──────────────────────────────────
@@ -150,7 +152,7 @@ public sealed partial class ContentWidgetWindow
 
     internal Task RevealItemAsync(string? itemId)
     {
-        return _contentHost.CurrentContent is QuickCaptureSurfaceContent quickCapture
+        return _contentHost.CurrentContent is QuickCaptureWidgetContentAdapter quickCapture
             ? quickCapture.RevealItemAsync(itemId)
             : Task.CompletedTask;
     }
@@ -197,7 +199,7 @@ public sealed partial class ContentWidgetWindow
     private MenuFlyoutSubItem CreateClipboardItemColorMenu(Action hideFlyout)
     {
         var localization = App.Current.LocalizationService;
-        if (CurrentContent is not QuickCaptureSurfaceContent quickCaptureSurface)
+        if (CurrentContent is not QuickCaptureWidgetContentAdapter { MaterializedSurface: { } quickCaptureSurface })
         {
             return new MenuFlyoutSubItem
             {
@@ -394,48 +396,153 @@ public sealed partial class ContentWidgetWindow
         bool showCloseWhenClosed = false;
         IDisposable? closeWidgetFlyoutHandoff = null;
         bool showForegroundColorPickerWhenClosed = false;
+        bool showTitleIconCustomizerWhenClosed = false;
+        bool showBackgroundCustomizerWhenClosed = false;
+        IDisposable? pickerHandoff = null;
         rename.Click += (_, _) => startRenameWhenClosed = true;
         flyout.Closed += (_, _) =>
         {
-            if (startRenameWhenClosed)
+            try
             {
-                DispatcherQueue.TryEnqueue(StartTitleRename);
-            }
-            else if (showCloseWhenClosed)
-            {
-                QueueCloseWidgetFlyout(closeWidgetFlyoutHandoff);
-                closeWidgetFlyoutHandoff = null;
-            }
-            else if (_pendingClipboardColorPicker.HasValue)
-            {
-                ClipboardColorPickerTarget pickerTarget = _pendingClipboardColorPicker.Value;
-                _pendingClipboardColorPicker = null;
-                DispatcherQueue.TryEnqueue(async () =>
+                if (startRenameWhenClosed)
                 {
-                    if (CurrentContent is QuickCaptureSurfaceContent quickCaptureSurface)
+                    DispatcherQueue.TryEnqueue(StartTitleRename);
+                }
+                else if (showCloseWhenClosed)
+                {
+                    QueueCloseWidgetFlyout(closeWidgetFlyoutHandoff);
+                    closeWidgetFlyoutHandoff = null;
+                }
+                else if (_pendingClipboardColorPicker.HasValue)
+                {
+                    ClipboardColorPickerTarget pickerTarget =
+                        _pendingClipboardColorPicker.Value;
+                    _pendingClipboardColorPicker = null;
+                    DispatcherQueue.TryEnqueue(async () =>
                     {
-                        await quickCaptureSurface.ShowClipboardItemColorPickerAsync(
-                            isBackground: pickerTarget == ClipboardColorPickerTarget.Background,
-                            isHoverText: pickerTarget == ClipboardColorPickerTarget.HoverText);
-                    }
-                });
+                        if (CurrentContent is QuickCaptureWidgetContentAdapter
+                            { MaterializedSurface: { } quickCaptureSurface })
+                        {
+                            await quickCaptureSurface.ShowClipboardItemColorPickerAsync(
+                                isBackground: pickerTarget == ClipboardColorPickerTarget.Background,
+                                isHoverText: pickerTarget == ClipboardColorPickerTarget.HoverText);
+                        }
+                    });
+                }
+                else if (showForegroundColorPickerWhenClosed)
+                {
+                    QueueInteractionGuardedFlyout(
+                        pickerHandoff,
+                        () =>
+                        {
+                            ShowFlyoutWithInteraction(
+                                BuildWidgetForegroundColorPickerFlyout(),
+                                ContentWidgetShell);
+                            return Task.CompletedTask;
+                        });
+                    pickerHandoff = null;
+                }
+                else if (showTitleIconCustomizerWhenClosed)
+                {
+                    QueueInteractionGuardedFlyout(
+                        pickerHandoff,
+                        () =>
+                        {
+                            ShowTitleIconCustomizer();
+                            return Task.CompletedTask;
+                        });
+                    pickerHandoff = null;
+                }
+                else if (showBackgroundCustomizerWhenClosed)
+                {
+                    QueueInteractionGuardedFlyout(
+                        pickerHandoff,
+                        () =>
+                        {
+                            ShowWidgetBackgroundCustomizer();
+                            return Task.CompletedTask;
+                        });
+                    pickerHandoff = null;
+                }
             }
-            else if (showForegroundColorPickerWhenClosed)
+            finally
             {
-                DispatcherQueue.TryEnqueue(() =>
-                    ShowFlyoutWithInteraction(
-                        BuildWidgetForegroundColorPickerFlyout(),
-                        ContentWidgetShell));
+                // The color toggle keeps this menu open (#437), so rename,
+                // disable, or settings can still win the dismissal after the
+                // picker handoff was armed. A handoff its branch did not
+                // queue must release here, or the compact lease leaks and a
+                // Smart capsule stays expanded forever.
+                pickerHandoff?.Dispose();
+                closeWidgetFlyoutHandoff?.Dispose();
             }
         };
         flyout.Items.Add(rename);
 
-        flyout.Items.Add(WidgetChromeMenuBuilder.Create(
+        // All per-widget appearance entries live under one top-level submenu
+        // (Windows 11 keeps primary context commands few and grouped).
+        // WidgetCustomIconAndBackgroundLiveUnderStyleMenu: the icon and
+        // background customizers and their flyout handoffs are children of
+        // this submenu, not top-level items.
+        var styleMenu = new MenuFlyoutSubItem
+        {
+            Text = App.Current.LocalizationService.T("Widget.StyleMenu.Label"),
+            Icon = new FontIcon { Glyph = "\uE790" }
+        };
+
+        var customizeIcon = new MenuFlyoutItem
+        {
+            Text = App.Current.LocalizationService.T("Widget.CustomIcon.MenuLabel"),
+            Icon = new FontIcon { Glyph = "\uE890" }
+        };
+        customizeIcon.Click += (_, _) =>
+        {
+            showTitleIconCustomizerWhenClosed = true;
+            // Same transition gap as the color picker chain: hold the
+            // interaction until the customizer flyout takes over.
+            pickerHandoff ??= AcquireCloseWidgetFlyoutHandoff();
+        };
+        styleMenu.Items.Add(customizeIcon);
+
+        var customizeBackground = new MenuFlyoutItem
+        {
+            Text = App.Current.LocalizationService.T("Widget.CustomBackground.MenuLabel"),
+            Icon = new FontIcon { Glyph = "\uE91B" }
+        };
+        customizeBackground.Click += (_, _) =>
+        {
+            showBackgroundCustomizerWhenClosed = true;
+            // Same handoff chain as the icon customizer above.
+            pickerHandoff ??= AcquireCloseWidgetFlyoutHandoff();
+        };
+        styleMenu.Items.Add(customizeBackground);
+
+        styleMenu.Items.Add(WidgetBorderMenuBuilder.Create(
+            App.Current.LocalizationService,
+            _config,
+            SetWidgetBorderModeOverride));
+
+        styleMenu.Items.Add(WidgetChromeMenuBuilder.Create(
             _config,
             _descriptor,
             App.Current.LocalizationService,
             App.Current.WidgetManager,
             SetChromeModeOverride));
+
+        styleMenu.Items.Add(WidgetForegroundMenuBuilder.Create(
+            _config,
+            App.Current.LocalizationService,
+            SetWidgetForegroundModeOverride,
+            () =>
+            {
+                showForegroundColorPickerWhenClosed = true;
+                // Hold the interaction across the flyout transition like the
+                // close confirmation chain: without the handoff a Smart
+                // capsule collapses between the menu closing and the color
+                // picker opening.
+                pickerHandoff ??= AcquireCloseWidgetFlyoutHandoff();
+            }));
+        flyout.Items.Add(styleMenu);
+
         flyout.Items.Add(WidgetCollapseMenuBuilder.Create(
             _config,
             SettingsService.Settings.WidgetCollapseBehavior,
@@ -450,17 +557,23 @@ public sealed partial class ContentWidgetWindow
             _config.IsSizeLocked,
             SetPositionLocked,
             SetSizeLocked));
-        flyout.Items.Add(WidgetForegroundMenuBuilder.Create(
-            _config,
-            App.Current.LocalizationService,
-            SetWidgetForegroundModeOverride,
-            () => showForegroundColorPickerWhenClosed = true));
         flyout.Items.Add(CreateTitleAppearanceMenu(flyout.Hide));
         flyout.Items.Add(CreateMarginMenuEntry(flyout.Hide));
         if (_config.WidgetKind is WidgetKind.QuickCapture)
         {
             flyout.Items.Add(CreateClipboardItemColorMenu(flyout.Hide));
         }
+
+        // Hidden entirely on single-monitor systems, matching how Windows
+        // hides commands that cannot apply; null must not reach Items.Add.
+        if (WidgetScreenMenuBuilder.TryCreate(
+                App.Current.LocalizationService,
+                _config,
+                ApplyScreenBinding) is { } screenMenu)
+        {
+            flyout.Items.Add(screenMenu);
+        }
+
         if (_config.WidgetKind is WidgetKind.File)
         {
             flyout.Items.Add(
@@ -507,7 +620,7 @@ public sealed partial class ContentWidgetWindow
             _config,
             behavior);
         SettingsService.UpdateWidget(_config);
-        if (CurrentContent is FileSurfaceContent fileSurface)
+        if (CurrentContent is FileWidgetContentAdapter fileSurface)
         {
             _ = fileSurface.ApplyFolderOpenBehaviorChangeAsync();
         }
@@ -821,16 +934,30 @@ public sealed partial class ContentWidgetWindow
             folderName = _config.Name;
         }
 
+        // The confirmation flyout cannot soft-wrap, so a full path tail-truncates
+        // and hides the folder name; the message shows parent\name instead and
+        // falls back to the bare name when even that exceeds the widest
+        // single-line CJK budget.
+        string parentName = Path.GetFileName(
+            Path.GetDirectoryName(folderPath.TrimEnd('\\', '/')) ?? string.Empty);
+        string displayPath = string.IsNullOrEmpty(parentName)
+            ? folderName
+            : $"{parentName}\\{folderName}";
+        if (displayPath.Length > 48)
+        {
+            displayPath = folderName;
+        }
+
         int? itemCount = await CountTopLevelFolderEntriesAsync(folderPath);
         LocalizationService localization = App.Current.LocalizationService;
         string message = itemCount is int count
             ? localization.Format(
                 "Widget.DeleteManagedFolderConfirmMessage",
                 count,
-                folderPath)
+                displayPath)
             : localization.Format(
                 "Widget.DeleteManagedFolderConfirmMessageUnknownCount",
-                folderPath);
+                displayPath);
         MenuFlyout confirmation =
             WidgetCompactConfirmationMenuBuilder.CreateDeleteConfirmation(
             new WidgetCompactConfirmationOptions(
@@ -881,7 +1008,8 @@ public sealed partial class ContentWidgetWindow
         {
             await widgetManager.RemoveWidgetAsync(
                 _config.Id,
-                removalAction);
+                removalAction,
+                HWnd);
         }
         catch (Exception ex)
         {
@@ -911,14 +1039,6 @@ public sealed partial class ContentWidgetWindow
         return item;
     }
 
-    private void ShowTodoClearAllConfirmation()
-    {
-        if (_contentHost.CurrentContent?.View is TodoWidgetContent todoContent)
-        {
-            todoContent.ClearAllTodos();
-        }
-    }
-
     private void SetChromeModeOverride(WidgetChromeMode mode)
     {
         if (App.Current.WidgetManager is { } manager &&
@@ -932,6 +1052,13 @@ public sealed partial class ContentWidgetWindow
         }
 
         WidgetChromeModeNames.SetOverrideMode(_config, mode);
+        SettingsService.UpdateWidget(_config);
+        ApplyAppearancePreview();
+    }
+
+    private void SetWidgetBorderModeOverride(string? mode)
+    {
+        WidgetBorderCustomization.SetModeOverride(_config, mode);
         SettingsService.UpdateWidget(_config);
         ApplyAppearancePreview();
     }
@@ -959,6 +1086,23 @@ public sealed partial class ContentWidgetWindow
         SettingsService.UpdateWidget(_config);
         SynchronizeWidgetGroupLayout();
         ApplyLockActionIconState();
+    }
+
+    private void ApplyScreenBinding(WidgetScreenBindingMode mode, string? boundScreenId)
+    {
+        if (_config.ScreenBindingMode == mode &&
+            string.Equals(_config.BoundScreenId, boundScreenId, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        // SafeFireAndForget keeps the observed-and-log failure semantics of a
+        // discarded task without letting an unobserved fault crash the app.
+        if (App.Current?.WidgetManager is { } widgetManager)
+        {
+            App.SafeFireAndForget(
+                () => widgetManager.ApplyScreenBindingAsync(_config.Id, mode, boundScreenId));
+        }
     }
 
     private void SetSizeLocked(bool value)
@@ -1156,6 +1300,20 @@ public sealed partial class ContentWidgetWindow
         RestoreDesktopLayerFromManager();
     }
 
+    private void ShowTitleIconCustomizer()
+    {
+        ShowFlyoutWithInteraction(
+            BuildTitleIconCustomizerFlyout(ShowTitleIconCustomizer),
+            ContentWidgetShell);
+    }
+
+    private void ShowWidgetBackgroundCustomizer()
+    {
+        ShowFlyoutWithInteraction(
+            BuildWidgetBackgroundCustomizerFlyout(ShowWidgetBackgroundCustomizer),
+            ContentWidgetShell);
+    }
+
     private void ShowFlyoutWithInteraction(FlyoutBase flyout, FrameworkElement target, Windows.Foundation.Point? position = null)
     {
         BeginCompactInteraction();
@@ -1172,15 +1330,28 @@ public sealed partial class ContentWidgetWindow
             RestoreDesktopLayerFromManager();
         };
 
-        if (position is Windows.Foundation.Point point)
+        try
         {
-            flyout.ShowAt(
-                target,
-                new FlyoutShowOptions { Position = point });
+            if (position is Windows.Foundation.Point point)
+            {
+                flyout.ShowAt(
+                    target,
+                    new FlyoutShowOptions { Position = point });
+            }
+            else
+            {
+                flyout.ShowAt(target);
+            }
         }
-        else
+        catch (Exception ex)
         {
-            flyout.ShowAt(target);
+            // ShowAt can throw after the interaction pair above was taken
+            // (e.g. a torn-down XamlRoot during window closing). Without this
+            // rollback the compact lease leaks and a Smart capsule stays
+            // expanded forever; a failed show never raises Closed.
+            EndCompactInteraction();
+            App.Current.WidgetManager?.EndWidgetInteraction("content-flyout-show-failed");
+            App.Log($"[ContentWidget] Flyout show failed: {ex}");
         }
     }
 

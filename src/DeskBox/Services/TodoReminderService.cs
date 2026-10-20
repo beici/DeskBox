@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using DeskBox.Models;
+using DeskBox.Contracts;
 using Microsoft.UI.Dispatching;
 
 namespace DeskBox.Services;
@@ -12,7 +13,7 @@ public sealed record TodoReminderNotification(
     string? ItemId = null,
     bool HasTodayDueItem = false);
 
-public sealed class TodoReminderService : IDisposable
+public sealed class TodoReminderService : IDisposable, ITodoReminderSession
 {
     private static readonly TimeSpan ScanInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(8);
@@ -38,9 +39,18 @@ public sealed class TodoReminderService : IDisposable
     /// </summary>
     public event Action<string, TodoItem?, TodoItem?>? TodoStoreChanged;
 
+    // The 30s scan used to read and deserialize every todo store on every
+    // tick. The files only change when the user edits a widget, so a
+    // last-write probe answers "unchanged" cheaply while the cached snapshot
+    // still lets time-based due transitions fire on schedule.
+    private readonly Dictionary<string, (DateTime WrittenAtUtc, TodoWidgetData Data)> _storeSnapshots = new(StringComparer.Ordinal);
+
     private DispatcherQueueTimer? _timer;
     private bool _isChecking;
     private bool _disposed;
+    private readonly CancellationTokenSource _lifetime = new();
+    private Task _initialCheck = Task.CompletedTask;
+    private Task<int> _activeCheck = Task.FromResult(0);
 
     private enum ReminderTriggerKind
     {
@@ -100,7 +110,7 @@ public sealed class TodoReminderService : IDisposable
         _timer.Tick += Timer_Tick;
         _timer.Start();
 
-        _ = RunDelayedInitialCheckAsync();
+        _initialCheck = RunDelayedInitialCheckAsync(_lifetime.Token);
     }
 
     /// <summary>
@@ -146,13 +156,18 @@ public sealed class TodoReminderService : IDisposable
                FeatureWidgetSettings.IsEnabled(settings, WidgetKind.Todo);
     }
 
-    public async Task<int> CheckNowAsync(DateTimeOffset now)
+    public Task<int> CheckNowAsync(DateTimeOffset now)
     {
         if (_disposed || _isChecking)
         {
-            return 0;
+            return Task.FromResult(0);
         }
 
+        return _activeCheck = CheckCoreAsync(now);
+    }
+
+    private async Task<int> CheckCoreAsync(DateTimeOffset now)
+    {
         _isChecking = true;
         try
         {
@@ -172,6 +187,22 @@ public sealed class TodoReminderService : IDisposable
                     !settings.DeletedWidgetIds.Contains(widget.Id))
                 .ToList();
 
+            // A deleted todo widget's snapshot would otherwise live as long
+            // as the reminder service does; the scan sees the authoritative
+            // widget set, so prune everything it did not just enumerate.
+            if (_storeSnapshots.Count > 0)
+            {
+                var liveWidgetIds = widgets
+                    .Select(widget => widget.Id)
+                    .ToHashSet(StringComparer.Ordinal);
+                foreach (string staleId in _storeSnapshots.Keys
+                             .Where(id => !liveWidgetIds.Contains(id))
+                             .ToArray())
+                {
+                    _storeSnapshots.Remove(staleId);
+                }
+            }
+
             if (widgets.Count == 0)
             {
                 return 0;
@@ -180,10 +211,11 @@ public sealed class TodoReminderService : IDisposable
             List<TodoReminderCandidate> candidates = [];
             foreach (var widget in widgets)
             {
+                if (_disposed || !ShouldBeRunning()) return 0;
                 await CollectWidgetCandidatesAsync(widget, now, defaultOffsetMinutes, candidates);
             }
 
-            if (candidates.Count == 0)
+            if (candidates.Count == 0 || _disposed || !ShouldBeRunning())
             {
                 return 0;
             }
@@ -204,13 +236,22 @@ public sealed class TodoReminderService : IDisposable
 
     public void Dispose()
     {
+        if (_disposed) return;
         _disposed = true;
+        _lifetime.Cancel();
+        _lifetime.Dispose();
         if (_timer is not null)
         {
             _timer.Tick -= Timer_Tick;
             _timer.Stop();
             _timer = null;
         }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Dispose();
+        await Task.WhenAll(_initialCheck, _activeCheck);
     }
 
     internal static bool ShouldNotify(TodoItem item, DateTimeOffset now, TimeSpan reminderOffset)
@@ -376,12 +417,15 @@ public sealed class TodoReminderService : IDisposable
         }
     }
 
-    private async Task RunDelayedInitialCheckAsync()
+    private async Task RunDelayedInitialCheckAsync(CancellationToken cancellationToken)
     {
         try
         {
-            await Task.Delay(StartupDelay);
+            await Task.Delay(StartupDelay, cancellationToken);
             await CheckNowAsync(_clock());
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
         }
         catch (Exception ex)
         {
@@ -419,6 +463,25 @@ public sealed class TodoReminderService : IDisposable
     private async void Timer_Tick(DispatcherQueueTimer sender, object args)
     {
         await CheckNowAsync(_clock());
+    }
+
+    private async Task<TodoWidgetData> LoadStoreSnapshotAsync(
+        string widgetId,
+        TodoWidgetStore store)
+    {
+        DateTime writtenAtUtc = File.GetLastWriteTimeUtc(store.StorePath);
+        if (_storeSnapshots.TryGetValue(widgetId, out (DateTime WrittenAtUtc, TodoWidgetData Data) cached) &&
+            cached.WrittenAtUtc == writtenAtUtc)
+        {
+            return cached.Data;
+        }
+
+        TodoWidgetData data = await store.LoadAsync();
+        // Stamp after the load: a write racing the read shows up as a newer
+        // timestamp and forces one more reload on the next tick.
+        _storeSnapshots[widgetId] =
+            (File.GetLastWriteTimeUtc(store.StorePath), data);
+        return data;
     }
 
     private async Task CollectWidgetCandidatesAsync(

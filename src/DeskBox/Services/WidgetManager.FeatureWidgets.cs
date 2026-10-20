@@ -3,6 +3,7 @@
 using DeskBox.Models;
 using DeskBox.Helpers;
 using DeskBox.Controls.WidgetContents;
+using DeskBox.Platform;
 using DeskBox.ViewModels;
 using DeskBox.Views;
 using Microsoft.UI.Dispatching;
@@ -43,9 +44,9 @@ public sealed partial class WidgetManager
 
     private void ApplyFeatureWidgetEnabledState(WidgetKind kind, bool enabled)
     {
-        if (App.UiDispatcherQueue is { } dispatcherQueue && !dispatcherQueue.HasThreadAccess)
+        if (!UiDispatch.HasAccess)
         {
-            dispatcherQueue.TryEnqueue(() => ApplyFeatureWidgetEnabledState(kind, enabled));
+            UiDispatch.RunOrDefer(() => ApplyFeatureWidgetEnabledState(kind, enabled));
             return;
         }
 
@@ -93,6 +94,7 @@ public sealed partial class WidgetManager
                 Width = _settingsService.Settings.DefaultWidgetWidth,
                 Height = _settingsService.Settings.DefaultWidgetHeight
             };
+            ApplyNewWidgetPlacement(config);
             _settingsService.AddWidget(config);
         }
 
@@ -153,7 +155,7 @@ public sealed partial class WidgetManager
             Height = Math.Max(_settingsService.Settings.DefaultWidgetHeight, 420)
         };
 
-        MarkNeedsInitialPlacementIfDisplayUnusable(config);
+        ApplyNewWidgetPlacement(config);
         _settingsService.AddWidget(config);
         await _settingsService.SaveAsync();
         await TryAdoptOrphanedTodoStoreAsync(config);
@@ -397,7 +399,7 @@ public sealed partial class WidgetManager
             throw new NotSupportedException($"Widget kind '{kind}' is not a content feature widget.");
         }
 
-        SetFeatureWidgetEnabledState(kind, true);
+        await CommitFeatureWidgetStateAsync(kind, true);
 
         var existingConfig = _settingsService.Settings.Widgets
             .FirstOrDefault(w => w.WidgetKind == kind && !IsDeleted(w.Id));
@@ -435,7 +437,7 @@ public sealed partial class WidgetManager
         };
         ApplyDefaultFeatureWidgetChromeMode(config, kind);
 
-        MarkNeedsInitialPlacementIfDisplayUnusable(config);
+        ApplyNewWidgetPlacement(config);
         _settingsService.AddWidget(config);
         await _settingsService.SaveAsync();
 
@@ -504,7 +506,7 @@ public sealed partial class WidgetManager
             : await GlanceWidgetStore.ForWidget(sourceConfig.Id).LoadAsync();
         await GlanceWidgetStore.ForWidget(config.Id).SaveAsync(data);
 
-        MarkNeedsInitialPlacementIfDisplayUnusable(config);
+        ApplyNewWidgetPlacement(config);
         _settingsService.AddWidget(config);
         await _settingsService.SaveAsync();
 
@@ -679,6 +681,200 @@ public sealed partial class WidgetManager
         }
     }
 
+    public IReadOnlyList<QuickCaptureFileWidgetTarget> GetQuickCaptureFileWidgetTargets()
+    {
+        return _settingsService.Settings.Widgets
+            .Where(widget => widget.WidgetKind == WidgetKind.File &&
+                             !widget.IsDisabled &&
+                             !IsDeleted(widget.Id) &&
+                             TryGetFileWidgetFolderPath(widget, out _))
+            .Select(widget =>
+            {
+                TryGetFileWidgetFolderPath(widget, out string folderPath);
+                return new QuickCaptureFileWidgetTarget(widget.Id, widget.Name, folderPath);
+            })
+            .ToList();
+    }
+
+    public QuickCaptureFileWidgetTarget? GetLastQuickCaptureFileWidgetTarget()
+    {
+        string lastTargetId = _settingsService.Settings.LastQuickCaptureFileWidgetId;
+        if (string.IsNullOrWhiteSpace(lastTargetId))
+        {
+            return null;
+        }
+
+        return GetQuickCaptureFileWidgetTargets()
+            .FirstOrDefault(target => string.Equals(target.WidgetId, lastTargetId, StringComparison.Ordinal));
+    }
+
+    public async Task<string?> SaveQuickCaptureItemToFileWidgetAsync(
+        QuickCaptureItem item,
+        string targetWidgetId,
+        string? imageFileNamePrefix = null)
+    {
+        if (item.IsDeleted ||
+            string.IsNullOrWhiteSpace(targetWidgetId) ||
+            FindConfig(targetWidgetId) is not { } targetConfig ||
+            targetConfig.WidgetKind != WidgetKind.File ||
+            targetConfig.IsDisabled ||
+            IsDeleted(targetWidgetId) ||
+            !TryGetFileWidgetFolderPath(targetConfig, out string targetFolderPath))
+        {
+            return null;
+        }
+
+        Directory.CreateDirectory(targetFolderPath);
+        string? destinationPath = item.Type switch
+        {
+            QuickCaptureItemType.Image => await SaveQuickCaptureImageToFolderAsync(item, targetFolderPath, imageFileNamePrefix),
+            QuickCaptureItemType.Link => await SaveQuickCaptureLinkToFolderAsync(item, targetFolderPath),
+            _ => await SaveQuickCaptureTextToFolderAsync(item, targetFolderPath)
+        };
+
+        if (!string.IsNullOrWhiteSpace(destinationPath))
+        {
+            RememberLastQuickCaptureFileWidgetTarget(targetWidgetId);
+            if (_fileWidgets.TryGetValue(targetWidgetId, out var targetEntry))
+            {
+                await targetEntry.ViewModel.RefreshFromConfigAsync(clearIconCacheBeforeHydration: false);
+                targetEntry.RevealSavedItem(destinationPath);
+            }
+            else
+            {
+                ContentWidgetWindow? contentWindow = _contentWidgets.Values
+                    .Distinct()
+                    .FirstOrDefault(window =>
+                        window.CurrentContent is FileWidgetContentAdapter surface &&
+                        string.Equals(
+                            surface.WidgetId,
+                            targetWidgetId,
+                            StringComparison.Ordinal));
+                if (contentWindow?.CurrentContent is FileWidgetContentAdapter fileSurface)
+                {
+                    await fileSurface.ViewModel.RefreshFromConfigAsync(clearIconCacheBeforeHydration: false);
+                    fileSurface.RevealSavedItem(destinationPath);
+                }
+            }
+        }
+
+        return destinationPath;
+    }
+
+    private void RememberLastQuickCaptureFileWidgetTarget(string widgetId)
+    {
+        if (string.Equals(_settingsService.Settings.LastQuickCaptureFileWidgetId, widgetId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _settingsService.Settings.LastQuickCaptureFileWidgetId = widgetId;
+        _settingsService.SaveDebounced(notifySubscribers: false);
+    }
+
+    private async Task<string?> SaveQuickCaptureImageToFolderAsync(
+        QuickCaptureItem item,
+        string targetFolderPath,
+        string? imageFileNamePrefix)
+    {
+        if (string.IsNullOrWhiteSpace(item.ImagePath) || !File.Exists(item.ImagePath))
+        {
+            return null;
+        }
+
+        string fileName = QuickCaptureService.BuildImageExportFileName(
+            imageFileNamePrefix,
+            item.UpdatedAt == default ? item.CreatedAt : item.UpdatedAt,
+            item.ImagePath);
+        string destinationPath = FileService.GetAvailablePath(Path.Combine(targetFolderPath, fileName));
+        await Task.Run(() => File.Copy(item.ImagePath, destinationPath));
+        return destinationPath;
+    }
+
+    private async Task<string?> SaveQuickCaptureTextToFolderAsync(QuickCaptureItem item, string targetFolderPath)
+    {
+        string body = item.Body?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return null;
+        }
+
+        string fileName = BuildQuickCaptureContentFileName(
+            body,
+            _localizationService.T("QuickCapture.TextFileNamePrefix"),
+            ".txt");
+        string destinationPath = FileService.GetAvailablePath(Path.Combine(targetFolderPath, fileName));
+        await File.WriteAllTextAsync(destinationPath, body);
+        return destinationPath;
+    }
+
+    private async Task<string?> SaveQuickCaptureLinkToFolderAsync(QuickCaptureItem item, string targetFolderPath)
+    {
+        string url = string.IsNullOrWhiteSpace(item.Url) ? item.Body?.Trim() ?? string.Empty : item.Url.Trim();
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return await SaveQuickCaptureTextToFolderAsync(item, targetFolderPath);
+        }
+
+        string baseText = string.IsNullOrWhiteSpace(uri.Host) ? uri.AbsoluteUri : uri.Host;
+        string fileName = BuildQuickCaptureContentFileName(
+            baseText,
+            _localizationService.T("QuickCapture.LinkFileNamePrefix"),
+            ".url");
+        string destinationPath = FileService.GetAvailablePath(Path.Combine(targetFolderPath, fileName));
+        await File.WriteAllTextAsync(destinationPath, $"[InternetShortcut]{Environment.NewLine}URL={uri.AbsoluteUri}{Environment.NewLine}");
+        return destinationPath;
+    }
+
+    private static string BuildQuickCaptureContentFileName(string? body, string fallbackName, string extension)
+    {
+        string firstLine = body?
+            .Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .FirstOrDefault() ?? string.Empty;
+        string baseName = FileService.SanitizeFileSystemName(firstLine);
+        if (baseName.Length > 36)
+        {
+            baseName = baseName[..36].Trim().TrimEnd('.');
+        }
+
+        if (string.IsNullOrWhiteSpace(baseName))
+        {
+            baseName = FileService.SanitizeFileSystemName(fallbackName);
+        }
+
+        if (string.IsNullOrWhiteSpace(baseName))
+        {
+            baseName = "Quick Capture";
+        }
+
+        return baseName.EndsWith(extension, StringComparison.OrdinalIgnoreCase)
+            ? baseName
+            : baseName + extension;
+    }
+
+    private bool TryGetFileWidgetFolderPath(WidgetConfig widget, out string folderPath)
+    {
+        folderPath = string.Empty;
+        if (widget.WidgetKind != WidgetKind.File)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(widget.MappedFolderPath))
+        {
+            folderPath = Path.GetFullPath(widget.MappedFolderPath);
+            return true;
+        }
+
+        if (!widget.FollowsDefaultStoragePath || string.IsNullOrWhiteSpace(widget.ManagedFolderName))
+        {
+            return false;
+        }
+
+        folderPath = Path.Combine(GetManagedStorageRootPath(), widget.ManagedFolderName);
+        return true;
+    }
+
     internal int RepairLegacyContentFeatureFileShells()
     {
         if (!FeatureWidgetSettings.IsEnabled(_settingsService.Settings, WidgetKind.Music))
@@ -784,6 +980,16 @@ public sealed partial class WidgetManager
 
     internal async Task<IDesktopWidgetWindow?> CreateOrShowFeatureWidgetAsync(WidgetKind kind)
     {
+        if (!UiDispatch.HasXamlApp)
+        {
+            // Test hosts: no XAML Application exists, so window creation
+            // cannot succeed. Skip instead of attempting it on the inline
+            // fiction thread (which produced swallowed RPC_E_WRONG_THREAD
+            // noise in the user log).
+            App.LogVerbose($"[WidgetManager] CreateOrShowFeatureWidget skipped (no XAML app): kind={kind}");
+            return null;
+        }
+
         if (!HasUiThreadAccess())
         {
             return await RunOnUiThreadAsync(() => CreateOrShowFeatureWidgetAsync(kind));
@@ -806,6 +1012,22 @@ public sealed partial class WidgetManager
             return;
         }
 
+        if (kind == WidgetKind.QuickCapture && _quickCaptureSettings is not null)
+        {
+            await _quickCaptureSettings.SetEnabledAsync(enabled, reveal);
+            return;
+        }
+        if (kind == WidgetKind.Search && _searchFeatureSettings is not null)
+        {
+            await _searchFeatureSettings.SetEnabledAsync(enabled, reveal);
+            return;
+        }
+        if (kind == WidgetKind.Todo && _todoSettings is not null)
+        {
+            await _todoSettings.SetEnabledAsync(enabled);
+            return;
+        }
+
         if (_featureWidgetHandlers.TryGetValue(kind, out var handler) &&
             _featureWidgetUpdateLocks.TryGetValue(kind, out var updateLock))
         {
@@ -823,6 +1045,44 @@ public sealed partial class WidgetManager
         }
 
         App.Log($"[WidgetManager] SetFeatureWidgetEnabled: unsupported kind={kind}");
+    }
+
+    internal async Task ApplyQuickCaptureWindowStateAsync(bool enabled, bool reveal)
+    {
+        if (!HasUiThreadAccess())
+        {
+            await RunOnUiThreadAsync(() => ApplyQuickCaptureWindowStateAsync(enabled, reveal));
+            return;
+        }
+
+        SemaphoreSlim gate = _featureWidgetUpdateLocks[WidgetKind.QuickCapture];
+        await gate.WaitAsync();
+        try
+        {
+            if (_quickCaptureSettings is not null && _quickCaptureSettings.Read().Enabled != enabled)
+                return;
+            await SetQuickCaptureEnabledAsync(enabled, reveal);
+        }
+        finally { gate.Release(); }
+    }
+
+    internal async Task ApplySearchWindowStateAsync(bool enabled, bool reveal)
+    {
+        if (!HasUiThreadAccess())
+        {
+            await RunOnUiThreadAsync(() => ApplySearchWindowStateAsync(enabled, reveal));
+            return;
+        }
+
+        SemaphoreSlim gate = _featureWidgetUpdateLocks[WidgetKind.Search];
+        await gate.WaitAsync();
+        try
+        {
+            if (_searchFeatureSettings is not null && _searchFeatureSettings.Enabled != enabled)
+                return;
+            await SetSearchFeatureWidgetEnabledAsync(enabled, reveal);
+        }
+        finally { gate.Release(); }
     }
 
     public async Task ResetFeatureWidgetAsync(WidgetKind kind)
@@ -881,7 +1141,7 @@ public sealed partial class WidgetManager
                 await new GlanceImageService().ClearCacheAsync();
             }
 
-            SetFeatureWidgetEnabledState(kind, false);
+            await CommitFeatureWidgetStateAsync(kind, false);
             var config = configs.FirstOrDefault(widget => !IsDeleted(widget.Id)) ??
                          configs.FirstOrDefault();
 
@@ -911,6 +1171,7 @@ public sealed partial class WidgetManager
             if (config is null)
             {
                 config = CreateDefaultFeatureWidgetConfig(kind, isEnabled: false);
+                ApplyNewWidgetPlacement(config);
                 _settingsService.AddWidget(config);
             }
             else
@@ -969,7 +1230,10 @@ public sealed partial class WidgetManager
         config.PositionMarginY = 0;
         config.PositionMonitorKey = null;
         config.PositionMonitorDeviceName = null;
+        config.PositionMonitorStableId = null;
         config.PositionMonitorWasPrimary = null;
+        config.ScreenBindingMode = WidgetScreenBindingMode.Unbound;
+        config.BoundScreenId = null;
         config.BoundsCoordinateVersion = WidgetConfig.CurrentBoundsCoordinateVersion;
         (config.Width, config.Height) = GetDefaultFeatureWidgetSize(kind);
         config.ViewMode = ViewMode.Icon;
@@ -1056,7 +1320,7 @@ public sealed partial class WidgetManager
     {
         if (enabled)
         {
-            SetFeatureWidgetEnabledState(kind, true);
+            await CommitFeatureWidgetStateAsync(kind, true);
             if (reveal)
             {
                 await CreateSingletonContentFeatureWidgetAsync(kind);
@@ -1090,7 +1354,7 @@ public sealed partial class WidgetManager
         // Close the content window while feature-owned services are still
         // available. Search content, for example, must unsubscribe from the
         // exact SearchHistoryService instance before that service is released.
-        SetFeatureWidgetEnabledState(kind, false);
+        await CommitFeatureWidgetStateAsync(kind, false);
         await _settingsService.SaveAsync();
     }
 
@@ -1168,22 +1432,33 @@ public sealed partial class WidgetManager
         return FeatureWidgetSettings.IsFeatureWidget(kind);
     }
 
+    private async Task CommitFeatureWidgetStateAsync(WidgetKind kind, bool enabled)
+    {
+        if (kind == WidgetKind.Search && _searchFeatureSettings is not null)
+        {
+            await _searchFeatureSettings.CommitEnabledStateAsync(enabled);
+            _lastFeatureWidgetEnabledStates[kind] = GetFeatureWidgetEnabledState(kind);
+            return;
+        }
+        SetFeatureWidgetEnabledState(kind, enabled);
+    }
+
     private void SetFeatureWidgetEnabledState(WidgetKind kind, bool enabled)
     {
-        FeatureWidgetSettings.SetEnabled(_settingsService.Settings, kind, enabled);
+        if (kind == WidgetKind.Search && _searchFeatureSettings is not null)
+            throw new InvalidOperationException("Search state commits must await their runtime boundary.");
         _lastFeatureWidgetEnabledStates[kind] = enabled;
-        switch (kind)
+        if (kind == WidgetKind.Todo && _todoSettings is not null)
         {
-            case WidgetKind.Search:
-                App.Current.SetSearchFeatureEnabled(enabled);
-                break;
-            case WidgetKind.QuickCapture:
-                App.Current.RefreshQuickCaptureClipboardService();
-                break;
-            case WidgetKind.Todo:
-                App.Current.RefreshTodoReminderService();
-                break;
+            _todoSettings.CommitEnabledState(enabled);
+            return;
         }
+        if (kind == WidgetKind.QuickCapture && _quickCaptureSettings is not null)
+        {
+            _quickCaptureSettings.CommitEnabledState(enabled);
+            return;
+        }
+        FeatureWidgetSettings.SetEnabled(_settingsService.Settings, kind, enabled);
     }
 
     public void HideAndCloseFeatureWidgetAsync(WidgetKind kind)
@@ -1209,19 +1484,10 @@ public sealed partial class WidgetManager
 
         window.Config.IsVisible = false;
 
-        if (window.Config.WidgetKind == WidgetKind.File &&
-                 _fileWidgets.TryGetValue(window.Config.Id, out var fileEntry) &&
-                 ReferenceEquals(fileEntry.Host, window))
-        {
-            _fileWidgets.Remove(window.Config.Id);
-        }
+        RemoveFileWidgetSessionsForHost(window);
 
-        if (_contentWidgets.TryGetValue(window.Config.Id, out var contentWindow) &&
-            ReferenceEquals(contentWindow, window))
-        {
-            _contentWidgets.Remove(window.Config.Id);
-            _widgetWindowHandles.Remove(window.WindowHandle);
-        }
+        if (window is ContentWidgetWindow contentWindow)
+            _contentWindowRegistration.Unregister(contentWindow);
 
         try
         {

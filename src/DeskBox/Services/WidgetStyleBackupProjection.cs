@@ -51,6 +51,7 @@ internal static class WidgetStyleBackupProjection
         // backup document — the slice owns the field, the whitelist is a
         // hand-maintained wire-name set.
         "widgetAnimationFrameRate",
+        "widgetAnimationStaggerEnabled",
         "displayWidgetChromeMode", "interactiveWidgetChromeMode",
         "widgetTitleIconMode",
         // Fork-only title alignment (chrome/title display family).

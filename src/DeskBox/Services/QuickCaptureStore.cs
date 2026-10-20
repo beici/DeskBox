@@ -155,13 +155,30 @@ public sealed class QuickCaptureStore
     public async Task SaveAsync(QuickCaptureStoreData data)
     {
         data = Normalize(data);
-        string json = JsonSerializer.Serialize(
-            data,
-            QuickCaptureJsonContext.Default.StoreData);
+        // Fork: serialize writes per store path (DEF-043 family). The gate is
+        // held across the whole write so two writers can never interleave and
+        // lose one side's changes.
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            await ResilientJsonStore.SaveAsync(_storePath, json).ConfigureAwait(false);
+            // Stream the UTF-8 directly into the temp file: materializing the
+            // whole document as a string first doubles the transient footprint
+            // on every save, and quick-capture autosave fires while the user
+            // keeps typing.
+            await ResilientJsonStore.SaveAsync(
+                _storePath,
+                async tempPath =>
+                {
+                    await using var stream = new FileStream(
+                        tempPath,
+                        FileMode.Create,
+                        FileAccess.Write,
+                        FileShare.None);
+                    await JsonSerializer.SerializeAsync(
+                        stream,
+                        data,
+                        QuickCaptureJsonContext.Default.StoreData);
+                }).ConfigureAwait(false);
         }
         finally
         {

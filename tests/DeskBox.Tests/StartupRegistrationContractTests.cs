@@ -20,7 +20,7 @@ public sealed class StartupRegistrationContractTests
     ];
 
     [Fact]
-    public void SettingsAndOnboardingExposeWindowsStartupAppsRecovery()
+    public void SettingsExposesWindowsStartupAppsRecovery()
     {
         string root = FindRepositoryRoot();
         string settingsXaml = File.ReadAllText(Path.Combine(

@@ -333,24 +333,6 @@ public sealed partial class TodoWidgetViewModel
         return addedCount;
     }
 
-    public async Task<TodoAttachmentViewModel?> AddAttachmentStreamAsync(
-        string itemId,
-        Stream stream,
-        string? fileName)
-    {
-        TodoItemViewModel? item = FindItem(itemId);
-        if (item is null)
-        {
-            return null;
-        }
-
-        TodoAttachment? attachment = await AttachmentStorageService.SaveStreamAsync(
-            stream,
-            fileName,
-            GetManagedAttachmentDirectory(itemId));
-        return attachment is null ? null : await AddAttachmentAsync(item, attachment);
-    }
-
     private async Task<TodoAttachmentViewModel?> AddAttachmentAsync(
         TodoItemViewModel item,
         TodoAttachment attachment)
@@ -371,7 +353,10 @@ public sealed partial class TodoWidgetViewModel
         return attachmentViewModel;
     }
 
-    public async Task<bool> DeleteAttachmentAsync(string itemId, string attachmentId)
+    public async Task<bool> DeleteAttachmentAsync(
+        string itemId,
+        string attachmentId,
+        Func<string, Task<bool>>? recycleFileAsync = null)
     {
         TodoItemViewModel? item = FindItem(itemId);
         TodoAttachmentViewModel? attachment = item?.Attachments.FirstOrDefault(entry =>
@@ -399,17 +384,32 @@ public sealed partial class TodoWidgetViewModel
                     string.Equals(shared.FilePath, attachment.FilePath, StringComparison.OrdinalIgnoreCase)));
             if (!stillReferenced)
             {
-                try
-                {
-                    File.Delete(attachment.FilePath);
-                }
-                catch (Exception ex)
-                {
-                    App.Log($"[Todo] Failed to delete managed attachment '{attachment.FilePath}': {ex.Message}");
-                }
+                // Only files inside the managed attachment tree are eligible
+                // for deletion, and they go through the caller's recycle
+                // kernel when one is available. Headless callers (tests, AOT
+                // smokes) pass no kernel; the containment gate still applies,
+                // and the managed copy is deleted directly.
+                await AttachmentStorageService.TryDeleteManagedCopyAsync(
+                    attachment.FilePath,
+                    _store.AttachmentDirectory,
+                    recycleFileAsync ?? DeleteManagedCopyDirectlyAsync);
             }
         }
         return true;
+    }
+
+    private static Task<bool> DeleteManagedCopyDirectlyAsync(string path)
+    {
+        try
+        {
+            File.Delete(path);
+            return Task.FromResult(true);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[Todo] Failed to delete managed attachment '{path}': {ex.Message}");
+            return Task.FromResult(false);
+        }
     }
 
     private string GetManagedAttachmentDirectory(string itemId)

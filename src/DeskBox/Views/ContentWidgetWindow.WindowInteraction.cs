@@ -1,4 +1,4 @@
-﻿using DeskBox.Contracts;
+using DeskBox.Contracts;
 using DeskBox.Controls;
 using DeskBox.Controls.WidgetContents;
 using DeskBox.Helpers;
@@ -31,7 +31,7 @@ public sealed partial class ContentWidgetWindow
 
     private void RootGrid_DragOver(object sender, DragEventArgs e)
     {
-        if (CurrentContent is FileSurfaceContent file)
+        if (CurrentContent is FileWidgetContentAdapter file)
         {
             // The transparent resize grid sits above the content along every
             // window edge. Reuse the file surface's normal feedback there so
@@ -48,7 +48,9 @@ public sealed partial class ContentWidgetWindow
 
         e.AcceptedOperation = todo.CanImportExternalDrop(e.DataView)
             ? DeskBoxDragData.HasDroppedFiles(e.DataView)
-                ? DeskBoxDragData.GetFileAssociationOperation(e.DataView)
+                ? DeskBoxDragData.GetFileAssociationOperation(
+                    e.DataView,
+                    e.AllowedOperations)
                 : DataPackageOperation.Copy
             : DataPackageOperation.None;
         if (DeskBoxDragData.HasDroppedFiles(e.DataView))
@@ -77,7 +79,7 @@ public sealed partial class ContentWidgetWindow
 
     private async void RootGrid_Drop(object sender, DragEventArgs e)
     {
-        if (CurrentContent is FileSurfaceContent file)
+        if (CurrentContent is FileWidgetContentAdapter file)
         {
             file.HandleHostEdgeDrop(e);
             return;
@@ -106,7 +108,7 @@ public sealed partial class ContentWidgetWindow
 
     private async void RootGrid_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        if (CurrentContent is FileSurfaceContent fileSurface &&
+        if (CurrentContent is FileWidgetContentAdapter fileSurface &&
             await fileSurface.TryHandleClipboardShortcutAsync(e))
         {
             return;
@@ -323,15 +325,6 @@ public sealed partial class ContentWidgetWindow
         }
     }
 
-    // FARC-03: ProtectedCursor is a non-public WinRT projection property, so
-    // this reflection write is the only way to set it from a pointer-entered
-    // handler. Trimming can drop the property in Native AOT; when that
-    // happens the cursor silently stops changing, so log once (never per
-    // pointer move) and treat scripts/run-aot-*.ps1 as the gate before
-    // relying on this path in retail builds. Replacing the reflection with an
-    // AOT-safe alternative is deferred until measured there.
-    private static bool _loggedMissingProtectedCursorProperty;
-
     private void ResizeBorder_PointerEntered(object sender, PointerRoutedEventArgs e)
     {
         if (sender is not UIElement element)
@@ -343,21 +336,7 @@ public sealed partial class ContentWidgetWindow
             ? GetResizeCursorShapeForCurrentState(frameworkElement.Tag as string)
             : InputSystemCursorShape.Arrow;
 
-        var property = typeof(UIElement).GetProperty(
-            "ProtectedCursor",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        if (property is null)
-        {
-            if (!_loggedMissingProtectedCursorProperty)
-            {
-                _loggedMissingProtectedCursorProperty = true;
-                App.Log("[ContentWidgetWindow] UIElement.ProtectedCursor not resolvable (AOT trim?); resize cursor feedback disabled");
-            }
-
-            return;
-        }
-
-        property.SetValue(element, InputSystemCursor.Create(shape));
+        UiElementCursorHelper.SetCursor(element, shape);
     }
 
     // ── Activation ─────────────────────────────────────────────
@@ -380,6 +359,19 @@ public sealed partial class ContentWidgetWindow
         }
 
         _contentHost.OnActivated();
+        // A long-hidden release dropped the decoded custom background; the
+        // surface is cheap to rebuild from disk on the way back in.
+        RecoverCustomBackgroundIfReleased();
+        // Deliberately synchronous (callback-isolation exemption): deferring
+        // this reassert one dispatcher turn turns its SetForegroundWindow
+        // (active) from a no-op — the window is still the foreground when the
+        // handler runs — into a REAL foreground switch against whichever
+        // sibling the raise batch activated next. Each switch raises another
+        // Activated event, whose deferred reassert switches again: a 3ms
+        // activation ping-pong ring across the whole group (2026-10-15
+        // incident, 1805 band-split transactions during one raise). The
+        // manager's own guards (session flag, foreground ownership, the
+        // 400ms reassert suppression) bound the synchronous form.
         App.Current.WidgetManager?.ReassertRaisedWidgetGroupAfterDeskBoxActivation(
             HWnd,
             "content-window-activated");

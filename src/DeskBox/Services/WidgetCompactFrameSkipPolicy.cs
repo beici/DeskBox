@@ -1,3 +1,5 @@
+using DeskBox.Contracts;
+
 namespace DeskBox.Services;
 
 /// <summary>
@@ -13,30 +15,23 @@ internal static class WidgetCompactFrameSkipPolicy
     public const int ThirtyFpsLevel = 3;
 
     /// <summary>
-    /// User-selectable animation frame-rate tiers in fps (the General
-    /// settings tab exposes exactly these four, labeled 低/中/高/最高 via
-    /// localization).
+    /// User-selectable animation frame-rate tiers in fps. The settings page
+    /// exposes exactly these four, labeled 低/中/高/最高 via localization; the
+    /// canonical list lives on <see cref="WidgetAnimationKinds"/> so the
+    /// appearance editor (which cannot reference this service layer) and the
+    /// skip policy can never drift apart.
     /// </summary>
-    public static readonly int[] SelectableFrameRates = { 30, 60, 90, 120 };
+    public static int[] SelectableFrameRates => WidgetAnimationKinds.FrameRateTiers;
 
-    public const int DefaultFrameRate = 60;
+    public const int DefaultFrameRate = WidgetAnimationKinds.DefaultFrameRate;
 
     /// <summary>
     /// Clamps an arbitrary stored value onto the four selectable tiers
     /// (30/60/90/120); unknown values fall back to
     /// <see cref="DefaultFrameRate"/>.
     /// </summary>
-    public static int NormalizeFrameRate(int value)
-    {
-        return value switch
-        {
-            30 => 30,
-            60 => 60,
-            90 => 90,
-            120 => 120,
-            _ => DefaultFrameRate
-        };
-    }
+    public static int NormalizeFrameRate(int value) =>
+        WidgetAnimationKinds.NormalizeFrameRate(value);
 
     // A tick counts as overrun when its interval exceeds the frame budget by
     // this factor (same threshold as WidgetCompactAnimationFrameTracker).

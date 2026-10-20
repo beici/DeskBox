@@ -241,6 +241,44 @@ public sealed class NeutralInteractionPaletteContractTests
         }
     }
 
+    [Fact]
+    public void OrganizeSurfaces_ResolveWinUiTokensByScopeTheme()
+    {
+        // Application-scope themed lookups follow the system theme, which
+        // inverted these surfaces whenever the app's theme override
+        // disagreed with it (white secondary text on the light settings
+        // page's by-type overview). Code-built organize/settings surfaces
+        // must keep resolving WinUI tokens through the scoped helper, and
+        // the long-lived settings section must rebuild its rows on theme
+        // flips because its brushes are build-time snapshots.
+        string section = Read("src/DeskBox/Views/SettingsSections/DesktopOrganizationSettingsSection.xaml.cs");
+        string hotkeyDialog = Read("src/DeskBox/Views/Dialogs/HotkeyRecorderDialog.xaml.cs");
+        string abandonDialog = Read("src/DeskBox/Controls/DesktopOrganizationAbandonDialog.cs");
+        string previewCard = Read("src/DeskBox/Controls/DesktopOrganizationPreviewCard.xaml.cs");
+
+        foreach (string code in new[] { section, hotkeyDialog, abandonDialog, previewCard })
+        {
+            foreach (string key in ThemedWinUiTokenKeys)
+            {
+                Assert.DoesNotContain($"Resources[\"{key}\"]", code, StringComparison.Ordinal);
+            }
+
+            Assert.Contains("NeutralInteractionBrush.ResolveThemedResource", code, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("ActualThemeChanged", section, StringComparison.Ordinal);
+    }
+
+    private static readonly string[] ThemedWinUiTokenKeys =
+    {
+        "TextFillColorPrimaryBrush",
+        "TextFillColorSecondaryBrush",
+        "CardBackgroundFillColorDefaultBrush",
+        "CardStrokeColorDefaultBrush",
+        "DividerStrokeColorDefaultBrush",
+        "ControlFillColorSecondaryBrush",
+    };
+
     private static string MethodBody(string source, string marker)
     {
         int start = source.IndexOf(marker, StringComparison.Ordinal);
@@ -271,6 +309,19 @@ public sealed class NeutralInteractionPaletteContractTests
         Assert.True(start >= 0, $"Missing element: {elementName}");
         int end = source.IndexOf("/>", start, StringComparison.Ordinal);
         return end < 0 ? source[start..] : source[start..end];
+    }
+
+    [Fact]
+    public void PivotSegmentedStyleKey_RemainsDefinedForRuntimeLookup()
+    {
+        // WidgetSegmentedStyleHelper resolves this style by string key at
+        // runtime; deleting it from App.xaml silently disables the "Pivot"
+        // tab style with no test failure elsewhere.
+        string appXaml = Read("src/DeskBox/App.xaml");
+        string helper = Read("src/DeskBox/Services/WidgetSegmentedStyleHelper.cs");
+
+        Assert.Contains("\"WidgetPivotSegmentedStyle\"", helper, StringComparison.Ordinal);
+        Assert.Contains("x:Key=\"WidgetPivotSegmentedStyle\"", appXaml, StringComparison.Ordinal);
     }
 
     private static string Read(string relativePath) =>

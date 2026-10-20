@@ -26,6 +26,12 @@ public sealed class WidgetZOrderRestoreContractTests
             manager,
             "internal bool ReassertRaisedWidgetGroupAfterDeskBoxActivation",
             "public bool RequestRestoreRaisedWidgetsToDesktopLayer");
+        string layerService = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Services/WidgetLayerService.cs"));
+        string reassertOrder = SliceMethod(
+            layerService,
+            "public static bool ApplyRaisedGroupReassertOrder",
+            "internal static bool IsForeignWindowAboveRaisedPeers");
         string contentWindow = File.ReadAllText(TestPaths.FromRepository(
             "src/DeskBox/Views/ContentWidgetWindow.WindowInteraction.cs"));
         string stackPopover = File.ReadAllText(TestPaths.FromRepository(
@@ -33,8 +39,17 @@ public sealed class WidgetZOrderRestoreContractTests
 
         Assert.Contains("_widgetsRaisedFromTray", method, StringComparison.Ordinal);
         Assert.Contains("IsForegroundDeskBoxWindow()", method, StringComparison.Ordinal);
-        Assert.Contains("ApplyPeerOrderHighestToLowest", method, StringComparison.Ordinal);
+        Assert.Contains("ApplyRaisedGroupReassertOrder", method, StringComparison.Ordinal);
         Assert.DoesNotContain("RestoreRaisedWidgetsToDesktopLayer", method, StringComparison.Ordinal);
+
+        // The reassert order must escalate: a tray raise that ran while
+        // DeskBox was a background process pins the peers below the
+        // then-foreground window, and only a repeated group lift can repair
+        // that split band once DeskBox owns the foreground. An intact band
+        // keeps the repaint-free peer reorder.
+        Assert.Contains("RaisedGroupReassertPolicy.Resolve", reassertOrder, StringComparison.Ordinal);
+        Assert.Contains("BringGroupTemporarilyToFront", reassertOrder, StringComparison.Ordinal);
+        Assert.Contains("ApplyPeerOrderHighestToLowest", reassertOrder, StringComparison.Ordinal);
         Assert.Contains(
             "ReassertRaisedWidgetGroupAfterDeskBoxActivation",
             contentWindow,
@@ -103,9 +118,89 @@ public sealed class WidgetZOrderRestoreContractTests
         Assert.Contains("TryAllowDesktopPinnedPointerActivation", routedHandler, StringComparison.Ordinal);
         Assert.Contains("IsKeyboardInputTarget(args.OriginalSource)", routedHandler, StringComparison.Ordinal);
         Assert.Contains("PrepareForDesktopPinnedKeyboardInput", routedHandler, StringComparison.Ordinal);
-        Assert.Contains("RestoreDesktopPinnedBottomState", routedHandler, StringComparison.Ordinal);
-        Assert.Contains("ActivateDesktopPinnedWindow", routedHandler, StringComparison.Ordinal);
+        // Since the callback-isolation batch the routed handler schedules the
+        // activation/restore units off the input-callback frame instead of
+        // running them inline; the units themselves stay pinned by the
+        // keyboard-input test's activate slice and the deferral test below.
+        Assert.Contains("DeferDesktopPinnedRestore(reason)", routedHandler, StringComparison.Ordinal);
+        Assert.Contains("DeferDesktopPinnedActivation(reason)", routedHandler, StringComparison.Ordinal);
         Assert.DoesNotContain("args.Handled = true", routedHandler, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DesktopPinnedWindowWork_IsDeferredOutOfCallbackFrames()
+    {
+        string bounds = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Views/WidgetWindowBase.Bounds.cs"));
+        string subclass = SliceMethod(
+            bounds,
+            "private IntPtr DesktopPinnedActivationSubclassProc",
+            "// ── Bounds management");
+        string deferActivation = SliceMethod(
+            bounds,
+            "private void DeferDesktopPinnedActivation",
+            "private void DeferDesktopPinnedRestore");
+        string deferRestore = SliceMethod(
+            bounds,
+            "private void DeferDesktopPinnedRestore",
+            "private void RestoreDesktopPinnedBottomState");
+
+        // The WM_MOUSEACTIVATE answer and the suppression stamp stay
+        // synchronous (the routed event follows in the same click); the
+        // bedding surgery leaves the callback frame.
+        Assert.Contains("UiDispatch.PostAfterCallback", subclass, StringComparison.Ordinal);
+        Assert.Contains(
+            "_desktopPinnedNativeSuppressionTimestamp = DateTime.UtcNow.Ticks;",
+            subclass,
+            StringComparison.Ordinal);
+        Assert.Contains("Win32Helper.MA_NOACTIVATE", subclass, StringComparison.Ordinal);
+        Assert.Contains("IsWindowInCurrentProcess(hWnd)", subclass, StringComparison.Ordinal);
+        Assert.Contains("IsDragging", subclass, StringComparison.Ordinal);
+
+        // Landing guards on the deferred activation: window liveness plus
+        // process ownership plus the drag guard; the foreground snapshot —
+        // a late activation must never steal a foreground the user gave away
+        // during the deferred turn — is taken OUTSIDE the landing lambda
+        // (inside it the guard would always pass).
+        Assert.Contains("UiDispatch.PostAfterCallback", deferActivation, StringComparison.Ordinal);
+        int snapshotIndex = deferActivation.IndexOf(
+            "IntPtr foregroundAtEnqueue = Win32Helper.GetForegroundWindow();",
+            StringComparison.Ordinal);
+        int enqueueIndex = deferActivation.IndexOf(
+            "UiDispatch.PostAfterCallback",
+            StringComparison.Ordinal);
+        Assert.True(snapshotIndex >= 0 && snapshotIndex < enqueueIndex,
+            "The foreground snapshot must be taken before enqueueing.");
+        Assert.Contains("IsWindowInCurrentProcess(HWnd)", deferActivation, StringComparison.Ordinal);
+        Assert.Contains("IsDragging", deferActivation, StringComparison.Ordinal);
+        Assert.Contains("ActivateDesktopPinnedWindow(reason)", deferActivation, StringComparison.Ordinal);
+
+        Assert.Contains("UiDispatch.PostAfterCallback", deferRestore, StringComparison.Ordinal);
+        Assert.Contains("IsWindowInCurrentProcess(HWnd)", deferRestore, StringComparison.Ordinal);
+        // The restore call itself must stay inside the deferred closure —
+        // emptying the lambda would otherwise pass every other pin.
+        Assert.Contains(
+            "RestoreDesktopPinnedBottomState(reason);",
+            deferRestore,
+            StringComparison.Ordinal);
+
+        // The native-activation handler defers restore and re-bed as ONE
+        // landing unit (#574 same-cycle invariant), with the in-flight flag
+        // captured at event time.
+        string activatedHandler = SliceMethod(
+            bounds,
+            "private void WidgetWindowBase_ActivatedForDesktopPinnedLayer",
+            "private void DeferDesktopPinnedActivation");
+        Assert.Contains("UiDispatch.PostAfterCallback", activatedHandler, StringComparison.Ordinal);
+        Assert.Contains("deliberateActivationInFlight", activatedHandler, StringComparison.Ordinal);
+        int restoreIndex = activatedHandler.IndexOf(
+            "RestoreDesktopPinnedBottomState",
+            StringComparison.Ordinal);
+        int rebedIndex = activatedHandler.IndexOf(
+            "RebedPinnedSiblingsAfterActivation",
+            StringComparison.Ordinal);
+        Assert.True(restoreIndex >= 0 && rebedIndex > restoreIndex,
+            "Restore must run before the sibling re-bed inside the same unit.");
     }
 
     [Fact]
@@ -188,8 +283,14 @@ public sealed class WidgetZOrderRestoreContractTests
         // The expanded capsule must not be flattened to the desktop bottom:
         // plain interaction reasserts the bottom, but an expand raises the
         // window to the top of the widget band through the shared helpers.
-        Assert.DoesNotContain(
-            "WidgetLayerService.UsesDesktopPinnedMode()",
+        // Desktop-pinned expansion additionally re-beds a floating group
+        // through the manager guard before raising (owner-band promotion
+        // residue must not carry the expanded capsule above apps, #574) —
+        // the guard excludes active leases, so an expanded capsule is never
+        // flattened by it, and the expand flow itself still never calls
+        // MoveToDesktopBottom directly.
+        Assert.Contains(
+            "TryRebedDesktopPinnedGroupBeforeExpand",
             expand,
             StringComparison.Ordinal);
         Assert.DoesNotContain("MoveToDesktopBottom", expand, StringComparison.Ordinal);
@@ -309,6 +410,173 @@ public sealed class WidgetZOrderRestoreContractTests
         Assert.Contains("IsPeerOrderAlreadyApplied", apply, StringComparison.Ordinal);
         Assert.DoesNotContain("MoveToDesktopBottom", method, StringComparison.Ordinal);
         Assert.DoesNotContain("SetWindowToBottom", method, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DesktopPinnedCoveredPointerActivation_SuppressesEvenOnDesktopForeground()
+    {
+        string layerService = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Services/WidgetLayerService.cs"));
+        string managerZOrder = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Services/WidgetManager.ZOrder.cs"));
+        string decision = SliceMethod(
+            layerService,
+            "public static bool ShouldSuppressPointerActivation",
+            "public static bool ShouldPreserveQuickRevealActivatingClick");
+        string coveredWalk = SliceMethod(
+            layerService,
+            "public static bool IsWindowCoveredByForeignWindow",
+            "private static bool RectsIntersect");
+        // The activation decision must consider geometric coverage: activating
+        // a DefView-owned HWND promotes the whole owner band above covering
+        // applications even while the desktop shell owns the foreground (#574).
+        Assert.Contains("IsWindowCoveredByForeignWindow(windowHandle)", decision, StringComparison.Ordinal);
+
+        // The coverage walk looks upward in Z order and requires a rect
+        // intersection, so promotion over non-overlapping windows stays
+        // allowed (keyboard flows keep working on exposed widgets).
+        Assert.Contains("Win32Helper.GW_HWNDPREV", coveredWalk, StringComparison.Ordinal);
+        Assert.Contains("ClassifyWindowForBedding", coveredWalk, StringComparison.Ordinal);
+        Assert.Contains("RectsIntersect", coveredWalk, StringComparison.Ordinal);
+        Assert.Contains("MaxBeddingWalkWindows", coveredWalk, StringComparison.Ordinal);
+
+        // The taskbar is neutral: an auto-hide taskbar overlapping a widget
+        // must not read as a covering application. The classifier lives on
+        // the manager and is shared, not duplicated per walk.
+        Assert.Contains("WidgetManager.IsTaskbarWindow", coveredWalk, StringComparison.Ordinal);
+        string taskbarClassifier = SliceMethod(
+            managerZOrder,
+            "internal static bool IsTaskbarWindow",
+            "private static bool IsDesktopShellWindow");
+        Assert.Contains("Shell_TrayWnd", taskbarClassifier, StringComparison.Ordinal);
+        Assert.Contains("Shell_SecondaryTrayWnd", taskbarClassifier, StringComparison.Ordinal);
+        Assert.Contains("NotifyIconOverflowWindow", taskbarClassifier, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DesktopPinnedExpand_RebedsFloatingGroupBeforeRaisingCapsule()
+    {
+        string collapse = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Views/WidgetWindowBase.Collapse.cs"));
+        string expand = SliceMethod(
+            collapse,
+            "private void RaiseForExpandedState",
+            "private void AcquireExpandedWidgetLayerLease");
+        string manager = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Services/WidgetManager.ZOrder.cs"));
+        string rebed = SliceMethod(
+            manager,
+            "internal bool TryRebedDesktopPinnedGroupBeforeExpand",
+            "private void VerifyDesktopPinnedBedding");
+
+        // A pinned group floats only through owner-band promotion residue; the
+        // expanded capsule must not ride that band above covering apps (#574).
+        int rebedBranch = expand.IndexOf(
+            "TryRebedDesktopPinnedGroupBeforeExpand",
+            StringComparison.Ordinal);
+        int floatingBranch = expand.IndexOf(
+            "expanded-state-floating",
+            StringComparison.Ordinal);
+        Assert.True(rebedBranch >= 0, "Expand flow must consult the pinned re-bed guard");
+        Assert.True(
+            floatingBranch > rebedBranch,
+            "The pinned re-bed guard must run before the float-preserving branch");
+
+        // The guard repairs through the same evidence-based funnel as the
+        // watchdog and stays out of the way of active sessions.
+        Assert.Contains("WidgetLayerService.UsesDesktopPinnedMode()", rebed, StringComparison.Ordinal);
+        Assert.Contains("_widgetsRaisedFromTray", rebed, StringComparison.Ordinal);
+        Assert.Contains("_sessionManager.IsInteractionActive", rebed, StringComparison.Ordinal);
+        Assert.Contains("HasActiveExpandedWidgetLayerLease()", rebed, StringComparison.Ordinal);
+        Assert.Contains("WidgetLayerService.FindForeignWindowBelow", rebed, StringComparison.Ordinal);
+        Assert.Contains("RebedDesktopPinnedWidgetGroup", rebed, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DesktopLayerPeerRaise_InsertsBelowNearestForeignWindowNotGlobalTop()
+    {
+        string layerService = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Services/WidgetLayerService.cs"));
+        string peerRaise = SliceMethod(
+            layerService,
+            "public static bool TryBringAbovePeerWidgetsAtDesktopLayer",
+            "private static IntPtr FindInsertBelowAnchorForDesktopLayerRaise");
+        string anchor = SliceMethod(
+            layerService,
+            "private static IntPtr FindInsertBelowAnchorForDesktopLayerRaise",
+            "public static bool EnsurePeerOrderHighestToLowest");
+
+        // DefView ownership enforces only a minimum z position; HWND_TOP on a
+        // pinned window reaches the top of the whole normal band and floats
+        // the expanded capsule above every application (#574). The raise must
+        // instead insert below the nearest visible foreign window above the
+        // group — above sibling widgets, beneath every application.
+        Assert.Contains(
+            "FindInsertBelowAnchorForDesktopLayerRaise(windowHandle)",
+            peerRaise,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("Win32Helper.HWND_TOP", peerRaise, StringComparison.Ordinal);
+
+        // The anchor walk skips DeskBox/shell/invisible windows and treats
+        // the taskbar as neutral; HWND_TOP survives only as the no-foreign-
+        // window fallback where nothing can be jumped over.
+        Assert.Contains("Win32Helper.GW_HWNDPREV", anchor, StringComparison.Ordinal);
+        Assert.Contains("ClassifyWindowForBedding", anchor, StringComparison.Ordinal);
+        Assert.Contains("WidgetManager.IsTaskbarWindow", anchor, StringComparison.Ordinal);
+        Assert.Contains("return Win32Helper.HWND_TOP", anchor, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DesktopPinnedActivation_RebedsSiblingsInTheSameCycle()
+    {
+        string bounds = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Views/WidgetWindowBase.Bounds.cs"));
+        string explicitActivation = SliceMethod(
+            bounds,
+            "private void ActivateDesktopPinnedWindow",
+            "private static bool IsDesktopShellRootWindow");
+        string activatedHandler = SliceMethod(
+            bounds,
+            "private void WidgetWindowBase_ActivatedForDesktopPinnedLayer",
+            "private void RestoreDesktopPinnedBottomState");
+        string manager = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Services/WidgetManager.ZOrder.cs"));
+        string rebed = SliceMethod(
+            manager,
+            "internal void RebedPinnedSiblingsAfterActivation",
+            "private void VerifyDesktopPinnedBedding");
+
+        // Activating any DefView-owned HWND promotes the whole owner band;
+        // both the deliberate (keyboard) and the native activation paths must
+        // drop the siblings back under covering applications in the same
+        // cycle (#574), or the group lingers above apps until idle
+        // normalization and reads as "all widgets jump to the front".
+        Assert.Contains(
+            "RebedPinnedSiblingsAfterActivation",
+            explicitActivation,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "RebedPinnedSiblingsAfterActivation",
+            activatedHandler,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "WindowActivationState.CodeActivated",
+            activatedHandler,
+            StringComparison.Ordinal);
+
+        // The sibling pass reuses the evidence-based group restore, never
+        // touches the activating window itself, and exempts the
+        // expanded-capsule lease owner — bedding it would bury the expanded
+        // capsule beneath sibling widgets mid-use.
+        Assert.Contains(
+            "WidgetLayerService.RestoreGroupPreservingForeground",
+            rebed,
+            StringComparison.Ordinal);
+        Assert.Contains("window.WindowHandle != activeWindowHandle", rebed, StringComparison.Ordinal);
+        Assert.Contains(
+            "_expandedWidgetLayerLease.WindowHandle",
+            rebed,
+            StringComparison.Ordinal);
     }
 
     private static string SliceMethod(string source, string startMarker, string endMarker)

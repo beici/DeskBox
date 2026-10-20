@@ -34,6 +34,7 @@ public sealed class QuickCaptureService
     private const uint ThumbnailMaxPixelSize = 180;
 
     private readonly QuickCaptureStore _store;
+    private readonly Func<string, Task<bool>>? _recycleAttachmentFileAsync;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _thumbnailTaskLock = new();
     private readonly Dictionary<string, Task<string?>> _thumbnailTasks = new(StringComparer.OrdinalIgnoreCase);
@@ -65,9 +66,12 @@ public sealed class QuickCaptureService
 
     public event Action? Changed;
 
-    public QuickCaptureService(QuickCaptureStore? store = null)
+    public QuickCaptureService(
+        QuickCaptureStore? store = null,
+        Func<string, Task<bool>>? recycleAttachmentFileAsync = null)
     {
         _store = store ?? new QuickCaptureStore();
+        _recycleAttachmentFileAsync = recycleAttachmentFileAsync;
     }
 
     public async Task<QuickCaptureStoreData> GetDataAsync()
@@ -791,17 +795,16 @@ public sealed class QuickCaptureService
             _gate.Release();
             if (removalPersisted &&
                 removedAttachment is { IsManagedCopy: true } &&
-                File.Exists(removedAttachment.FilePath) &&
                 !IsPathInsideDirectory(removedAttachment.FilePath, _store.ImageDirectory))
             {
-                try
-                {
-                    File.Delete(removedAttachment.FilePath);
-                }
-                catch (Exception ex)
-                {
-                    App.Log($"[QuickCaptureService] Failed to delete managed attachment: {ex.Message}");
-                }
+                // Files in the shared image cache stay owned by the refcount
+                // GC above; anything else is deleted only when provably
+                // inside the managed attachment tree, through the recycle
+                // kernel (containment gate inside TryDeleteManagedCopyAsync).
+                await AttachmentStorageService.TryDeleteManagedCopyAsync(
+                    removedAttachment.FilePath,
+                    _store.AttachmentDirectory,
+                    _recycleAttachmentFileAsync);
             }
         }
     }
@@ -1117,12 +1120,14 @@ public sealed class QuickCaptureService
         }
     }
 
-    public async Task TrimRecentItemsAsync(int maxRecentItems)
+    public async Task TrimRecentItemsAsync(int maxRecentItems,
+        CancellationToken cancellationToken = default)
     {
-        await _gate.WaitAsync();
+        await _gate.WaitAsync(cancellationToken);
         try
         {
             await EnsureLoadedCoreAsync();
+            cancellationToken.ThrowIfCancellationRequested();
             int before = _data!.RecentItems.Count;
             TrimRecentItemsCore(NormalizeRecentLimit(maxRecentItems));
             if (_data.RecentItems.Count != before)
@@ -2152,6 +2157,27 @@ public sealed class QuickCaptureService
     private static string ComputeContentHash(byte[] bytes)
     {
         return Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// File name for an image exported out of a Quick Capture item into a user
+    /// folder: the caller's prefix (sanitized), the item timestamp, and the
+    /// source extension. Kept here so the store, the widget menu, and the
+    /// settings export path all produce the same name for the same capture.
+    /// </summary>
+    internal static string BuildImageExportFileName(
+        string? fileNamePrefix,
+        DateTimeOffset timestamp,
+        string sourceImagePath)
+    {
+        string prefix = FileService.SanitizeFileSystemName(fileNamePrefix);
+        if (string.IsNullOrWhiteSpace(prefix))
+        {
+            prefix = "Capture";
+        }
+
+        string extension = NormalizeImageExtension(sourceImagePath);
+        return $"{prefix} {timestamp.ToLocalTime():yyyy-MM-dd HH-mm-ss}{extension}";
     }
 
     private static bool IsImageFile(string? path)
