@@ -65,7 +65,7 @@ dotnet test .\tests\DeskBox.Tests\DeskBox.Tests.csproj --no-restore --verbosity:
    - `tests/DeskBox.Tests/SettingsSliceOwnershipContractTests.cs`：门面属性 **240**
    - `tests/DeskBox.Tests/JsonSerializationBaselineContractTests.cs`：41 文件 / 96 调用 / 37 context owner
    - `AotStage5B4B1ContractTests.cs`：可绑定计数 **33**（脚本 `publish-aot-audit.ps1:3661` 同步）
-   - `scripts/publish-aot-audit.ps1`：WMC1510 = **742**（35 处字面量）
+   - `scripts/publish-aot-audit.ps1`：WMC1510 = **796**（35 处字面量；验收后实测重校准值，fork 原值 742）
 2. **XAML 绑定类**：`x:Bind` 指向的属性/命令不存在。我在 Linux 上做了启发式检查
    （151 个 `x:Bind`，按 DataTemplate 作用域核对，初报 7 个全部是检查器漏检多行属性声明），
    但**文本分析不等价于 XAML 编译器**。这是最可能藏真问题的地方。
@@ -96,8 +96,8 @@ pwsh -NoProfile -Command {
 }
 ```
 
-语法 OK 后再跑完整审计。**WMC1510 = 742 是 fork 的重校准值，只有真实 AOT 发布能验证**。
-如果实际计数不是 742：脚本会明确报 `Stage NA WMC1510 count changed: expected=742 actual=N`，
+语法 OK 后再跑完整审计。**WMC1510 在合并树上实测为 796**（fork 原值 742、base 866、上游 875），已按实测重校准并 bump `$auditProfileVersion` 63 → 64。
+如果实际计数与钉值不符：脚本会明确报 `Stage NA WMC1510 count changed: expected=796 actual=N`，
 此时按实际值更新 **36 处**（脚本 35 处 + 测试 1 处），保持全站一致。
 
 ---
@@ -164,7 +164,7 @@ pwsh -NoProfile -Command {
 - **保留本地功能行为**：这是合并的硬约束。如果某个修复会改变 fork 的既有行为，
   先停下来问。
 - **12 语言键集必须一致**：`src/DeskBox/Strings/*.json` 十二个文件键集与占位符
-  必须完全相同（当前 3,095 键）。改任何文案都要 12 个一起改。
+  必须完全相同（当前 3,090 键；合并时的 3,095 已清掉 5 个被并集复活的退役键）。改任何文案都要 12 个一起改。
 - **改动契约计数时同步脚本**：`scripts/publish-aot-audit.ps1` 和对应
   `AotStage*ContractTests.cs` 里的字面量是成对的，改一处必须改另一处。
 - 回退点：分支 `backup/pre-upstream-1.5.8` = `1aa78145`（合并前的 1.5.6 全绿状态）。

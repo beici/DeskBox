@@ -4,7 +4,7 @@
 > 源：`Tianyu199509/DeskBox` `main` @ `bbb9e697`（v1.5.8，191 个上游提交）
 > 目标：`beici/DeskBox` `wip/fix-bug` @ `1aa78145`（fork 1.5.6，163 个本地提交）
 > 共同祖先（merge-base）：`d4b0a7a2`（v1.5.5 时期）
-> 合并分支：`merge/upstream-1.5.8`，备份分支 `backup/pre-upstream-1.5.8`
+> 合并分支：`merge/upstream-1.5.8`（合并提交 `479339d4`，已并入 `wip/fix-bug`）；回退点 `main` @ `1aa78145`
 
 本文档记录**全部**冲突处理决策、代码修改、review 发现的问题与修复，以及验证方式。
 未在本文件中特别说明的冲突，均按「默认保留本地」原则处理。
@@ -72,7 +72,7 @@
 
 三路分析结果（base `d4b0a7a2` / HEAD / upstream）：
 
-- 键数：base 2,848 / HEAD 2,667 / upstream 2,937，并集 **3,095**。
+- 键数：base 2,848 / HEAD 2,667 / upstream 2,937，并集 **3,095**（Windows 端清掉 5 个被两侧并集复活的退役键后为 **3,090**，见 §8.4）。
 - **真实冲突只有 1 处**（es-ES `FileInfo.FileModified`）；11 个语言 0 真实冲突。
 - 本地独有键 158 个（12 语言一致），上游独有键 428 个（12 语言一致）。
 
@@ -82,7 +82,7 @@
 `aaaa` 改成合法格式），上游版本 `{1:d/M/yyyy H:mm}` 虽也合法但与其余 11 语言的
 `HH:mm` 不一致。
 
-产物：12 个文件均为 **3,095 键**、4 空格缩进（沿用本地 `scripts/add-*-strings.py` 约定）、
+产物：12 个文件均为 **3,095 键**（验收后 3,090，见 §8.4）、4 空格缩进（沿用本地 `scripts/add-*-strings.py` 约定）、
 `ensure_ascii=False`、LF、结尾换行。占位符索引逐键校验一致，0 个非法格式字母。
 
 ### 3.3 数据契约与模型
@@ -200,9 +200,9 @@
 ### 3.10 测试
 
 - **AOT 审计计数簇**（`scripts/publish-aot-audit.ps1` + 24 个 `AotStage*ContractTests.cs`）：
-  **WMC1510 = 742 全统一**（本地值；上游 875、base 866）。该值只有真实 AOT 发布才能验证，
+  **WMC1510 = 742 全统一**（本地值；上游 875、base 866）。**Windows 端实测合并树为 796，已按实测重校准，见 §8.5。** 该值只有真实 AOT 发布才能验证，
   本环境不可能执行，因此以「保留 fork 的审计重校准 + 全站一致」为准。
-  `$auditProfileVersion = 63` / `schemaVersion = 55` 保留。
+  `$auditProfileVersion = 63` / `schemaVersion = 55` 保留（验收后 profile 升到 **64**，见 §8.5）。
 - `$stage5B4B1ExpectedBindableViewModelPropertyCount`：**351 → 33**。计数目标是
   `SettingsViewModel.AotBindableProperties.cs`（不是 `SettingsViewModel.cs`）；合并后该文件
   与上游一致、恰好 33 个 `nameof(`。三处耦合点同时更新（脚本字面量 + 测试值断言 + 测试的
@@ -528,8 +528,8 @@ HEAD 中「创建服务时挂事件」的那一行在合并时被上游的 runti
 | 1 | 冲突标记残留（`src/`、`tests/`、`scripts/`、`installer/`、`docs/`） | **0 个文件** |
 | 2 | 本地独有功能指纹（20 项：帧率上限、胶囊策略、自愈服务、音乐存储、schema v10 迁移、桌面图标几何、边距计算、层级规划、标题外观、元数据键、剪贴板配色、工具对话框、Abstractions 项目、逐次平移动画、peek 守卫等） | **全部存在** |
 | 3 | 上游功能落地指纹（12 项：UiDispatch、context-menu v3、ZIP 服务、FeatureRuntimeRegistry、屏幕目录、拓扑门、托管迁移、Features 编辑器、WidgetScreenBindingMode、提权提示窗、热键录制、图标新鲜度账本） | **全部存在** |
-| 4 | 12 语言键集与占位符一致性 | **3,095 键 × 12 语言，0 差异** |
-| 5 | AOT 审计计数一致性（脚本 vs 24 个测试） | **WMC1510 = 742，35 个 stage 变量，全部一致** |
+| 4 | 12 语言键集与占位符一致性 | **3,095 键 × 12 语言，0 差异**（验收后 3,090，见 §8.4） |
+| 5 | AOT 审计计数一致性（脚本 vs 24 个测试） | **WMC1510 = 742，35 个 stage 变量，全部一致**（验收后 **796**，见 §8.5） |
 | 6 | `DeskBox.Abstractions` Roslyn 编译 | **0 错误** |
 
 ### 6.3 Roslyn 语法门禁
@@ -592,8 +592,8 @@ dotnet build src/DeskBox/DeskBox.csproj -p:EnableWindowsTargeting=true -p:Platfo
    只做了结构校验（括号/花括号平衡 vs HEAD）。建议先跑一次
    `pwsh -NoProfile -Command "& { [void][System.Management.Automation.Language.Parser]::ParseFile('scripts/publish-aot-audit.ps1',[ref]$null,[ref]$null) }"`
    确认无语法错误，再跑完整审计。
-4. **AOT 审计的实际 WMC1510 计数**：`742` 是 fork 的重校准值，只有真实 AOT 发布能验证。
-   若实际值不同，需按审计输出重新校准（36 处脚本字面量 + 对应测试断言）。
+4. **AOT 审计的实际 WMC1510 计数**：`742` 是 fork 的重校准值，只有真实 AOT 发布能验证。**已在 Windows 实测为 796 并完成重校准，见 §8.5。**
+   实际校准涉及 **35 处脚本字面量 + 20 处测试断言**。
 5. **真机行为冒烟**（建议重点）：
    - 文件格子拖出（Win10 无操作选择框、托管快捷方式）——本次删除了 fork 的第二个
      `Items_DragStarting`，行为应完全由上游处理器覆盖；
@@ -622,3 +622,279 @@ dotnet build .\src\DeskBox\DeskBox.csproj --configuration Debug --no-restore -p:
 dotnet test .\tests\DeskBox.Tests\DeskBox.Tests.csproj --no-restore --verbosity:minimal -p:Platform=x64
 pwsh -NoProfile -File .\scripts\publish-aot-audit.ps1    # 校验 WMC1510 与审计链
 ```
+
+---
+
+## 八、Windows 端验收结果
+
+Linux 侧只能做到「静态 + 半编译」验证（§六），本节记录合并树在 Windows 上的
+真实构建、测试与 Native AOT 审计结果，以及由此暴露并修复的问题。
+
+验收环境：Windows 10 21H2+ / x64，.NET SDK **10.0.402**（与 `global.json` 一致），
+WinAppSDK **2.5.1**，Rust **1.96.0**，MSVC 14.44.35207 + Windows SDK 10.0.26100.0。
+
+### 8.1 最终结果
+
+| 门禁 | 结果 |
+|---|---|
+| `dotnet build`（Debug / x64，全解决方案） | **0 错误** |
+| `dotnet test`（x64，全量） | **5,808 / 5,808 通过，0 失败，0 跳过** |
+| `scripts/publish-aot-audit.ps1 -Platform x64` | **exit 0**，`auditFindings` 为空 |
+| AOT 审计 warning 白名单 | 仅 `CS0108` 2 / `CS8601` 2 / `CS8602` 16 / `WMC1510` 796，全部在允许集内 |
+| AOT 审计 always-throw | **0** |
+| Rust ABI | ABI 2 / capability mask 511 / 10 个导出，未变 |
+| 12 语言键集与占位符 | **3,090 键 × 12 语言，0 差异**（含 341 个含占位符的键逐键比对） |
+| 提交身份 | `Simon <1047078635@qq.com>`，无任何工具署名 |
+
+验收前基线：合并提交 `479339d4` 之后的 `8afb5a55` 上，测试套件**一次都没跑过**
+（§六 明确标注为未验证项），AOT 审计也从未执行。首次全量运行得到 **39 个失败**；
+定位并修复后降到 **7 个**，再降到 **0**。AOT 审计首次完整运行为 **45 条 findings**，
+全部修复后通过。
+
+### 8.2 必须先说明的机器环境陷阱
+
+这台验收机器上，**任何可执行文件只要解析后的路径落在 `E:\DeskBox` 目录树内，
+就会被强制放进 App Silo 并降为 Low 完整性级别**（实测 `TokenIsAppSilo = 1`、
+完整性 RID `0x1000`）。同一份二进制放到 `E:\DeskBox-baseline`、`E:\DeskBox2`、
+`C:\Users\...\Temp` 下则是 `TokenIsAppSilo = 0`、High（`0x3000`）。
+通过 junction 解析回该树同样会被捕获。来源是机器上的第三方安全软件过滤器，
+不是本仓库的代码或 DSH 沙箱（`CreateAppContainerProfile` / `CreateJobObject` /
+`TokenIsAppSilo` 在全仓零命中）。
+
+被降权后会出现这些**与代码无关**的假失败：
+
+- `HKCU` 新建子键被拒（`UnauthorizedAccessException`）；
+- WinRT `StorageFile.GetFileFromPathAsync` 被拒（中文错误「该项目没有位于应用程序
+  可以访问的位置」）；
+- `mklink /J` 建出的 junction 重解析点数据被写成 `\??\Global\E:\...`，多出
+  `Global\` 命名空间前缀，导致 `.NET` 的 `ResolveLinkTarget(returnFinalTarget: false)`
+  返回畸形路径；
+- `%TEMP%` / `%LOCALAPPDATA%` 写入被拒。
+
+因此**本节的测试与审计结果全部在 `E:\DeskBox` 树之外的工作树中取得**
+（`git worktree add --detach E:\DeskBox-verify <commit>`，同一棵树、同一批未提交改动，
+逐文件 SHA256 校验一致）。在树内直接跑会得到 39 个失败中约 9 个的噪声。
+这一点对后续任何人复验都成立：**要么把仓库放到该树外，要么用计划任务等脱离
+该路径的进程上下文运行**。
+
+### 8.3 测试套件暴露并修复的缺陷
+
+39 个失败分为六类。其中 9 个是上述环境陷阱造成的假失败（把测试数据根重定向到
+`DESKBOX_DEV_DATA_ROOT` 后全部转绿——`DeskBoxDataPathService.ResolveConfiguredRoot()`
+在 Debug 下读这个环境变量，本来就是仓库既有的测试隔离机制）。其余是真实缺陷。
+
+#### 8.3.1 合并后未跑过测试导致的契约计数漂移（13 个）
+
+Linux 侧重算过这些计数，但从未执行过断言。逐个用三路对比（fork `1aa78145` /
+merge-base `d4b0a7a2` / upstream `bbb9e697`）判定是「上游合法变更」还是「合并错误」，
+只对前者更新冻结值：
+
+| 契约 | 原值 | 实测 | 判定 |
+|---|---|---|---|
+| `AppSettings` 门面 passthrough 计数 | 238 / 239 | **240 / 241** | fork 独有的 `WidgetTitleAlignment`、`WidgetAnimationFrameRate` 在 base 与 upstream 均不存在，只在 fork 与合并树存在 → 冻结值偏低 |
+| `Todo` feature 源文件数 | 37 | **38** | 上游新增 `TodoSettingsCoordinator.cs` |
+| `Glance` feature 源文件数 | 19 | **22** | 上游新增 3 个日历/图片服务，均有真实调用点 |
+| `Search` feature 源文件数 | 21 | **23** | 上游新增 `SearchSettingsCoordinator.cs`、`SettingsSearchChannelPolicy.cs` |
+| `QuickCapture` feature 源文件数 | 25 | **27** | 上游新增 2 个；同时删掉 1 个被合并错误复活的死文件（见 8.3.2） |
+| `ModuleBoundary` 全局访问 manifest | `ThemeService` 3 / `WidgetManager.ZOrder` 10 | **4 / 12** | 多出的是 fork 独有守卫（跨线程重投、interaction-leak watchdog），上游无对应物 |
+| `ToggleSwitch` 无障碍名 | Onboarding 6 | **8** | fork 保留本地五步引导时丢了上游的无障碍标注 |
+| 架构守卫：注册子目录 | `Views` 只有 `SettingsSections` | 需加 `Dialogs` | 上游新增 `HotkeyRecorderDialog.xaml.cs` |
+| 架构守卫：host 命名空间白名单 | 冻结于 fork 时代 | 需放行 feature 自己的命名空间 | 上游把设置分节搬进 `Features/<Name>/` 后，`SearchSettingsSection.xaml.cs`、`QuickCaptureSettingsCoordinator.cs` 合法引用 `DeskBox.Features.Search` / `.QuickCapture` |
+
+#### 8.3.2 被合并错误复活的死代码（2 个文件）
+
+fork 的清理提交 `5078325e` 删掉过一批死代码，上游没有该提交，合并把它们复活了：
+
+- `src/DeskBox/Helpers/ShellDataObjectBuilder.cs`（213 行）——全仓零调用点，且它调用的
+  4 个 `Win32Helper` 方法上游已删除；
+- `src/DeskBox/Helpers/QuickCaptureClipboardActivationHelper.cs`（15 行）——全仓零调用点。
+
+两个文件已删除。同批被删的 `src/DeskBox/Contracts/IFeatureLifecycleEvents.cs` 在合并树里
+正确保持了删除状态，只有这两个漏网。
+
+#### 8.3.3 上游改了实现/测试但没同步的地方（5 个）
+
+| 失败 | 根因 | 改动 |
+|---|---|---|
+| `SettingsWiringContractTests` 5 个死绑定 | 合并取了上游门面退役，但 fork-only 的 `MusicSettingsSection.xaml` 与 `SettingsWindow.xaml` 两处 expander 仍绑已退役属性 | 绑定改到编辑器属性（`AvailableDisplayModeOptions` / `DisplayMode` / `UseArtworkBackdrop` / `EnableCoverHoverMotion` / `Enabled`） |
+| `QuickCaptureSettingsEditorTests` 仍含 `{Binding QuickCapture` | 同上，7 处只迁移了 5 处 | 剩余 2 处 expander 的 `IsEnabled` 改绑 `Enabled` |
+| `WidgetRaiseBandContractTests` ×2 | 合并把 fork 的 `BringTitleActivatedGroupToFront` 插在旧切片 marker 之间，把下一个方法整段吞进切片；另一个是 marker 硬编码 CRLF 而该文件是 LF-only | 测试切片 marker 改到正确方法边界 + 切片内做 EOL 归一（产品代码正确，未改） |
+| `CapsuleClickAndMorphContinuityTests` | fork 的两行 `CapturePositionAnchor` + `UpdateConfigBoundsFromPhysical` 被上游的 `CommitUserPlacementFromWindow` 取代，后者是其超集 | 测试断言改到上游方法（产品代码正确，未改） |
+| `ThemeDictionaryContractTests` | 合并取上游四字典结构，但 fork 的 5 个画刷只补进 Light/Dark | `Default` / `HighContrast` 各补 5 条，四字典均 23 键 |
+
+#### 8.3.4 合并集成缺陷（6 个真实行为回归）
+
+这一批是**合并本身写坏的**，全部有基线对照：在 `1aa78145` 上同样的测试全绿。
+
+1. **`TodoReminderService` 丢失失活守卫**（`TodoReminderServiceTests` ×2）
+   上游在 `LoadStoreSnapshotAsync` 之后有 `if (_disposed || !ShouldBeRunning()) return;`，
+   合并改用 fork 的 `store.MutateAsync` 路径后丢了该检查点 → 禁用/释放后仍会写入
+   并通知。已在 `src/DeskBox/Services/TodoReminderService.cs` 的 mutate 回调开头补回守卫。
+
+2. **`SettingsService` 丢失运行时状态保留策略**（`ApplyDefaultPreferences_...`）
+   上游 `DefaultPreferencePreservationReasons` 里有
+   `[nameof(AppSettings.LastQuickCaptureFileWidgetId)] = RuntimeState`，合并丢失 →
+   恢复默认偏好时把该字段清成了 `""`。已补回（策略键数 43，与上游一致）。
+
+3. **两套互斥的 schema 守卫被串联**（`SaveCheckedAsync_NewerSchemaProfileIsRefused...`）
+   上游的 `if (_settingsSchemaNewerThanBuild) return false;` 提前 return 且**不设**
+   `LastPersistenceFailure`；fork 用锁内 `_loadedDiskSchemaVersion` 守卫并设该字段。
+   合并把两者都留下了，上游分支先命中 → fork 分支成死代码。已删除上游的提前 return。
+
+4. **`MusicSettingsStoreTests` 钉了旧 schema 版本**（陈旧测试）
+   `SettingsMigrationService` 的当前 schema 版本三路为 base 9 / fork 10 / 上游 **14**，
+   合并取上游 14 并已注册 9→10→…→13→14 全链。测试仍钉 10。已把测试改为 14
+   （产品常量不降）。
+
+5. **`TodoStoreChanged` 订阅不对称**（`F9RemediationContractTests`）
+   合并只在 `CreateTodoReminderService` 里 `+=`，全文件无 `-=`。fork 的退订在
+   `RefreshTodoReminderService` 的 `if (!shouldRun)` 分支，但该逻辑已被上游的
+   `TodoReminderRuntime.Reconcile()` 取代，`Retire()` 只 `DisposeAsync()` 不碰事件 →
+   每次重新激活泄漏一个旧订阅。已在 `src/DeskBox/App.xaml.cs` 的 retire 分支补 `-=`。
+
+6. **`TodoReminderService` 残留读缓存路径**（`ReminderService_WritesOnlyThroughMutate...`）
+   fork 的 `LoadStoreSnapshotAsync` 是只读快照路径，上游改成 `MutateAsync` 后该方法
+   在合并树里已无调用点，但方法体、`_storeSnapshots` 字段与 `CheckCoreAsync` 里的
+   修剪块都还在，且其中的 `await store.LoadAsync();` 命中了「只允许走 Mutate」的守卫正则。
+   已删除这三处死代码。
+
+#### 8.3.5 junction 解析缺陷（3 个）
+
+`FileService.TryResolveExistingPathForTraversal` 用
+`ResolveLinkTarget(returnFinalTarget: false)` 取单跳目标后递归解析。在 8.2 描述的机器上，
+被写坏的重解析点会让该调用返回畸形路径（把 `Global\E:\...` 当相对路径拼到当前目录），
+递归必然失败，于是 junction 被判定为「不可解析」。
+
+修法：`src/DeskBox/Services/FileService.PathResolution.cs` 增加一条回退——当单跳目标
+**非完全限定路径或不存在**时，改用 `ResolveLinkTarget(returnFinalTarget: true)` 取最终
+目标再递归。健康路径保持原有的逐跳 visit/cycle 语义（`MaxReparsePointHops = 64`）不变。
+
+这一条严格说是对机器异常的免疫，不是合并回归（`FileService.PathResolution.cs` 在
+`git diff 1aa78145..HEAD` 中无改动）。但保留它是合理的：畸形重解析点在真实用户机器上
+也会由安全软件产生，而旧代码会让这类 junction 完全不可遍历。
+
+#### 8.3.6 被合并错误复活的死代码之外：两个诊断探针
+
+验收期间在测试项目里临时加过 3 个诊断测试（导出 testhost 令牌、复现 junction 畸形、
+复现 WinRT 拒绝访问），**已在提交前全部删除**，不在合并树里。
+
+### 8.4 本地化键集（12 语言）
+
+合并采用「两侧键并集」策略，因此把 fork 早已退役、上游从未有过的 5 个键也并了回来：
+
+`Settings.WindowShadow.Confirm.Title`、`.Confirm.Body`、`.ApplyFailed`、
+`.ApplyFailedNoEffect`、`Widget.ViewAndSort`。产品代码对这 5 个键**零引用**，
+两条契约测试分别断言它们必须不存在。已从 12 个语言文件全部删除：
+**3,095 → 3,090 键**，12 语言键集与占位符逐键比对仍 0 差异。
+
+`MusicSettingsSection.xaml` 是 fork 独有、全仓零实例化的文件（上游在
+`SettingsWindow.xaml` 里内联了等价模板）。曾考虑删除，但
+`AotStage4D1BContractTests` 把它的 3 个 `HeaderKey` + 3 个 `DescriptionKey` + 4 个
+`{Binding` 计进了全局 223 / 190 / 487 的冻结值，删除会制造新失败并牵动审计脚本。
+按「保留本地功能行为」的硬约束，**保留该文件**并给它补 2 个 `AutomationNameKey`。
+已用测试同款正则重算合并树 41 个生产 XAML：223 / 190 / 37 / 23 / 6 / 6 / 2，
+合计 487，与断言完全吻合。
+
+### 8.5 Native AOT 审计
+
+首次完整运行得到 **45 条 findings**。全部修复后 `exit 0`。
+
+#### 8.5.1 从未被编译过的产品缺陷（4 项）
+
+AOT 审计是唯一会编译 `*.Aot*Smoke.cs` / `Services/Aot*Fixture.cs` 的配置
+（`DeskBox.csproj` 在 `DeskBoxAotSmokeHarness != true` 时把它们 `Compile Remove`），
+而上游 CI 只跑 restore + build + test、不跑审计 → 上游带进来的缺陷从未暴露：
+
+1. **`AotShellMoveFixture.cs` 缺 `using DeskBox.Helpers;`**（CS0246）
+   该文件引用 `StaOperationAbandonedException`（定义在 `Helpers/BoundedStaOperationRunner.cs`）
+   却没有 using，AOT 配置直接编译失败，并连带产生 7 个 WMC XAML 假错。
+   已补 using。该文件与上游 `bbb9e697` **逐字节相同** → 上游自身缺陷，引入提交 `6314ecfa`。
+
+2. **`RunRegistrationHeartbeat` 产生 CS4014**（`SearchHotkeyService.cs` / `GlobalHotkeyService.cs`）
+   合并保留了 fork 的 `private async Task RefreshRegistrationCore(...)` 签名，同时引入
+   上游新增的 `void RunRegistrationHeartbeat()` 接口方法 → 调用点无法 await。
+   两处改为 `RefreshRegistrationCore(quiet: true).GetAwaiter().GetResult();`，与同文件既有的
+   `RefreshRegistration()` 先例一致：该路径下 core 内唯一的 await 同步完成，不会死锁，
+   且调用后的状态读取必须观察到刷新结果。
+
+3. **`SHAssocEnumHandlers` 的 COM 编组签名产生 IL2050**（`ShellOpenWithInterop.cs`）
+   `[MarshalAs(UnmanagedType.Interface)] out ShellOpenWithEnumHandlers` 是 Native AOT
+   无法保证的 COM 编组。改为 `out IntPtr` + `Marshal.GetObjectForIUnknown`（本文件其余
+   指针已用同一模式），并显式释放枚举器 RCW。`Next` 的
+   `[MarshalAs(UnmanagedType.LPArray), Out]` **不能动**——2026-10-16 的
+   `MngSafeArrayMarshaler` 崩溃事故就是它的默认 SAFEARRAY 编组造成的。
+
+4. **`ShellLinkForFlagProbe` 的 ComImport coclass 被 ILC 判为 always-throw**
+   （`DragDropPermissionService.cs`）ILC 输出
+   `will always throw because: Invalid IL or CLR metadata`，导致**零售 AOT 版的
+   「以管理员身份运行」快捷方式标志探测永久返回 false**——真实功能回归。
+   改为直接读 `.lnk` 二进制头：ShellLinkHeader 里 `LinkFlags` 在偏移 `0x14`
+   （HeaderSize 4 + LinkCLSID 16），`SLDF_RUNAS_USER = 0x2000` 是同一位集，
+   因此读 24 字节头部与 COM 往返等价，且零 COM、零 P/Invoke。
+
+#### 8.5.2 审计脚本自身的过期 pattern（5 类）
+
+以下 5 类 pattern 都是**上游改了产品实现或测试却没同步脚本**，即审计在上游自身
+就是红的（上游不跑审计所以无人发现）：
+
+1. `$stage5B4B1RoutePatterns` 里 3 个 Capsule 深链路由
+   （`CapsuleBehaviorSettings` / `CapsuleArrangementSettings` / `CapsuleAnimationSettings`）
+   已在上游退役——`SettingsWindow.AotDeepSmoke.cs` 的 `deepSettingsRoutes` 只剩
+   `CapsuleMode` / `CapsuleOverridesSettings`。删掉 3 条。
+2. `File.Delete(attachment.FilePath)` 已被 `AttachmentStorageService.TryDeleteManagedCopyAsync(`
+   取代，而**契约测试正断言该字符串不得出现** → 脚本要求必须出现是自相矛盾。
+3. `await actions.DeleteItemsAsync(actions.GetSelectedItems())` 已被拆成两行调用。
+4. `MenuFlyoutItemAutomationPeer` + `PatternInterface.Invoke` 已被上游替换为
+   `AotContextMenuProbe.InvokeProvider` 模式（3 个 stage 数组各 1 对）。
+5. `$stage5B4B1ExpectedBindableViewModelPropertyCount = 33` 经核实与合并树一致，**不改**。
+
+#### 8.5.3 计数重校准
+
+WMC1510 在合并树上实测 **796**，三路为 fork 742 / base 866 / 上游 875 —— 都不是合并树
+的值：13 个产生该警告的 XAML 里 10 个取了上游侧（与 `bbb9e697` 逐字节相同），另加
+fork 独有的 `MusicSettingsSection.xaml`。已把脚本里 **35 处**钉值 + 契约测试里
+**20 处**断言统一改为 796。
+
+按脚本头部约定，任何 pattern / 计数改动都必须 bump `$auditProfileVersion`：
+**63 → 64**，并同步 `$RequiredAuditProfileVersion` 与 `$requiredAuditProfileVersion`
+链路（启动器 + `run-aot-*-smoke.ps1` + 全部 Stage 契约测试），共 102 处。
+
+#### 8.5.4 审计结论
+
+- `auditFindings`：**空**
+- `alwaysThrowMessages`：**0**
+- `warningCodes`：`CS0108` 2 / `CS8601` 2 / `CS8602` 16 / `WMC1510` 796，全部在
+  `allowedWarningCodes` 白名单内
+- 35 处 WMC1510 钉版 Expected/Maximum **全部等于实测 796**（0 处 stale）
+- `sourceStableDuringAudit`：`true`（审计前后工作树指纹一致）
+- `analysisContract` 下所有 `*Missing*Patterns` 数组为空
+- `rustNative`：ABI 2 / capability mask 511 / 10 个必需导出
+- 产出 103 个文件 / 64.3 MiB
+
+### 8.6 提交
+
+| 提交 | 内容 | 规模 |
+|---|---|---|
+| `5486cc33` | 测试验收暴露的缺陷（8.3 / 8.4） | 31 文件，+235 / −379 |
+| `ec9375e8` | Native AOT 审计暴露的缺陷与重校准（8.5） | 60 文件，+291 / −236 |
+| 本文档 | 本节及 §三 / §六 的过时数字 | — |
+
+两次提交都在合并提交 `479339d4` 之后，未 amend 合并提交。身份 `Simon <1047078635@qq.com>`，
+无 `Co-Authored-By` / `Generated with` 等署名（`.githooks/commit-msg` 强制）。
+
+### 8.7 仍需在真机手工确认的项
+
+自动化门禁已全绿，但以下行为只能人工观察，**未在本轮验收覆盖**：
+
+1. **拖放**：从文件格子拖出到桌面（Win10 无操作选择框、托管快捷方式）、拖回源格子应被拒绝。
+   合并删除了 fork 的第二个 `Items_DragStarting`，行为现在完全由上游处理器覆盖。
+2. **胶囊展开/收起动画**流畅度，以及新恢复的帧率上限卡片（30/60/90/120 四档，
+   写入 `settings.json` 的 `widgetAnimationFrameRate`）。
+3. **设置页各节**：外观/动画、随记记录配色、音乐（含封面背景与悬停动效重启后保持）、
+   文件叠放。
+4. **引导流程**：本地五步流程 + 文件练习步骤。
+5. **托管存储迁移**：现在走上游事务式复制（fork 的逐项重试已退役）。
+6. **托盘显隐 / Show Desktop 自愈**。
+7. **待办提醒 → 格子实时刷新**（对应 8.3.4 第 5、6 项的订阅修复）。
+
+复验时请先把仓库放到 8.2 描述的目录树之外，否则会得到与代码无关的假失败。
