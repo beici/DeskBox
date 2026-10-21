@@ -607,11 +607,11 @@ dotnet build src/DeskBox/DeskBox.csproj -p:EnableWindowsTargeting=true -p:Platfo
 
 ## 七、提交与后续
 
-- 合并提交在 `merge/upstream-1.5.8` 分支，父提交为 `1aa78145`（本地 1.5.6）与
-  `bbb9e697`（上游 v1.5.8）。
+- 合并提交 `479339d4` 直接在 `wip/fix-bug` 分支上（没有另建合并分支），父提交为
+  `1aa78145`（本地 1.5.6）与 `bbb9e697`（上游 v1.5.8）。
 - 提交身份遵循仓库约定：`Simon <1047078635@qq.com>`，无 `Co-Authored-By` /
   `Generated with` 等任何工具署名（`.githooks/commit-msg` 强制）。
-- 备份分支 `backup/pre-upstream-1.5.8` 指向合并前的 `1aa78145`，可随时回退。
+- 回退点：`main` 仍停在合并前的 `1aa78145`（1.5.6 全绿状态）。没有另建 `backup/pre-upstream-1.5.8` 之类的备份分支——`main` 本身就是备份。
 
 **建议的 Windows 验收顺序**：
 
@@ -620,8 +620,11 @@ git config core.hooksPath .githooks
 dotnet restore .\DeskBox.sln -p:Platform=x64
 dotnet build .\src\DeskBox\DeskBox.csproj --configuration Debug --no-restore -p:Platform=x64
 dotnet test .\tests\DeskBox.Tests\DeskBox.Tests.csproj --no-restore --verbosity:minimal -p:Platform=x64
-pwsh -NoProfile -File .\scripts\publish-aot-audit.ps1    # 校验 WMC1510 与审计链
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-aot-audit.ps1    # 校验 WMC1510 与审计链
 ```
+
+> 脚本本身兼容 Windows PowerShell 5.1（`Parser::ParseFile` 解析 0 错误）与 PowerShell 7；
+> 有 `pwsh` 的机器直接用 `pwsh -NoProfile -File .\scripts\publish-aot-audit.ps1` 亦可。
 
 ---
 
@@ -866,10 +869,38 @@ fork 独有的 `MusicSettingsSection.xaml`。已把脚本里 **35 处**钉值 + 
 - `warningCodes`：`CS0108` 2 / `CS8601` 2 / `CS8602` 16 / `WMC1510` 796，全部在
   `allowedWarningCodes` 白名单内
 - 35 处 WMC1510 钉版 Expected/Maximum **全部等于实测 796**（0 处 stale）
-- `sourceStableDuringAudit`：`true`（审计前后工作树指纹一致）
+- `sourceStableDuringAudit`：`true`（审计前后工作树指纹一致）——**但见 8.5.5：**
+  这个 `true` 在该 worktree 上是假阴性，干净检出上的首次审计会因 lock 漂移而失败。
 - `analysisContract` 下所有 `*Missing*Patterns` 数组为空
 - `rustNative`：ABI 2 / capability mask 511 / 10 个必需导出
 - 产出 103 个文件 / 64.3 MiB
+
+#### 8.5.5 干净检出上首次审计必失败的 lock 漂移（已修）
+
+本轮审计在 `E:\DeskBox-verify` worktree 上通过，但那是**假阴性**：该 worktree 早前多次
+restore 已把 `src/DeskBox.Abstractions/packages.aot.lock.json` 改脏，审计开始时的
+`$sourceSnapshotBefore` 捕获到的已经是改写后的状态，所以前后指纹一致。
+
+**缺陷**：该 lock 文件在合并树里仍钉 `Microsoft.DotNet.ILCompiler` /
+`Microsoft.NET.ILLink.Tasks` = **10.0.11**，而 `global.json` 已升到 SDK 10.0.402，
+AOT restore 实际解析出 **10.0.13**（与 `src/DeskBox`、`src/DeskBox.Updater` 两个 lock 一致）。
+合并提交 `479339d4` 重新生成了另外 4 个 lock 文件，**漏掉**这一个。
+
+**后果**：`scripts/publish-aot-audit.ps1` 在 L248（restore 之前）拍工作树快照，
+在 L8529（publish 之后）再拍一次并比对；中间那次 restore 改写 lock 文件，
+于是干净检出上的**第一次**审计必然报 `sourceStableDuringAudit = false` 并失败：
+`The repository changed while the AOT audit was running. The output is not a trusted
+source snapshot`。第二次跑才会通过——这会让任何新克隆的仓库第一次审计就红。
+
+**验证**（干净 HEAD 树上）：`git status` 为空 → 执行审计脚本原样的 restore 命令 →
+`git status` 变 1 个 M，该文件 ILCompiler 从 10.0.11 变成 10.0.13；再跑一次 restore
+幂等（文件哈希不变）。普通开发流程的 `dotnet restore .\DeskBox.sln -p:Platform=x64`
+不受影响（它用 `packages.lock.json` 而非 aot lock，保持工作树干净）。
+
+**修复**：用审计脚本同款 restore 命令重新生成该 lock（仅 ILCompiler / ILLink 版本与
+contentHash 变化，3 个 RID 段全部同步到 10.0.13），提交后干净树上的 AOT restore 不再
+产生漂移。仓库没有 `RestoreLockedMode`，也没有测试守卫 lock 版本一致性，所以这个漂移
+此前只能靠人工发现。
 
 ### 8.6 提交
 
@@ -877,9 +908,10 @@ fork 独有的 `MusicSettingsSection.xaml`。已把脚本里 **35 处**钉值 + 
 |---|---|---|
 | `5486cc33` | 测试验收暴露的缺陷（8.3 / 8.4） | 31 文件，+235 / −379 |
 | `ec9375e8` | Native AOT 审计暴露的缺陷与重校准（8.5） | 60 文件，+291 / −236 |
-| 本文档 | 本节及 §三 / §六 的过时数字 | — |
+| `75342d6c` | 本文档 §八及 §三 / §六 的过时数字 | 2 文件，+289 / −13 |
+| 本提交 | 8.5.5 的 lock 漂移修复 + §七 的分支/回退点更正 | 2 文件 |
 
-两次提交都在合并提交 `479339d4` 之后，未 amend 合并提交。身份 `Simon <1047078635@qq.com>`，
+以上提交都在合并提交 `479339d4` 之后，未 amend 合并提交。身份 `Simon <1047078635@qq.com>`，
 无 `Co-Authored-By` / `Generated with` 等署名（`.githooks/commit-msg` 强制）。
 
 ### 8.7 仍需在真机手工确认的项
