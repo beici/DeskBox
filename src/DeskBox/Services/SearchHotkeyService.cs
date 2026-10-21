@@ -367,7 +367,10 @@ public sealed class SearchHotkeyService : IDisposable, IHookHealthProbeTarget, I
             return;
         }
 
-        RefreshRegistrationCore(quiet: true);
+        // Blocking twin for the same reason as RefreshRegistration: the core's
+        // only await completes synchronously on this path, and the log line
+        // below must observe the post-refresh registration state.
+        RefreshRegistrationCore(quiet: true).GetAwaiter().GetResult();
         App.Log(
             $"[SearchHotkey] Heartbeat refreshed gesture={FormatGesture(CurrentGesture)} " +
             $"registered={IsRegistered}");

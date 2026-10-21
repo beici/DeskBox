@@ -447,7 +447,10 @@ public sealed class GlobalHotkeyService : IDisposable, IHookHealthProbeTarget, I
 
         bool wasRegistered = IsRegistered;
         string? previousError = LastError;
-        RefreshRegistrationCore(quiet: true);
+        // Blocking twin for the same reason as RefreshRegistration: the core's
+        // only await completes synchronously on this path, and the state read
+        // below must observe the post-refresh registration.
+        RefreshRegistrationCore(quiet: true).GetAwaiter().GetResult();
         App.Log(
             $"[GlobalHotkey] Heartbeat refreshed gesture={CurrentGestureText} " +
             $"registered={IsRegistered}");

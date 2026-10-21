@@ -17,7 +17,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$RequiredAuditProfileVersion = 63
+$RequiredAuditProfileVersion = 64
 $RequiredSummarySchemaVersion = 55
 $RequiredRustAbiVersion = 2
 $RequiredRustCapabilities = 511

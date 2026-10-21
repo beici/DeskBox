@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
@@ -700,41 +701,61 @@ public static class DragDropPermissionService
 
     private const uint SldfRunAsUser = 0x0000_2000;
 
+    // Shell Link binary format (MS-SHLLINK): ShellLinkHeader is 76 bytes and
+    // lays out HeaderSize(4) then LinkCLSID(16), so LinkFlags sits at 0x14.
+    // LinkFlags carries the same SLDF_* bit set that
+    // IShellLinkDataList::GetFlags returns, which makes a 24-byte header read
+    // exactly equivalent to the COM round-trip.
+    private const int ShellLinkHeaderPrefixLength = 0x18;
+    private const int ShellLinkFlagsOffset = 0x14;
+    private const uint ShellLinkHeaderSize = 0x4C;
+
+    // CLSID_ShellLink (00021401-0000-0000-C000-000000000046) in its on-disk
+    // little-endian layout.
+    private static readonly byte[] ShellLinkClassId =
+    [
+        0x01, 0x14, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46
+    ];
+
     /// <summary>
-    /// Standalone COM reader for a shortcut's "Run as administrator" flag.
-    /// Deliberately independent of the TryReadShortcut backend split: the
-    /// flag lives in the link header (IShellLinkDataList::GetFlags /
-    /// SLDF_RUNAS_USER), not in target/arguments, and ComImport interop
-    /// compiles in NativeAOT (same shape as JumpListService). A .lnk with
-    /// this bit relaunches DeskBox elevated on every open, which the
-    /// registry-based AppCompat scan cannot see.
+    /// Reads a shortcut's "Run as administrator" flag straight from the Shell
+    /// Link header. Deliberately independent of the TryReadShortcut backend
+    /// split: the flag lives in the link header (SLDF_RUNAS_USER), not in
+    /// target/arguments. The previous IShellLinkDataList ComImport reader was
+    /// unusable under Native AOT — ILC rejects the ComImport coclass
+    /// constructor with "Invalid IL or CLR metadata", so the retail build
+    /// reported "no flag" for every shortcut. A raw header read needs no COM
+    /// activation at all. A .lnk with this bit relaunches DeskBox elevated on
+    /// every open, which the registry-based AppCompat scan cannot see.
     /// </summary>
-    [ComImport]
-    [Guid("00021401-0000-0000-C000-000000000046")]
-    private sealed class ShellLinkForFlagProbe
-    {
-    }
-
-    [ComImport]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    [Guid("45E2B4AE-B1C3-11D0-B92F-00A0C90312E1")]
-    private interface IShellLinkDataList
-    {
-        void AddDataBlock(IntPtr pDataBlock);
-        void RemoveDataBlock(IntPtr pDataBlock);
-        [PreserveSig]
-        int GetFlags(out uint dwFlags);
-        void SetFlags(uint dwFlags);
-    }
-
     internal static bool TryGetShortcutRunAsFlag(string shortcutPath)
     {
         try
         {
-            var shellLink = (IShellLinkDataList)(object)new ShellLinkForFlagProbe();
-            ((System.Runtime.InteropServices.ComTypes.IPersistFile)shellLink).Load(shortcutPath, 0);
-            return shellLink.GetFlags(out uint flags) == 0 &&
-                (flags & SldfRunAsUser) != 0;
+            using var stream = new FileStream(
+                shortcutPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            Span<byte> header = stackalloc byte[ShellLinkHeaderPrefixLength];
+            if (stream.ReadAtLeast(
+                    header,
+                    header.Length,
+                    throwOnEndOfStream: false) != header.Length)
+            {
+                return false;
+            }
+
+            if (BinaryPrimitives.ReadUInt32LittleEndian(header) != ShellLinkHeaderSize ||
+                !header.Slice(4, ShellLinkClassId.Length).SequenceEqual(ShellLinkClassId))
+            {
+                return false;
+            }
+
+            uint linkFlags = BinaryPrimitives.ReadUInt32LittleEndian(
+                header.Slice(ShellLinkFlagsOffset, sizeof(uint)));
+            return (linkFlags & SldfRunAsUser) != 0;
         }
         catch (Exception ex)
         {

@@ -28,12 +28,18 @@ internal static class ShellOpenWithInterop
     private static readonly Guid BHID_DataObject =
         new("b8c0bd9f-ed24-455c-83e6-d5390c4fe8c4");
 
+    // The enumerator is returned as a raw IUnknown pointer instead of a
+    // marshaled interface: an [MarshalAs(UnmanagedType.Interface)] out
+    // parameter is a COM-marshalling signature that Native AOT cannot
+    // guarantee (IL2050), and the retail AOT build treats that warning as a
+    // gate failure. Callers wrap the pointer with
+    // Marshal.GetObjectForIUnknown, which is the pattern the rest of this
+    // file already uses for the handler pointers returned by Next.
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
     internal static extern void SHAssocEnumHandlers(
         string extension,
         uint filter,
-        [MarshalAs(UnmanagedType.Interface)]
-        out ShellOpenWithEnumHandlers handlers);
+        out IntPtr handlers);
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
     private static extern void SHCreateItemFromParsingName(
