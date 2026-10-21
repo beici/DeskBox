@@ -902,6 +902,14 @@ contentHash 变化，3 个 RID 段全部同步到 10.0.13），提交后干净�
 产生漂移。仓库没有 `RestoreLockedMode`，也没有测试守卫 lock 版本一致性，所以这个漂移
 此前只能靠人工发现。
 
+**修复后复验**：在 `b7294493` 上新建一个全新 worktree（`git status` 为空、lock 已是
+10.0.13），跑完整审计 → **`AUDIT-EXIT = 0`**，`sourceStableDuringAudit = true`、
+`gitDirty = false`、`workingTreeFingerprintBefore == After`（`A33C7BED…`）、
+`gitStatusEntries` / `gitStatusEntriesAfter` 均为空，审计前后 `git status` 都干净。
+`auditFailures` 为空，`alwaysThrowMessages` 0，`WMC1510` 796（35 处钉版全一致），
+Rust ABI 2 / mask 511 / 10 导出。同一修复也覆盖 `scripts/publish-aot-retail.ps1`——
+它在 L250/L506 用同一套快照比对，且 L295-301 的 restore 同样带 `PublishAot=true`。
+
 ### 8.6 提交
 
 | 提交 | 内容 | 规模 |
