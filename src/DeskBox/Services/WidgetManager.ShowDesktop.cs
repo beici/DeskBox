@@ -1,4 +1,5 @@
 using DeskBox.Helpers;
+using DeskBox.Models;
 using DeskBox.Platform;
 using DeskBox.Views;
 
@@ -6,6 +7,13 @@ namespace DeskBox.Services;
 
 public sealed partial class WidgetManager
 {
+    /// <summary>
+    /// Tracks whether the last Show Desktop storm forced resting widgets into
+    /// the normal band's top. Cleared once the desktop hands the foreground
+    /// back, which is when the widgets return to the resting band.
+    /// </summary>
+    private bool _showDesktopRaisedWidgets;
+
     /// <summary>
     /// FWIN-01: DWMWA_CLOAK is a bit mask rather than a boolean — 0 visible,
     /// 1 cloaked by its owner app, 2 cloaked by the shell, 4 cloak inherited
@@ -46,18 +54,49 @@ public sealed partial class WidgetManager
             return;
         }
 
-        if (IsWidgetInteractionActive ||
-            !WidgetLayerService.ShouldKeepWidgetsVisibleOnShowDesktop())
+        // Show Desktop raises the desktop layer WITHOUT taking the foreground,
+        // so the foreground comparison alone is a hint at best; the raised
+        // layer check is what actually observes it.
+        bool desktopRaised =
+            WidgetLayerService.IsShellDesktopForeground() ||
+            WidgetLayerService.IsDesktopLayerRaised();
+        if (!desktopRaised && !_showDesktopRaisedWidgets)
         {
-            App.LogVerbose(
-                $"[ShowDesktop] Self-heal skipped reason={reason} " +
-                $"interactionActive={IsWidgetInteractionActive} " +
-                $"keepVisible={WidgetLayerService.ShouldKeepWidgetsVisibleOnShowDesktop()}");
+            // Nothing to heal and nothing to hand back. The watchdog runs this
+            // on a fixed cadence, so the desktop-idle case must stay free.
+            App.LogVerbose($"[ShowDesktop] Self-heal idle reason={reason}");
             return;
         }
 
+        if (IsWidgetInteractionActive ||
+            !WidgetLayerService.ShouldKeepWidgetsVisibleOnShowDesktop())
+        {
+            // While the shell desktop owns the foreground the user is looking
+            // at Show Desktop right now, so a skipped heal is exactly the
+            // difference between "the widgets are there" and "the widgets are
+            // gone". Log those skips at the visible level; the ordinary
+            // background storms stay verbose.
+            if (desktopRaised)
+            {
+                App.Log(
+                    $"[ShowDesktop] Self-heal skipped reason={reason} " +
+                    $"interactionActive={IsWidgetInteractionActive} " +
+                    $"keepVisible={WidgetLayerService.ShouldKeepWidgetsVisibleOnShowDesktop()}");
+            }
+            else
+            {
+                App.LogVerbose(
+                    $"[ShowDesktop] Self-heal skipped reason={reason} " +
+                    $"interactionActive={IsWidgetInteractionActive} " +
+                    $"keepVisible={WidgetLayerService.ShouldKeepWidgetsVisibleOnShowDesktop()}");
+            }
+
+            return;
+        }
         int restored = 0;
         int uncloaked = 0;
+        int raised = 0;
+        List<(IntPtr Hwnd, WidgetKind Kind)>? pendingRaises = null;
         foreach (IDesktopWidgetWindow window in GetLoadedDesktopWindows())
         {
             if (!window.Visible)
@@ -103,14 +142,107 @@ public sealed partial class WidgetManager
                 App.Log(
                     $"[ShowDesktop] Uncloaked shell-cloaked resting widget " +
                     $"hwnd=0x{hwnd.ToInt64():X} kind={window.Config.WidgetKind} reason={reason}");
+                continue;
+            }
+
+            // Show Desktop does not have to minimize or cloak a widget to hide
+            // it: the shell raises the desktop above the whole normal band, so
+            // a widget that is neither iconic nor cloaked simply ends up
+            // underneath it. Neither check above can see that state, which is
+            // why the symptom was "nothing comes back until I open a window".
+            // The detector compares the widget's own Z-order position against
+            // the desktop root rather than reading the foreground, because a
+            // raise does not move the foreground. It is also the only condition
+            // the raise needs: "the desktop is above this widget" already means
+            // the widget is hidden, so an additional "is the desktop raised"
+            // gate would just re-introduce the foreground dependency that let
+            // the widget stay hidden. The widgets are handed back to the resting
+            // band below once the desktop lets go.
+            if (WidgetLayerService.IsDesktopLayerAboveWindow(hwnd))
+            {
+                if (WidgetLayerService.RaiseAboveDesktopLayer(hwnd))
+                {
+                    raised++;
+                    App.Log(
+                        $"[ShowDesktop] Raised desktop-covered resting widget " +
+                        $"hwnd=0x{hwnd.ToInt64():X} kind={window.Config.WidgetKind} reason={reason}");
+                }
+                else
+                {
+                    // The raise is a Z-order transaction against a moving band:
+                    // while the desktop root is still on top, the first widget of
+                    // the batch can read as covered again right after its own
+                    // round-trip, and every later raise then pushes the root one
+                    // slot further down. Verifying the whole batch first keeps a
+                    // batch-ordering artefact out of the log — measured on the
+                    // reporting machine: the first of twelve widgets reported a
+                    // failure at 01:35:28.464 and every one of them was above the
+                    // desktop root five seconds later.
+                    (pendingRaises ??= []).Add((hwnd, window.Config.WidgetKind));
+                }
             }
         }
 
-        if (restored > 0 || uncloaked > 0)
+        if (pendingRaises is not null)
+        {
+            foreach ((IntPtr hwnd, WidgetKind kind) in pendingRaises)
+            {
+                if (Win32Helper.IsWindow(hwnd) &&
+                    WidgetLayerService.RaiseAboveDesktopLayer(hwnd))
+                {
+                    raised++;
+                    App.Log(
+                        $"[ShowDesktop] Raised desktop-covered resting widget " +
+                        $"hwnd=0x{hwnd.ToInt64():X} kind={kind} reason={reason} retry=true");
+                }
+                else
+                {
+                    App.Log(
+                        $"[ShowDesktop] Failed to raise desktop-covered resting widget " +
+                        $"hwnd=0x{hwnd.ToInt64():X} kind={kind} reason={reason}");
+                }
+            }
+        }
+
+        if (raised > 0)
+        {
+            _showDesktopRaisedWidgets = true;
+        }
+        else if (!desktopRaised && _showDesktopRaisedWidgets)
+        {
+            // Show Desktop ended: send the widgets back to the resting band so
+            // ordinary application windows cover them again.
+            foreach (IDesktopWidgetWindow window in GetLoadedDesktopWindows())
+            {
+                if (!window.Visible)
+                {
+                    continue;
+                }
+
+                IntPtr hwnd = window.WindowHandle;
+                if (hwnd == IntPtr.Zero || !Win32Helper.IsWindow(hwnd))
+                {
+                    continue;
+                }
+
+                WidgetLayerService.MoveToDesktopBottom(hwnd);
+            }
+
+            _showDesktopRaisedWidgets = false;
+            App.Log($"[ShowDesktop] Returned widgets to the resting band reason={reason}");
+        }
+
+        if (restored > 0 || uncloaked > 0 || raised > 0)
         {
             App.Log(
                 $"[ShowDesktop] Self-heal completed reason={reason} " +
-                $"restored={restored} uncloaked={uncloaked}");
+                $"restored={restored} uncloaked={uncloaked} raised={raised} " +
+                $"desktopRaised={desktopRaised}");
+        }
+        else if (desktopRaised)
+        {
+            App.Log(
+                $"[ShowDesktop] Desktop raised, widgets already in place reason={reason}");
         }
         else
         {

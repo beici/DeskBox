@@ -406,6 +406,69 @@ public static class WidgetLayerService
     }
 
     /// <summary>
+    /// Lifts a resting widget above the raised desktop layer so it stays
+    /// visible while Show Desktop is active.
+    ///
+    /// This deliberately does not go through <see cref="BringToFront"/>: that
+    /// path drops the desktop-layer owner first, and the owner is what keeps the
+    /// widget out of the shell's minimize storm in the first place — trading one
+    /// Show Desktop failure for the next one. The raise is verified rather than
+    /// assumed, because a widget that stayed under the desktop after a
+    /// successful-looking SetWindowPos is exactly the symptom being fixed.
+    /// </summary>
+    internal static bool RaiseAboveDesktopLayer(IntPtr windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero || !Win32Helper.IsWindow(windowHandle))
+        {
+            return false;
+        }
+
+        if (Win32Helper.IsWindowTopMost(windowHandle))
+        {
+            // The raised band is the top of the NORMAL band. A topmost widget
+            // would stay above every application after Show Desktop ends.
+            Win32Helper.ClearWindowTopMost(windowHandle);
+        }
+
+        Win32Helper.BringWindowToFront(windowHandle);
+        if (!IsDesktopLayerAboveWindow(windowHandle))
+        {
+            return true;
+        }
+
+        // HWND_TOP only re-orders the window inside its own owner band. A
+        // DeskBox content window shares that band with the rest of the app's
+        // windows, so the raise stops just above them and the raised desktop
+        // root is still above the widget — measured on the reporting machine:
+        // SetWindowPos(HWND_TOP) moved the widget from Z 586 to 575 while
+        // Progman sat at 590, and the call reported success. A topmost
+        // round-trip is the only transaction that crosses the band: the window
+        // is parked in the topmost band and HWND_NOTOPMOST then drops it back
+        // into the normal band at the top (Z 46 in the same measurement), which
+        // is above the raised desktop. Both calls are issued back to back with
+        // nothing in between, and the NOTOPMOST half runs even on a throw so a
+        // widget is never left topmost.
+        Win32Helper.SetWindowTopMost(windowHandle);
+        try
+        {
+            // Parked in the topmost band; the pair must stay back to back, so
+            // nothing runs here. The NOTOPMOST half in the finally is what
+            // drops the widget back into the normal band at its top.
+        }
+        finally
+        {
+            Win32Helper.ClearWindowTopMost(windowHandle);
+        }
+
+        // The round trip is reported as the verification, not the two
+        // SetWindowPos return values: a widget that ended up under the desktop
+        // root anyway is exactly the symptom being fixed, and HWND_NOTOPMOST
+        // landing in the normal band is not proof of where it landed relative
+        // to the raised root.
+        return !IsDesktopLayerAboveWindow(windowHandle);
+    }
+
+    /// <summary>
     /// Holds a DeskBox-owned auxiliary window (search popup, settings, desktop
     /// organization) in the topmost band above a raised quick-reveal widget
     /// group. The caller owns the release; see <see cref="ReleaseRaisedBandWindow"/>.
@@ -1444,10 +1507,10 @@ public static class WidgetLayerService
             return false;
         }
 
-        IntPtr desktopIconView = FindDesktopIconView();
+        IntPtr desktopIconView = FindDesktopLayerOwner();
         if (desktopIconView == IntPtr.Zero)
         {
-            App.Log("[WidgetLayer] DesktopPinned attach skipped: desktop icon view not found");
+            App.Log("[WidgetLayer] DesktopPinned attach skipped: desktop layer owner not found");
             return false;
         }
 
@@ -1592,6 +1655,139 @@ public static class WidgetLayerService
     }
 
     /// <summary>
+    /// True when this window can be what hides another window: on screen, in the
+    /// normal band, and not one of this application's own surfaces.
+    ///
+    /// Every clause is load-bearing, and each one was a live defect:
+    /// <list type="bullet">
+    /// <item>Minimized windows are not drawn, so they hide nothing — and Show
+    /// Desktop leaves the whole normal band in exactly that state.</item>
+    /// <item>DWM-cloaked windows are composed away (Explorer cloaks whole
+    /// virtual-desktop groups that way), so they are invisible even while
+    /// <c>IsWindowVisible</c> reports true.</item>
+    /// <item>Topmost windows sit <em>above</em> the desktop layer, so they can
+    /// never be what the desktop covers something with. The taskbar and any
+    /// always-on-top overlay (a security suite's shield, a GPU overlay) are
+    /// permanently above Progman; counting them made "is anything visible above
+    /// the desktop root" answer yes forever, so the desktop never read as
+    /// raised and the heal undid its own raise on the next watchdog tick.</item>
+    /// <item>This application's own widgets are skipped because the Show Desktop
+    /// heal deliberately raises them above the desktop layer; counting them
+    /// would make that raise look like "an application came back".</item>
+    /// </list>
+    /// </summary>
+    private static bool IsNormalBandBlocker(IntPtr windowHandle)
+    {
+        return Win32Helper.IsWindowVisible(windowHandle) &&
+            !Win32Helper.IsIconic(windowHandle) &&
+            !Win32Helper.IsWindowTopMost(windowHandle) &&
+            !Win32Helper.IsWindowCloaked(windowHandle) &&
+            !BelongsToCurrentProcess(windowHandle);
+    }
+
+    /// <summary>
+    /// Reports whether the desktop layer is currently on TOP of the normal band
+    /// — the state Show Desktop / Win+D produces. True when no normal-band
+    /// window sits above the desktop root in Z order; see
+    /// <see cref="IsNormalBandBlocker"/> for what does and does not count.
+    ///
+    /// This is deliberately independent of the widgets: the caller uses it to
+    /// decide when to stop treating the desktop as raised, and a widget-based
+    /// test would flip as soon as the heal raised the widget itself.
+    /// </summary>
+    internal static bool IsDesktopLayerRaised()
+    {
+        IntPtr iconView = GetDesktopIconViewHandle();
+        if (iconView == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        IntPtr desktopRoot = Win32Helper.GetAncestor(iconView, Win32Helper.GA_ROOT);
+        if (desktopRoot == IntPtr.Zero)
+        {
+            desktopRoot = iconView;
+        }
+
+        IntPtr current = Win32Helper.GetWindow(desktopRoot, Win32Helper.GW_HWNDPREV);
+        int visited = 0;
+        while (current != IntPtr.Zero && visited++ < MaxBeddingWalkWindows)
+        {
+            if (IsNormalBandBlocker(current))
+            {
+                return false;
+            }
+
+            current = Win32Helper.GetWindow(current, Win32Helper.GW_HWNDPREV);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Reports whether the shell desktop layer is what hides this window right
+    /// now — that is, whether the desktop root sits above it in Z order.
+    ///
+    /// This is the Show Desktop detector that does not rely on the foreground
+    /// window. Show Desktop (and Win+D) raises Progman/WorkerW above the whole
+    /// normal band WITHOUT taking the foreground, so a foreground comparison
+    /// sees the previously active application and concludes nothing happened.
+    ///
+    /// Comparing Z-order positions is the only test that survives a real
+    /// desktop. Asking instead for "the first visible window above the widget,
+    /// is it the desktop root?" cannot work: the taskbar, a security suite's
+    /// always-on-top helper, and any other normal-band overlay sit between the
+    /// widget and the desktop root, so that walk reports "not covered" while the
+    /// desktop is in fact above the widget. Measured on the reporting machine:
+    /// at rest Progman is Z index 589 with the widgets at 572-586 (desktop below
+    /// them, nothing to heal), and under Show Desktop Progman is index 44 with
+    /// the same widgets still at 572-586 (desktop above them, every widget
+    /// hidden). Only the comparison tells those two states apart.
+    /// </summary>
+    internal static bool IsDesktopLayerAboveWindow(IntPtr windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero || !Win32Helper.IsWindow(windowHandle))
+        {
+            return false;
+        }
+
+        IntPtr iconView = GetDesktopIconViewHandle();
+        if (iconView == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        IntPtr desktopRoot = Win32Helper.GetAncestor(iconView, Win32Helper.GA_ROOT);
+        if (desktopRoot == IntPtr.Zero)
+        {
+            desktopRoot = iconView;
+        }
+
+        // Whichever of the two the walk from the top reaches first is the higher
+        // window. It stops at the first hit, so the cost is the smaller of the
+        // two Z indices: a few dozen windows while the desktop is raised, and
+        // bounded by the widget's own index otherwise.
+        IntPtr current = Win32Helper.GetTopWindow(IntPtr.Zero);
+        int visited = 0;
+        while (current != IntPtr.Zero && visited++ < MaxZOrderWalkWindows)
+        {
+            if (current == windowHandle)
+            {
+                return false;
+            }
+
+            if (current == desktopRoot)
+            {
+                return true;
+            }
+
+            current = Win32Helper.GetWindow(current, Win32Helper.GW_HWNDNEXT);
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Reports whether a visible foreign application window both sits above
     /// the widget in Z order and geometrically overlaps it. Activating a
     /// DefView-owned HWND promotes the whole owner band above every such
@@ -1646,6 +1842,12 @@ public static class WidgetLayerService
     // The walk terminates at Progman after a handful of windows in a healthy
     // session; the cap only guards against a pathological cycle.
     private const int MaxBeddingWalkWindows = 256;
+
+    // A top-down Z-order walk has to pass every window above the target, and a
+    // busy desktop keeps 600+ top-level windows around, so this cap is far
+    // larger than the bedding walk's. It exists only to bound the loop if the
+    // Z-order chain ever cycles.
+    private const int MaxZOrderWalkWindows = 8192;
 
     /// <summary>
     /// DeskBox surfaces are classified by process, not by the registered
@@ -1782,9 +1984,74 @@ public static class WidgetLayerService
     /// deliberately never forces WorkerW creation, which during login can race
     /// Explorer's icon-layout restoration.
     /// </summary>
+    /// <summary>
+    /// Reports whether the shell desktop currently owns the foreground, which
+    /// is what "Show Desktop" (Win+D, the taskbar's far-right button) leaves
+    /// behind. The desktop is not a normal window: it is Progman (or a WorkerW
+    /// sibling) hosting the SHELLDLL_DefView icon view, and raising it puts it
+    /// above every window in the normal band — including resting widgets that
+    /// could not be owner-attached to the desktop layer. Comparing roots rather
+    /// than class names keeps this correct across Explorer's window shuffles.
+    /// </summary>
+    internal static bool IsShellDesktopForeground()
+    {
+        IntPtr foreground = Win32Helper.GetForegroundWindow();
+        if (foreground == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        IntPtr iconView = GetDesktopIconViewHandle();
+        if (iconView == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        if (foreground == iconView)
+        {
+            return true;
+        }
+
+        IntPtr desktopRoot = Win32Helper.GetAncestor(iconView, Win32Helper.GA_ROOT);
+        if (desktopRoot == IntPtr.Zero)
+        {
+            desktopRoot = iconView;
+        }
+
+        if (foreground == desktopRoot)
+        {
+            return true;
+        }
+
+        IntPtr foregroundRoot = Win32Helper.GetAncestor(foreground, Win32Helper.GA_ROOT);
+        return foregroundRoot != IntPtr.Zero && foregroundRoot == desktopRoot;
+    }
+
     internal static IntPtr GetDesktopIconViewHandle()
     {
         return FindDesktopIconView();
+    }
+
+    /// <summary>
+    /// The window a resting widget takes as its owner so it rides the desktop
+    /// layer. SetWindowLongPtr(GWLP_HWNDPARENT) only honours a <em>top-level</em>
+    /// window, and the icon view itself is a child of Progman or WorkerW: owning
+    /// a widget to it is accepted without an error and then silently dropped, so
+    /// the read-back stays zero and every attach "failed" (#ShowDesktop). The
+    /// root ancestor is the real desktop-layer window, so it is what the owner
+    /// has to be. Icon geometry still reads the child through
+    /// <see cref="GetDesktopIconViewHandle"/>.
+    /// </summary>
+    private static IntPtr FindDesktopLayerOwner()
+    {
+        IntPtr iconView = FindDesktopIconView();
+        if (iconView == IntPtr.Zero)
+        {
+            return IntPtr.Zero;
+        }
+
+        IntPtr root = Win32Helper.GetAncestor(iconView, Win32Helper.GA_ROOT);
+        return root != IntPtr.Zero ? root : iconView;
     }
 
     private static IntPtr FindHighestPeer(IReadOnlyCollection<IntPtr> handles)

@@ -89,15 +89,18 @@ public sealed record StartupElevationAssessment(
     bool IsCurrentProcessElevated,
     bool IsExplorerElevated,
     bool IsUacDisabled,
-    bool CanRelaunchUnelevated)
+    bool CanRelaunchUnelevated,
+    bool IsExplorerElevationKnown = true)
 {
     /// <summary>
     /// Asymmetric-integrity verdict derived from the two token snapshots.
     /// Same-level sessions (including fully elevated desktops) read None:
-    /// drag works there, so no warning is warranted.
+    /// drag works there, so no warning is warranted. An unreadable Explorer
+    /// token is likewise None — an unknown peer elevation is not evidence
+    /// that this process sits above the shell.
     /// </summary>
     public ShellIntegrityMismatch Mismatch =>
-        IsCurrentProcessElevated == IsExplorerElevated
+        !IsExplorerElevationKnown || IsCurrentProcessElevated == IsExplorerElevated
             ? ShellIntegrityMismatch.None
             : IsCurrentProcessElevated
                 ? ShellIntegrityMismatch.AppAboveShell
@@ -312,11 +315,18 @@ public static class DragDropPermissionService
         bool isUacDisabled = uacPolicy.EnableLua == 0;
         bool isCurrentElevated = currentToken.IsElevated == true;
         bool isExplorerElevated = explorerToken.IsElevated == true;
+        // A failed Explorer probe is "unknown", not "unelevated": a process that
+        // cannot query Explorer's token (low-integrity or otherwise restricted
+        // launches) would otherwise be misread as sitting above an unelevated
+        // shell and get the elevated-launch notice, which is exactly backwards.
+        bool explorerElevationKnown = explorerToken.IsElevated is not null;
+
         return new StartupElevationAssessment(
             isCurrentElevated,
             isExplorerElevated,
             isUacDisabled,
-            ComputeCanRelaunchUnelevated(isUacDisabled, isExplorerElevated));
+            ComputeCanRelaunchUnelevated(isUacDisabled, isExplorerElevated),
+            explorerElevationKnown);
     }
 
     /// <summary>

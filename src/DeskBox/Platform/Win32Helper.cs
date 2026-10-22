@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -360,6 +360,15 @@ public static partial class Win32Helper
 
     [LibraryImport("user32.dll")]
     public static partial IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+    /// <summary>
+    /// The first (highest) window of the desktop's top-level Z order; walk it
+    /// with <see cref="GW_HWNDNEXT"/> to enumerate top-level windows from the
+    /// top down. A window reaches this list only after its first
+    /// ShowWindow, so a freshly created hidden window is absent until shown.
+    /// </summary>
+    [LibraryImport("user32.dll")]
+    public static partial IntPtr GetTopWindow(IntPtr hWnd);
 
     public const uint GW_HWNDFIRST = 0;
     public const uint GW_HWNDLAST = 1;
@@ -3253,6 +3262,124 @@ public static partial class Win32Helper
             };
 
             CreateDispatcherQueueController(options, ref _dispatcherQueueController);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Process integrity (User Interface Privilege Isolation)
+    // ------------------------------------------------------------------
+
+    private const uint ProcessQueryLimitedInformation = 0x1000;
+    private const uint TokenQueryAccess = 0x0008;
+    private const int TokenIntegrityLevelInformation = 25;
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    private static partial IntPtr OpenProcess(
+        uint desiredAccess,
+        [MarshalAs(UnmanagedType.Bool)] bool inheritHandle,
+        uint processId);
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool CloseHandle(IntPtr handle);
+
+    [LibraryImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
+
+    [LibraryImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetTokenInformation(
+        IntPtr tokenHandle,
+        int informationClass,
+        IntPtr information,
+        int informationLength,
+        out int returnLength);
+
+    /// <summary>
+    /// Reads a process's mandatory integrity level as the last sub-authority of
+    /// its integrity SID (0x1000 low, 0x2000 medium, 0x3000 high, 0x4000
+    /// system). Returns false when the process cannot be opened or its token
+    /// cannot be queried, which callers must treat as "unknown", never as
+    /// "same level".
+    /// </summary>
+    public static bool TryGetProcessIntegrityRid(uint processId, out int integrityRid)
+    {
+        integrityRid = 0;
+        IntPtr process = OpenProcess(ProcessQueryLimitedInformation, false, processId);
+        if (process == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        try
+        {
+            return TryGetTokenIntegrityRid(process, out integrityRid);
+        }
+        finally
+        {
+            CloseHandle(process);
+        }
+    }
+
+    /// <summary>
+    /// Reads this process's mandatory integrity level. See
+    /// <see cref="TryGetProcessIntegrityRid"/>.
+    /// </summary>
+    public static bool TryGetCurrentProcessIntegrityRid(out int integrityRid)
+    {
+        integrityRid = 0;
+        return TryGetTokenIntegrityRid(GetCurrentProcess(), out integrityRid);
+    }
+
+    private static bool TryGetTokenIntegrityRid(IntPtr process, out int integrityRid)
+    {
+        integrityRid = 0;
+        if (!OpenProcessToken(process, TokenQueryAccess, out IntPtr token))
+        {
+            return false;
+        }
+
+        try
+        {
+            GetTokenInformation(token, TokenIntegrityLevelInformation, IntPtr.Zero, 0, out int size);
+            if (size <= 0)
+            {
+                return false;
+            }
+
+            IntPtr buffer = Marshal.AllocHGlobal(size);
+            try
+            {
+                if (!GetTokenInformation(token, TokenIntegrityLevelInformation, buffer, size, out _))
+                {
+                    return false;
+                }
+
+                // TOKEN_MANDATORY_LABEL: SID_AND_ATTRIBUTES { PSID Sid; DWORD Attributes; }
+                IntPtr sid = Marshal.ReadIntPtr(buffer);
+                if (sid == IntPtr.Zero)
+                {
+                    return false;
+                }
+
+                byte subAuthorityCount = Marshal.ReadByte(sid, 1);
+                if (subAuthorityCount == 0)
+                {
+                    return false;
+                }
+
+                integrityRid = Marshal.ReadInt32(sid, 8 + ((subAuthorityCount - 1) * 4));
+                return true;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+        finally
+        {
+            CloseHandle(token);
         }
     }
 }

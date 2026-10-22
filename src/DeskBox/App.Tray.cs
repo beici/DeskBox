@@ -296,6 +296,20 @@ public partial class App
 
     private async Task<bool> CreateTrayIconSurfaceWithRetryAsync()
     {
+        if (TryDescribeIntegrityTrayBlock(out string integrityDetail))
+        {
+            // A state that cannot change inside this process's lifetime: skip
+            // the retry budget instead of spending 30 s on a foregone failure.
+            Log(
+                "[Tray] Tray registration is blocked by User Interface Privilege " +
+                $"Isolation ({integrityDetail}): the shell runs at a higher integrity " +
+                "level than this process, so Shell_NotifyIcon reports " +
+                "ERROR_ACCESS_DENIED for every attempt. Retries are skipped; start " +
+                "DeskBox from the shell (Start menu or desktop shortcut) or from a " +
+                "launcher that runs at the shell's level.");
+            return false;
+        }
+
         for (int attempt = 1; ; attempt++)
         {
             try
@@ -321,7 +335,36 @@ public partial class App
             }
             catch (Exception ex)
             {
-                Log($"[Tray] Tray creation attempt {attempt} failed: {ex.Message}");
+                // H.NotifyIcon throws a single generic "TryCreate failed."
+                // for every failure mode, which makes a field report of "no
+                // tray icon" impossible to act on. The first and the last
+                // attempt record the concrete type, HRESULT, inner exception
+                // and Win32 state so the failing step (Shell_NotifyIcon /
+                // message-window creation) is identifiable; the retries in
+                // between stay compact so a burst cannot flood the log.
+                string compactFailure =
+                    $"[Tray] Tray creation attempt {attempt} failed: " +
+                    $"{ex.GetType().FullName} hresult=0x{ex.HResult:X8} " +
+                    $"message='{ex.Message}'";
+
+                if (attempt > 1 && attempt < TrayCreationMaxAttempts)
+                {
+                    Log(compactFailure);
+                }
+                else
+                {
+                    Log(
+                        compactFailure + " " +
+                        $"inner={(ex.InnerException is null ? "<none>" : $"{ex.InnerException.GetType().FullName} hresult=0x{ex.InnerException.HResult:X8} message='{ex.InnerException.Message}'")} " +
+                        $"iconNull={_trayIcon?.Icon is null} isCreated={_trayIcon?.IsCreated} " +
+                        $"windowHandle=0x{(_trayIcon?.TrayIcon?.WindowHandle ?? IntPtr.Zero).ToInt64():X} " +
+                        $"msgWindowCreated={_trayIcon?.TrayIcon?.MessageWindow?.IsCreated} " +
+                        $"msgWindowHandle=0x{(_trayIcon?.TrayIcon?.MessageWindow?.Handle ?? IntPtr.Zero).ToInt64():X} " +
+                        $"callbackMessageId=0x{H.NotifyIcon.Core.MessageWindow.CallbackMessageId:X} " +
+                        $"hIcon=0x{(_trayIcon?.TrayIcon?.Icon ?? IntPtr.Zero).ToInt64():X} " +
+                        $"lastError={System.Runtime.InteropServices.Marshal.GetLastWin32Error()} " +
+                        $"stack={ex.StackTrace?.Replace("\r\n", " | ").Replace("   at ", "at ")}");
+                }
             }
 
             if (attempt >= TrayCreationMaxAttempts)
@@ -337,6 +380,49 @@ public partial class App
     }
 
     /// <summary>
+    /// Shell_NotifyIcon registers a tray icon by posting into the taskbar's
+    /// message window, so User Interface Privilege Isolation refuses every
+    /// registration from a process that runs at a lower mandatory integrity
+    /// level than the shell: Shell_NotifyIcon returns FALSE and GetLastError()
+    /// reports ERROR_ACCESS_DENIED (5), which H.NotifyIcon collapses into a
+    /// generic "TryCreate failed.". The mismatch comes from how the process was
+    /// launched (a least-privilege launcher next to an elevated shell, which is
+    /// what a UAC-disabled machine looks like), so it never clears on retry.
+    /// </summary>
+    private static bool TryDescribeIntegrityTrayBlock(out string detail)
+    {
+        detail = string.Empty;
+
+        IntPtr trayWindow = Win32Helper.FindWindowEx(IntPtr.Zero, IntPtr.Zero, "Shell_TrayWnd", null);
+        if (trayWindow == IntPtr.Zero)
+        {
+            // Early logon: the taskbar does not exist yet, and the retry loop
+            // exists precisely to wait that race out.
+            return false;
+        }
+
+        if (Win32Helper.GetWindowThreadProcessId(trayWindow, out uint shellProcessId) == 0 ||
+            shellProcessId == 0)
+        {
+            return false;
+        }
+
+        if (!Win32Helper.TryGetProcessIntegrityRid(shellProcessId, out int shellIntegrity) ||
+            !Win32Helper.TryGetCurrentProcessIntegrityRid(out int selfIntegrity))
+        {
+            return false;
+        }
+
+        if (selfIntegrity >= shellIntegrity)
+        {
+            return false;
+        }
+
+        detail = $"shell=0x{shellIntegrity:X4} thisProcess=0x{selfIntegrity:X4}";
+        return true;
+    }
+
+    /// <summary>
     /// Mirrors the tray surface checks the AOT smoke harness pins: the icon
     /// must exist, own a message window, and have a real host window. Once this
     /// holds, startup has something the user can act on and exceptions stop
@@ -346,10 +432,35 @@ public partial class App
     {
         try
         {
-            return _trayIcon is { IsCreated: true } trayIcon &&
+            // Kept in the exact shape the startup-resilience contract pins: the
+            // lifeline is the tray surface and the loaded widgets, never window
+            // visibility.
+            bool iconCreated = _trayIcon is { IsCreated: true } trayIcon &&
                 trayIcon.TrayIcon.WindowHandle != IntPtr.Zero &&
                 _trayWindow is not null &&
                 WindowNative.GetWindowHandle(_trayWindow) != IntPtr.Zero;
+
+            if (iconCreated)
+            {
+                return true;
+            }
+
+            // Name the condition that failed: the three are reported together
+            // because H.NotifyIcon reports none of them on its own, and the
+            // fix differs per condition (create the icon, recreate the message
+            // window, or create the XAML host window).
+            IntPtr messageWindow = _trayIcon is { IsCreated: true }
+                ? _trayIcon.TrayIcon.WindowHandle
+                : IntPtr.Zero;
+            IntPtr hostWindow = _trayWindow is null
+                ? IntPtr.Zero
+                : WindowNative.GetWindowHandle(_trayWindow);
+            Log(
+                $"[Tray] Tray surface unusable iconCreated={_trayIcon is { IsCreated: true }} " +
+                $"messageWindow=0x{messageWindow.ToInt64():X} " +
+                $"hostWindow=0x{hostWindow.ToInt64():X} " +
+                $"hostWindowNull={_trayWindow is null}");
+            return false;
         }
         catch (Exception ex)
         {
