@@ -15,6 +15,17 @@ public sealed partial class WidgetManager
     private bool _showDesktopRaisedWidgets;
 
     /// <summary>
+    /// True once the steady "desktop is raised and every widget is already in
+    /// place" conclusion has been logged for the current Show Desktop episode.
+    /// The verification runs on a 1.5 s watchdog, so logging that conclusion on
+    /// every tick turned a state into an event: leaving the desktop in front for
+    /// a few minutes pushed everything else out of the 5 MB log rotation window.
+    /// Reset whenever a pass actually restores/raises/uncloaks a widget or the
+    /// desktop stops being raised, so each episode still records one line.
+    /// </summary>
+    private bool _showDesktopSteadyStateLogged;
+
+    /// <summary>
     /// FWIN-01: DWMWA_CLOAK is a bit mask rather than a boolean — 0 visible,
     /// 1 cloaked by its owner app, 2 cloaked by the shell, 4 cloak inherited
     /// from the owner. "Cloaked in any way" is therefore any value above
@@ -234,6 +245,7 @@ public sealed partial class WidgetManager
 
         if (restored > 0 || uncloaked > 0 || raised > 0)
         {
+            _showDesktopSteadyStateLogged = false;
             App.Log(
                 $"[ShowDesktop] Self-heal completed reason={reason} " +
                 $"restored={restored} uncloaked={uncloaked} raised={raised} " +
@@ -241,11 +253,17 @@ public sealed partial class WidgetManager
         }
         else if (desktopRaised)
         {
-            App.Log(
-                $"[ShowDesktop] Desktop raised, widgets already in place reason={reason}");
+            // One line per Show Desktop episode, not one per 1.5 s tick.
+            if (!_showDesktopSteadyStateLogged)
+            {
+                _showDesktopSteadyStateLogged = true;
+                App.Log(
+                    $"[ShowDesktop] Desktop raised, widgets already in place reason={reason}");
+            }
         }
         else
         {
+            _showDesktopSteadyStateLogged = false;
             App.LogVerbose($"[ShowDesktop] Self-heal verified, nothing to restore reason={reason}");
         }
     }
