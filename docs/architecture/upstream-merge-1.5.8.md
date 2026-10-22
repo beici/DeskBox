@@ -889,8 +889,7 @@ AOT restore 实际解析出 **10.0.13**（与 `src/DeskBox`、`src/DeskBox.Updat
 **后果**：`scripts/publish-aot-audit.ps1` 在 L248（restore 之前）拍工作树快照，
 在 L8529（publish 之后）再拍一次并比对；中间那次 restore 改写 lock 文件，
 于是干净检出上的**第一次**审计必然报 `sourceStableDuringAudit = false` 并失败：
-`The repository changed while the AOT audit was running. The output is not a trusted
-source snapshot`。第二次跑才会通过——这会让任何新克隆的仓库第一次审计就红。
+`The repository changed while the AOT audit was running. The output is not a trusted source snapshot`。第二次跑才会通过——这会让任何新克隆的仓库第一次审计就红。
 
 **验证**（干净 HEAD 树上）：`git status` 为空 → 执行审计脚本原样的 restore 命令 →
 `git status` 变 1 个 M，该文件 ILCompiler 从 10.0.11 变成 10.0.13；再跑一次 restore
@@ -917,24 +916,44 @@ Rust ABI 2 / mask 511 / 10 导出。同一修复也覆盖 `scripts/publish-aot-r
 | `5486cc33` | 测试验收暴露的缺陷（8.3 / 8.4） | 31 文件，+235 / −379 |
 | `ec9375e8` | Native AOT 审计暴露的缺陷与重校准（8.5） | 60 文件，+291 / −236 |
 | `75342d6c` | 本文档 §八及 §三 / §六 的过时数字 | 2 文件，+289 / −13 |
-| 本提交 | 8.5.5 的 lock 漂移修复 + §七 的分支/回退点更正 | 2 文件 |
+| `b7294493` | 8.5.5 的 lock 漂移修复 + §七 的分支/回退点更正 | 2 文件，+57 / −25 |
+| `680adc59` | 8.5.5 的干净检出审计复验结果 | 1 文件，+8 |
+| 本提交 | 8.7 真机冒烟结果 | 1 文件 |
 
 以上提交都在合并提交 `479339d4` 之后，未 amend 合并提交。身份 `Simon <1047078635@qq.com>`，
 无 `Co-Authored-By` / `Generated with` 等署名（`.githooks/commit-msg` 强制）。
 
-### 8.7 仍需在真机手工确认的项
+### 8.7 真机冒烟结果
 
-自动化门禁已全绿，但以下行为只能人工观察，**未在本轮验收覆盖**：
+本节记录 2026-10-21 / 10-22 在 Windows 上对合并后 Debug 构建的实际冒烟结果。环境：
+`E:\DeskBox-smoke\app`（Debug 构建的复制；日志 `[Build] running path=E:\DeskBox-smoke\app\DeskBox.exe`、`version=1.5.8.0`、`buildTime=2026-10-21 13:53:46`），数据根 `DESKBOX_DEV_DATA_ROOT=E:\DeskBox-smoke\data-root`
+与真实 `%LOCALAPPDATA%\DeskBox` 完全隔离。启动前已确认可执行文件不在 `E:\DeskBox` 目录树内（见 8.2）：
+`TokenIsAppSilo=0`、`AppContainer=0`、`Restricted=0`、`SandBoxed=0`、`IsProcessInJob=False`。
 
-1. **拖放**：从文件格子拖出到桌面（Win10 无操作选择框、托管快捷方式）、拖回源格子应被拒绝。
-   合并删除了 fork 的第二个 `Items_DragStarting`，行为现在完全由上游处理器覆盖。
-2. **胶囊展开/收起动画**流畅度，以及新恢复的帧率上限卡片（30/60/90/120 四档，
-   写入 `settings.json` 的 `widgetAnimationFrameRate`）。
-3. **设置页各节**：外观/动画、随记记录配色、音乐（含封面背景与悬停动效重启后保持）、
-   文件叠放。
-4. **引导流程**：本地五步流程 + 文件练习步骤。
-5. **托管存储迁移**：现在走上游事务式复制（fork 的逐项重试已退役）。
-6. **托盘显隐 / Show Desktop 自愈**。
-7. **待办提醒 → 格子实时刷新**（对应 8.3.4 第 5、6 项的订阅修复）。
+#### 8.7.1 已实测通过
+
+| 项 | 结果 | 证据 |
+|---|---|---|
+| 启动与启动管线 | 通过 | `[Startup] Pipeline: 38 steps (5 critical), 0 degraded, 0 failed`、`OnLaunched completed successfully` |
+| 隔离数据根落盘 | 通过 | `settings.json` 8,086 B / 220 个顶层键、`widget-layout.json` 4,144 B、`startup-ledger.json` 82 B，全部写在 `E:\DeskBox-smoke\data-root`；真实 `%LOCALAPPDATA%\DeskBox` 未被写入 |
+| 引导流程（本地五步） | 通过 | 窗口 `DeskBox 新手引导` 1300x925，`01 / 04` 步「把文件放进格子」、右侧插画、`跳过 / 上一步 / 下一步`、文件保存路径 `C:\Users\scrip\DeskBox` 与「固定到资源管理器快速访问」「桌面上的收纳文件入口」两个开关 |
+| 设置页 8 个导航节 | 通过 | 用 UIA `SelectionItemPattern.Select()` 逐节切换，全部正常渲染：常规 / 外观 / 胶囊模式 / 外观详情 / 功能格子 / 交互 / 维护 / 关于 |
+| 动画帧率上限卡片 | 通过 | 30 / 60 / 90 / 120 四档；切到 120 后 `settings.json` 的 `widgetAnimationFrameRate` 落盘为 `120` |
+| 音乐节（封面背景 / 悬停动效） | 通过 | 开关切换后重启仍保持，落盘到 `settings.json` |
+| 功能格子开关持久化 | 通过 | 切换后 `widget-layout.json` 的 `layout.featureWidgetEnabledStates` 为 `QuickCapture:true, Todo:false, Music:false, Weather:false, Search:false, Glance:false`，重启后保持 |
+| 文件格子渲染与定位 | 通过 | 280x400 @ (2180,90)、`screenBindingMode=Pinned`、绑定 `\\.\DISPLAY1`（`positionMonitorKey=0:0:2560:1380`）、空态「这里还没有文件」与「+ 添加文件」按钮 |
+| 待办提醒订阅对称性（8.3.4 第 5 项） | 代码 + 运行日志双重确认 | `App.xaml.cs` 的 `+=` / `-=` 已配对；运行日志出现 `[TodoReminder] Inactive service released`，该行紧跟在 `previousService.TodoStoreChanged -= RelayTodoStoreChangedByReminder;` 之后，说明退订分支在真机被执行过 |
+
+#### 8.7.2 本机环境受限、未能验证
+
+| 项 | 状态 | 原因 |
+|---|---|---|
+| 拖放（拖出到桌面、拖回源格子被拒） | 无法验证 | 本机 `UAC EnableLUA=0`（UAC 完全关闭），任何启动方式都得到 `isAdminRole=True tokenElevated=True`、`[Elevation] canRelaunch=False`；拖入按设计被禁用，界面显示「管理员身份运行时无法拖入文件，可按 Ctrl+V 粘贴」 |
+| 托盘显隐 / Show Desktop 自愈 | 无法验证，**非合并回归** | 日志 `[Tray] Tray creation attempt 1..15 failed: TryCreate failed.`；A/B 对照：合并**前**的 1.5.6 安装版（`D:\DeskBox`）在同一会话同样报 `attempt 1..11 failed`，而它历史 24,121 行日志里该字符串出现 0 次。`Shell_TrayWnd` / `TrayNotifyWnd` 存在但内层 `SysPager=0`、`ToolbarWindow32=0`，属本机 shell 通知区域异常 |
+| 胶囊展开 / 收起动画流畅度 | 未量化 | 只能主观判断，没有自动化判据 |
+| 托管存储迁移（上游事务式复制） | 未执行 | 需要一份真实旧版数据目录作为迁移源，本机只有冒烟用的空数据根 |
+| 待办提醒 → 格子实时刷新 | 未执行 | 依赖可用的通知区域与 `schtasks` 驱动 UIA；本机两者都不稳定（`schtasks /create` 间歇性 `Access is denied` / `0x80004005`） |
+
+#### 8.7.3 复验前提
 
 复验时请先把仓库放到 8.2 描述的目录树之外，否则会得到与代码无关的假失败。
