@@ -1525,6 +1525,7 @@ public static class WidgetLayerService
                     Win32Helper.GetWindowLongPtr(windowHandle, Win32Helper.GWLP_HWNDPARENT));
             }
 
+            int attachError = 0;
             if (Win32Helper.GetWindowLongPtr(windowHandle, Win32Helper.GWLP_HWNDPARENT) != desktopIconView)
             {
                 Win32Helper.SetLastError(0);
@@ -1532,13 +1533,18 @@ public static class WidgetLayerService
                     windowHandle,
                     Win32Helper.GWLP_HWNDPARENT,
                     desktopIconView);
+                // Captured immediately: the read-back below is itself a
+                // SetLastError P/Invoke, so reading the error after it returned
+                // whatever that call left behind - which is why every field
+                // report of the failure line below read "error=0" and could not
+                // tell an access-denied attach from an invalid handle.
+                attachError = Marshal.GetLastWin32Error();
             }
 
             IntPtr actualOwner = Win32Helper.GetWindowLongPtr(windowHandle, Win32Helper.GWLP_HWNDPARENT);
             if (actualOwner != desktopIconView)
             {
-                int error = Marshal.GetLastWin32Error();
-                App.Log($"[WidgetLayer] DesktopPinned owner attach failed hwnd=0x{windowHandle.ToInt64():X} defView=0x{desktopIconView.ToInt64():X} actual=0x{actualOwner.ToInt64():X} error={error}");
+                App.Log($"[WidgetLayer] DesktopPinned owner attach failed hwnd=0x{windowHandle.ToInt64():X} desktopLayerOwner=0x{desktopIconView.ToInt64():X} actual=0x{actualOwner.ToInt64():X} error={attachError}");
                 RestoreOriginalOwner(windowHandle);
                 s_cachedDesktopIconView = IntPtr.Zero;
                 return false;
