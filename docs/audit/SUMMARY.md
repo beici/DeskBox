@@ -11,11 +11,13 @@
 | 2 | 数据面：`ResilientJsonStore` 读失败处理 + `QuickCaptureService` 附件清理 | 读不到被当成"内容坏了"（隔离健康文件并用旧备份覆盖）；加载失败后把附件当孤儿递归删除 | P1 / P1 | 已修 | `ecd3e8d6` `4dab3ef8` |
 | 3 | 恢复路径：全量恢复的 `restore-rollback` 弃留 + 域级覆盖式恢复的"先删后验" | 恢复失败后用户数据只留在没人读的目录（等于数据全丢）；暂存缺失时先删光本地域再报成功 | P1 / P1 | 已修 | `ae3c90df` `238da40f` |
 | 4 | 文件面：收纳文件夹不可达时的格子移除；无回收站卷上的无主回收 | 文件夹暂时打不开时格子被静默销毁、文件变孤儿 | P1 | 已修 | `4000da95` |
+| 5 | 布局：`WidgetPositioningService.EnsureVisible` 只夹位置不夹尺寸 | 格子比工作区宽时标题栏按钮与缩放握把跑到屏幕外，且重启不恢复 | P1 | 已修 | 见 §5 |
 
 第 1 轮结束时：P0 = 0，P1 = 0（两条 P1 候选经真机实验证伪，见 §1.3），P2 = 2（均已修）。
 第 2 轮结束时：P0 = 0，P1 = 2（均已修），P2 = 0。
 第 3 轮结束时：P0 = 0，P1 = 2（均已修）。
 第 4 轮结束时：P0 = 0，P1 = 1（已修）；另一条 P1 候选（无回收站卷静默永久删除）经真机实验证伪，修复已撤回（见 §4.3）。
+第 5 轮结束时：P0 = 0，P1 = 1（已修）；记录一条新发现的 P2（夹出来的尺寸被写回配置）作为**需要产品决策的已知代价**（见 §5.3）。
 
 ## 第 1 轮：Show Desktop 自愈链
 
@@ -162,7 +164,56 @@
 
 1. 应用内更新下载被 `HttpClient.Timeout = 20s`（`AppUpdateService.cs:31`）约束，慢网用户永远下不完，且失败分类混在"网络错误"里。
 2. 托盘图标创建失败后本进程永久没有托盘（`App.Tray.cs:241` 只调一次，15 次重试后放弃，`TaskbarCreated` 不重建）。
-3. `EnsureVisible` 只夹位置不夹尺寸：格子尺寸超过工作区时标题栏按钮会跑到屏幕外（`WidgetPositioningService`）。
+3. ~~`EnsureVisible` 只夹位置不夹尺寸~~ → 第 5 轮已修。
+4. 启动期恢复信号风暴时同步恢复会占用 UI 线程数秒（`WidgetDisplayChangeWatcher` 回调里同步跑恢复链）。
+
+## 第 5 轮：格子尺寸超过屏幕
+
+### 5.1 问题 — 只夹位置不夹尺寸，标题栏按钮与缩放握把跑到屏幕外（P1，已修）
+
+**人话**：格子的大小只有下限没有上限。在大屏上把格子拉得很宽，之后换到小屏（笔记本、拔外接屏、远程桌面）启动，
+程序只把左上角挪回屏幕内，宽度原样保留 → 格子右半边伸出屏幕，标题栏右侧的关闭/更多/锁定按钮和右下角的缩放握把
+全在屏幕外，鼠标够不到，重启也不恢复。最短触发路径甚至不用改文件：1366×768 屏 + 150% 缩放 + 设置里默认宽度 1200
+→ 新建格子就是 1800 px 宽挂在 1366 px 屏上。
+
+**根因**："可见"只被定义成"位置在屏幕内"，没有被定义成"尺寸放得下"。`EnsureVisible` 这个名字承诺可见性，却只夹了位置；
+而尺寸的生产者（`ResolvePhysicalWidth`、`ApplyWindowBounds`、`ResolveInteractiveResizeBounds`）全部只有下限。
+
+**证据**：`src/DeskBox/Services/WidgetPositioningService.cs:271-303`（修复前）返回值里 `bounds.Width/Height` 原样透传；
+`:281-288` 的注释自己承认"比工作区还宽"的情况存在，但只讨论锚点回读稳定性，没处理"用户够不到按钮"。
+
+**改法**：`EnsureVisible` 入口把宽高夹到工作区（`Math.Min`），越界判断与两个返回分支都用夹过的值；单一收口，
+两条调用路径（`:111` `ResolveBoundsCore`、`:501` 旧坐标版本）同时覆盖。
+
+**验证**：新测试 `EnsureVisible_ShrinksBoundsThatExceedTheWorkArea` 在旧代码上红（`Expected: 1920, Actual: 2400`，
+`WidgetPositioningServiceTests.cs:607`）、新代码绿；`WidgetPositioningServiceTests` +
+`WidgetBatchMarginPositioningContractTests` 23/23 通过；应用重新构建部署启动，40 步启动流水 0 失败。
+
+### 5.2 方法学教训
+
+1. **被证伪的候选要连着撤回证据链**：第 4 轮"无回收站卷静默删除"被真机实验证伪后，连同守卫、字符串、单测一起撤回，
+   只留文档记录——半个修复比没有修复更糟。
+2. **"单测红"必须读完整断言**：本轮旧代码的红是 `Expected: 1920, Actual: 2400`（正是被夹的宽度），而不是
+   "没有抛异常"这类与行为无关的红；断言里出现具体数值，才证明测的是行为。
+
+### 5.3 已知代价（需产品决策）：夹出来的尺寸会被写回配置
+
+`WidgetManager.cs:3109` `ResolveBoundsForCurrentTopology` → `:3126` `UpdateConfigFromPhysicalBounds` → `:3147`
+`UpdateWidget` 这条启动归一化路径（每次格子窗口创建都跑，`WidgetManager.cs:2889`）会把夹过的尺寸持久化。
+后果：3000 px 宽的格子在小屏上启动一次，配置里就变成 1920，回到 4K 屏不会自动恢复。
+
+- 同类单向收缩在本轮之前就存在于拓扑映射（`WidgetTopologyLayoutService.cs:1282-1289`、`:1553`），本轮只是扩展了触发面。
+- 根因修复是**显示尺寸与存储尺寸分离**：配置永远保存用户选的尺寸，只在解析/应用窗口大小时夹取。代价是要改
+  `UpdateConfigFromPhysicalBounds` 语义、拖动/缩放提交路径（`WidgetManager.ScreenHome.cs:33-99`）、拓扑映射，
+  以及设置界面宽度与实际窗口宽度的一致性。
+- 本轮选择"够得到按钮"优先于"记住尺寸"，并把这条债务显式记录在案，等产品决策。
+
+### 5.4 留给后续轮的线索
+
+1. 应用内更新下载被 `HttpClient.Timeout = 20s` 约束（`AppUpdateService.cs:31`），慢网永远下不完。
+2. 托盘图标创建失败后本进程永久没有托盘（`App.Tray.cs:241`）。
+3. 桌面整理用系统 DPI 而不是目标显示器 DPI 换算格子尺寸（`DesktopOrganizationCoordinator.cs:371`、`:390-391`、`:396`）：
+   会话中途改缩放（未重新登录）后整理桌面，新建格子尺寸偏差 / 与既有格子重叠 / 误报"没有布局空间"。
 4. 启动期恢复信号风暴时同步恢复会占用 UI 线程数秒（`WidgetDisplayChangeWatcher` 回调里同步跑恢复链）。
 
 ## 环境事实（后续轮直接复用）

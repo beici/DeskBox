@@ -590,4 +590,28 @@ public sealed class WidgetPositioningServiceTests
         Assert.Equal(workArea.X + 32, fullyOutside.X);
         Assert.Equal(workArea.Y + 32, fullyOutside.Y);
     }
+
+    [Fact]
+    public void EnsureVisible_ShrinksBoundsThatExceedTheWorkArea()
+    {
+        var workArea = new RectInt32(0, 0, 1920, 1040);
+
+        // A widget sized on a bigger monitor: clamping only the position would
+        // leave its right and bottom edges — and with them the title-bar
+        // buttons and the resize grip — off-screen.
+        RectInt32 oversized = WidgetPositioningService.EnsureVisible(
+            new RectInt32(0, 0, 2400, 1600),
+            workArea);
+        Assert.Equal(0, oversized.X);
+        Assert.Equal(0, oversized.Y);
+        Assert.Equal(1920, oversized.Width);
+        Assert.Equal(1040, oversized.Height);
+
+        // A widget that fits keeps its own size.
+        RectInt32 fitting = WidgetPositioningService.EnsureVisible(
+            new RectInt32(100, 100, 800, 600),
+            workArea);
+        Assert.Equal(800, fitting.Width);
+        Assert.Equal(600, fitting.Height);
+    }
 }

@@ -270,9 +270,21 @@ public static class WidgetPositioningService
 
     public static RectInt32 EnsureVisible(RectInt32 bounds, RectInt32 workArea)
     {
+        // A widget wider or taller than the work area cannot be placed so that
+        // all of it is reachable: clamping the position alone pushes its title
+        // bar buttons and resize grip past the screen edge. Shrink it to the
+        // work area instead.
+        // Known cost: the startup normalize path persists the resolved bounds,
+        // so a widget shrunk here stays shrunk when it later moves to a bigger
+        // monitor. Keeping the display size separate from the stored size would
+        // need the two to be modelled independently; until then, being
+        // reachable wins over remembering the size.
+        int width = Math.Min(bounds.Width, workArea.Width);
+        int height = Math.Min(bounds.Height, workArea.Height);
+
         bool isWildlyOffscreen =
-            bounds.X + bounds.Width < workArea.X + MinimumVisibleExtent ||
-            bounds.Y + bounds.Height < workArea.Y + MinimumVisibleExtent ||
+            bounds.X + width < workArea.X + MinimumVisibleExtent ||
+            bounds.Y + height < workArea.Y + MinimumVisibleExtent ||
             bounds.X > workArea.X + workArea.Width - MinimumVisibleExtent ||
             bounds.Y > workArea.Y + workArea.Height - MinimumVisibleExtent;
 
@@ -289,17 +301,17 @@ public static class WidgetPositioningService
             return new RectInt32(
                 workArea.X + FallbackOffset,
                 workArea.Y + FallbackOffset,
-                bounds.Width,
-                bounds.Height);
+                width,
+                height);
         }
 
-        int maxX = Math.Max(workArea.X, workArea.X + workArea.Width - bounds.Width);
-        int maxY = Math.Max(workArea.Y, workArea.Y + workArea.Height - bounds.Height);
+        int maxX = Math.Max(workArea.X, workArea.X + workArea.Width - width);
+        int maxY = Math.Max(workArea.Y, workArea.Y + workArea.Height - height);
         return new RectInt32(
             Math.Clamp(bounds.X, workArea.X, maxX),
             Math.Clamp(bounds.Y, workArea.Y, maxY),
-            bounds.Width,
-            bounds.Height);
+            width,
+            height);
     }
 
     public static string CreateMonitorKey(RectInt32 workArea)
