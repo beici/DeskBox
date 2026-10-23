@@ -192,6 +192,18 @@ public sealed class NativeAppNotificationService : IDisposable
             return false;
         }
 
+        // Showing while the platform has notifications turned off for this
+        // app (user setting, group policy, or manifest) does not throw —
+        // the toast is silently dropped. Probe the setting so callers can
+        // fall back to their own surfaces instead of assuming the reminder
+        // was displayed.
+        AppNotificationSetting setting = AppNotificationManager.Default.Setting;
+        if (setting != AppNotificationSetting.Enabled)
+        {
+            App.Log($"[Notification] Native app notifications unavailable (setting={setting}); not shown.");
+            return false;
+        }
+
         try
         {
             var builder = new AppNotificationBuilder()
