@@ -12,12 +12,14 @@
 | 3 | 恢复路径：全量恢复的 `restore-rollback` 弃留 + 域级覆盖式恢复的"先删后验" | 恢复失败后用户数据只留在没人读的目录（等于数据全丢）；暂存缺失时先删光本地域再报成功 | P1 / P1 | 已修 | `ae3c90df` `238da40f` |
 | 4 | 文件面：收纳文件夹不可达时的格子移除；无回收站卷上的无主回收 | 文件夹暂时打不开时格子被静默销毁、文件变孤儿 | P1 | 已修 | `4000da95` |
 | 5 | 布局：`WidgetPositioningService.EnsureVisible` 只夹位置不夹尺寸 | 格子比工作区宽时标题栏按钮与缩放握把跑到屏幕外，且重启不恢复 | P1 | 已修 | 见 §5 |
+| 6 | 待办：软删除条目仍参与提醒与"完成" | 删掉的待办照旧弹提醒；从通知点"完成"会克隆出一条新的未删除待办（删了会长回来） | P1 | 已修 | `43e7092e` |
 
 第 1 轮结束时：P0 = 0，P1 = 0（两条 P1 候选经真机实验证伪，见 §1.3），P2 = 2（均已修）。
 第 2 轮结束时：P0 = 0，P1 = 2（均已修），P2 = 0。
 第 3 轮结束时：P0 = 0，P1 = 2（均已修）。
 第 4 轮结束时：P0 = 0，P1 = 1（已修）；另一条 P1 候选（无回收站卷静默永久删除）经真机实验证伪，修复已撤回（见 §4.3）。
 第 5 轮结束时：P0 = 0，P1 = 1（已修）；记录一条新发现的 P2（夹出来的尺寸被写回配置）作为**需要产品决策的已知代价**（见 §5.3）。
+第 6 轮结束时：P0 = 0，P1 = 1（已修）；一条 P1 候选（更新下载 20 秒超时）经真机实验证伪（见 §6.3）；weather / music / todo 另有 8 条真缺陷候选留待后续轮（见 §6.4）。
 
 ## 第 1 轮：Show Desktop 自愈链
 
@@ -215,6 +217,81 @@
 3. 桌面整理用系统 DPI 而不是目标显示器 DPI 换算格子尺寸（`DesktopOrganizationCoordinator.cs:371`、`:390-391`、`:396`）：
    会话中途改缩放（未重新登录）后整理桌面，新建格子尺寸偏差 / 与既有格子重叠 / 误报"没有布局空间"。
 4. 启动期恢复信号风暴时同步恢复会占用 UI 线程数秒（`WidgetDisplayChangeWatcher` 回调里同步跑恢复链）。
+
+## 第 6 轮：待办的软删除语义
+
+### 6.1 问题 — 删掉的待办照旧提醒，点"完成"还会长回来（P1，已修）
+
+**人话摘要**：把一条设了时间的待办删掉，它到点照样弹通知；从通知上点"完成"，系统不但把它
+标成完成，还按重复规则生成下一条——用户删掉的东西自己回来了。修完之后：删掉的条目不再
+提醒，"完成"对已删条目无效。
+
+**证据**（`src/DeskBox/Services/TodoReminderService.cs`）：
+- `:468` 扫描循环 `foreach (var item in current.Items)` 没有 `IsDeleted` 过滤；
+- `:642-645` `TryGetReminderTrigger` 只判 `item.IsCompleted || item.DueDate is null`；
+- `:674-677` `ShouldNotifyDue` 同样只判 `IsCompleted`；
+- `:343` `CompleteAsync` 只判 `IsCompleted`，通过后 `:380` `TryCreateNextOccurrence` 克隆下一条时不看 `IsDeleted`；
+- 入口 `TodoNotificationActivationRouter.cs:90-132` 的"完成"动作在 `:112` 直接调 `CompleteAsync`；
+- `IsDeleted` 是软删除标记（`TodoItem.cs:79`），删除时由 `TodoWidgetViewModel.EditingAndUndo.cs:289` 置真。
+
+**根因**：提醒与"完成"三条判定都只把"完成"当终态，把"删除"漏在外面。删除在数据模型里是软删除
+（条目仍在集合里、仍带到期时间），漏掉这个判断就等于"删了但还活着"。
+
+**候选方案**（6 判据打分见 `docs/audit/round-06-deleted-todo-reminders.md`）：
+- A 在提醒扫描/两个判定点/`CompleteAsync` 统一加 `IsDeleted` 早退（30 分，采用）
+- B 软删除时清空 `DueDate` 与 `Recurrence`（18 分：要改删除路径、破坏撤销语义）
+- C 只在提醒扫描前过滤集合（25 分："完成"复活仍然存在）
+- D 在 `TodoItem` 上加 `IsActive` 派生属性（18 分：新概念，收益相同）
+
+**改法**：三处判定统一加 `item.IsDeleted`；`CompleteAsync` 对已删条目返回 `false`。
+
+**验证**：
+- 单测 `CheckNowAsync_DoesNotNotifyForDeletedItem`、`CompleteAsync_DoesNotResurrectDeletedRecurringItem`；
+- 同一批 27 个用例（`TodoReminderServiceTests` + `TodoNotificationActivationRouterTests`）：修复前 2 红 25 绿，修复后 27/27 绿；
+- 真机 A/B（向 `data/widgets/c9c0e921-.../todo.json` 注入一条 `isDeleted=true`、已过期 30 秒的条目，启动 60 秒）：
+  旧构建写入 `reminderLastNotifiedAt=10:28:52`、`reminderDismissedForDueDate=02:28:12Z`；新构建两个字段保持 null。
+
+**风险与遗留**：
+- 卡片上对已删条目点"完成"现在得到 `DispositionMutationFailed` 且 UI 不解释原因。已删条目本不该出现在卡片上，
+  这条只在外部改动/同步造成的不一致状态下可见 → 记 P3，不修；
+- `MissedReminderGrace`（1 分钟）导致的"错过提醒不再补"未动，见 §6.4 第 8 条。
+
+### 6.2 方法学教训
+
+1. **"提醒没弹"与"提醒弹了但条目已删"是两回事**：读代码先确认扫描循环有没有过滤，再看判定函数。
+2. 真机 A/B 不必同时装两个版本：先跑旧构建、再部署新构建，两次都从同一个"状态不一致的注入记录"出发即可。
+   关键是注入点选在**应用启动前**，并备份原始文件、跑完恢复。
+3. 子代理报告里"看着最严重"的一条（更新下载超时）经实验是假的，而真正能修的 P1 在没人爱看的 todo 子系统里——
+   报告排序只能当线索，不能当靶子。
+
+### 6.3 被证伪的候选 — 应用内更新下载的 20 秒总超时
+
+`AppUpdateService.cs:31` 有 `_httpClient.Timeout = TimeSpan.FromSeconds(20)`，看起来"慢网下载必然失败"。
+真机实验（临时测试，已删除）：裸 `TcpListener` 手写 `HTTP/1.1 200` + `Content-Length: 3000`，每 1.2 秒滴
+1000 字节；客户端 `new HttpClient { Timeout = 1s }` + `ResponseHeadersRead` 后逐块读，**结果
+`elapsed=3841ms outcome=COMPLETED bytes=3000`**——响应头到达后总超时不再约束响应体读取。该 P1 候选不成立。
+真实残余：响应体没有空闲超时（服务端挂死时进度条停在某个百分比），但下载循环尊重传入的
+`cancellationToken`（`AppUpdateService.cs:231`），用户可以取消 → P3 / 设计取舍，不修。
+
+### 6.4 留给后续轮的线索（本轮不主张、不定级）
+
+weather / search：
+1. 陈旧天气缓存被渲染成"今天/现在"：`WeatherWidgetViewModel.DataProcessing.cs:439` 按数组下标贴日期标签
+   （`i==0` → "今天"），`:43` 算了 `isStale` 但 UI 从不读。
+2. Everything 查询挂死时永久占用 `_nativeGate`：`EverythingSearchService.cs:229` `WaitAsync` 无超时，超时分支
+   `:260-273` 直接返回空结果而委托仍持锁 → 之后所有搜索永久失败。
+3. 搜索框里按回车时，选中的可能是上一条查询的结果：`SearchPopupViewModel.cs:480` 清空 `_allResults`，
+   重建走快速路径 `:827-833`。
+4. 天气"当前小时"用机器时钟匹配接口返回的地点本地小时串：`DataProcessing.cs:533`，匹配不上时 `:542` 返回 0。
+5. 天气接口时间用当前区域格式解析：`DataProcessing.cs:549/562/575/588`，非公历区域（如 ar-SA）会解析失败。
+
+music：
+6. 会话失效时订阅退订抛异常会中断清理：`MusicSessionService.cs:482-483` 先 `DetachSession` 再赋值，`-=` 无 try/catch。
+7. 没有封面时沿用上一首的封面约 1.5 秒：`MusicWidgetViewModel.MediaInfo.cs:244` 把"没有封面"当成解码失败。
+
+todo：
+8. 提醒错过 1 分钟就不再补：`TodoReminderService.cs:20` `MissedReminderGrace = 1min`、`:691`
+   `return now <= dueDate + MissedReminderGrace;`——应用没开或机器休眠跨过提醒时间，这条提醒永久丢失。
 
 ## 环境事实（后续轮直接复用）
 
