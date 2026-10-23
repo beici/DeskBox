@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using DeskBox.Models;
 using DeskBox.Contracts;
 using Microsoft.UI.Dispatching;
+using DeskBox.Helpers;
 
 namespace DeskBox.Services;
 
@@ -696,8 +697,8 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
         }
 
         return localDueDate.Second == 0
-            ? localDueDate.ToString("yyyy/M/d HH:mm")
-            : localDueDate.ToString("yyyy/M/d HH:mm:ss");
+            ? localDueDate.ToString("yyyy/M/d HH:mm", DisplayCulture.GregorianCurrent)
+            : localDueDate.ToString("yyyy/M/d HH:mm:ss", DisplayCulture.GregorianCurrent);
     }
 
     private string NormalizeNotificationText(string? text)
@@ -743,7 +744,10 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
         if (item.SnoozedUntil is { } snoozedUntil)
         {
             triggerKind = ReminderTriggerKind.Snooze;
-            return now >= snoozedUntil;
+            // Mirror the due-trigger grace window: a snooze reminder that
+            // could not be shown stops retrying after its moment has passed,
+            // instead of rescanning every 30 seconds for the whole session.
+            return now >= snoozedUntil && now <= snoozedUntil + MissedReminderGrace;
         }
 
         int normalizedDefaultOffsetMinutes = SettingsService.NormalizeTodoReminderOffsetMinutes(defaultOffsetMinutes);

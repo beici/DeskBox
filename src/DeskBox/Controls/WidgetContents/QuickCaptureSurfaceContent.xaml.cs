@@ -1262,7 +1262,7 @@ public sealed partial class QuickCaptureSurfaceContent :
             _detailContentFormat == TextContentFormat.Markdown;
         DetailTimestampText.Text = _localizationService.Format(
             "QuickCapture.Detail.Created",
-            DateTimeOffset.Now.ToString("yyyy/M/d HH:mm"));
+            DateTimeOffset.Now.ToString("yyyy/M/d HH:mm", DisplayCulture.GregorianCurrent));
         RefreshDetailAttachments();
         ApplyDetailMaterialSurface();
         ApplyResponsiveLayout();
@@ -1301,7 +1301,7 @@ public sealed partial class QuickCaptureSurfaceContent :
             !item.IsRecent && _detailContentFormat == TextContentFormat.Markdown;
         DetailTimestampText.Text = _localizationService.Format(
             "QuickCapture.Detail.Created",
-            item.ToModel().CreatedAt.ToLocalTime().ToString("yyyy/M/d HH:mm"));
+            item.ToModel().CreatedAt.ToLocalTime().ToString("yyyy/M/d HH:mm", DisplayCulture.GregorianCurrent));
         DetailPinIcon.IsPinned = item.IsPinned;
         RefreshDetailAttachments();
         ApplyDetailMaterialSurface();

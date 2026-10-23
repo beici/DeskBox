@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using DeskBox.Models;
 using DeskBox.Services;
 using Microsoft.UI.Xaml;
+using DeskBox.Helpers;
 
 namespace DeskBox.ViewModels;
 
@@ -392,7 +393,7 @@ public sealed partial class QuickCaptureItemViewModel : ObservableObject
         var now = DateTimeOffset.Now;
         return local.Date == now.Date
             ? local.ToString("HH:mm:ss")
-            : local.ToString("MM-dd HH:mm:ss");
+            : local.ToString("MM-dd HH:mm:ss", DisplayCulture.GregorianCurrent);
     }
 
     private static string NormalizeSearchText(string? searchText)

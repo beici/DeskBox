@@ -110,7 +110,7 @@ public sealed partial class TodoItemViewModel : ObservableObject
         ? Visibility.Visible
         : Visibility.Collapsed;
 
-    public string CreatedText => Format("Todo.Detail.Created", CreatedAt.ToLocalTime().ToString("yyyy/M/d HH:mm"));
+    public string CreatedText => Format("Todo.Detail.Created", CreatedAt.ToLocalTime().ToString("yyyy/M/d HH:mm", DisplayCulture.GregorianCurrent));
 
     public DateTimeOffset UpdatedAt
     {
@@ -668,11 +668,11 @@ public sealed partial class TodoItemViewModel : ObservableObject
         return _localizationService?.Format(key, args) ?? LocalizationService.DefaultFormat(key, args);
     }
 
-    private static string FormatDueDateTime(DateTimeOffset dueDate)
+    internal static string FormatDueDateTime(DateTimeOffset dueDate)
     {
         return dueDate.Second == 0
-            ? dueDate.ToString("yyyy/M/d HH:mm")
-            : dueDate.ToString("yyyy/M/d HH:mm:ss");
+            ? dueDate.ToString("yyyy/M/d HH:mm", DisplayCulture.GregorianCurrent)
+            : dueDate.ToString("yyyy/M/d HH:mm:ss", DisplayCulture.GregorianCurrent);
     }
 
     private static string FormatDueTime(DateTimeOffset dueDate)
@@ -697,8 +697,8 @@ public sealed partial class TodoItemViewModel : ObservableObject
         }
 
         return snoozedUntil.Second == 0
-            ? snoozedUntil.ToString("yyyy/M/d HH:mm")
-            : snoozedUntil.ToString("yyyy/M/d HH:mm:ss");
+            ? snoozedUntil.ToString("yyyy/M/d HH:mm", DisplayCulture.GregorianCurrent)
+            : snoozedUntil.ToString("yyyy/M/d HH:mm:ss", DisplayCulture.GregorianCurrent);
     }
 
     private static Windows.UI.Color ParseColor(string hex)

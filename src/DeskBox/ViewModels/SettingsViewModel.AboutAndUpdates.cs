@@ -2,6 +2,7 @@
 using DeskBox.Models;
 using DeskBox.Services;
 using Microsoft.UI.Xaml;
+using DeskBox.Helpers;
 
 namespace DeskBox.ViewModels;
 
@@ -570,9 +571,9 @@ public partial class SettingsViewModel
 
         if (local.Year == now.Year)
         {
-            return local.ToString("MM-dd HH:mm");
+            return local.ToString("MM-dd HH:mm", DisplayCulture.GregorianCurrent);
         }
 
-        return local.ToString("yyyy-MM-dd HH:mm");
+        return local.ToString("yyyy-MM-dd HH:mm", DisplayCulture.GregorianCurrent);
     }
 }

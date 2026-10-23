@@ -879,29 +879,12 @@ public sealed partial class GlanceWidgetViewModel : ObservableObject, IDisposabl
     /// Al-Qura), which would render the main date in a calendar the rest of
     /// the app (and the Glance grid) never uses. The main date is always
     /// Gregorian; non-Gregorian calendars stay available through the
-    /// dedicated traditional-calendar line.
+    /// dedicated traditional-calendar line. Shared implementation:
+    /// <see cref="DisplayCulture.EnsureGregorian"/>.
     /// </summary>
     private static CultureInfo EnsureGregorianCalendar(CultureInfo culture)
     {
-        if (culture.Calendar is GregorianCalendar)
-        {
-            return culture;
-        }
-
-        try
-        {
-            Calendar gregorian = culture.OptionalCalendars.FirstOrDefault(
-                calendar => calendar is GregorianCalendar) ?? new GregorianCalendar();
-            CultureInfo clone = (CultureInfo)culture.Clone();
-            clone.DateTimeFormat.Calendar = gregorian;
-            return clone;
-        }
-        catch
-        {
-            // Rendering must never break on culture data quirks; fall back
-            // to the culture's own calendar.
-            return culture;
-        }
+        return DisplayCulture.EnsureGregorian(culture);
     }
 
     private async Task UpdateCalendarAsync()

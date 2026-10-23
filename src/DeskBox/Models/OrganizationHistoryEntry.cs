@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using DeskBox.Services;
+using DeskBox.Helpers;
 
 namespace DeskBox.Models;
 
@@ -87,7 +88,7 @@ public class OrganizationHistoryEntry
     }
 
     [JsonIgnore]
-    public string DisplayTimeText => TimestampUtc.ToLocalTime().ToString("MM-dd HH:mm");
+    public string DisplayTimeText => TimestampUtc.ToLocalTime().ToString("MM-dd HH:mm", DisplayCulture.GregorianCurrent);
 
     [JsonIgnore]
     public string DisplayDetail

@@ -497,7 +497,7 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
             return localization.Format("Todo.Due.TomorrowAt", localDueDate.ToString("HH:mm"));
         }
 
-        return localDueDate.ToString("M/d");
+        return localDueDate.ToString("M/d", DisplayCulture.GregorianCurrent);
     }
 
     private static TodoItemViewModel? GetNextCompactTodoItem(TodoWidgetContentAdapter todo) =>

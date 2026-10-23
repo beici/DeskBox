@@ -4,6 +4,7 @@ using Microsoft.Win32;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DeskBox.Models;
+using DeskBox.Helpers;
 
 namespace DeskBox.Services;
 
@@ -190,7 +191,7 @@ public sealed class LocalizationService
 
     public string Format(string key, params object[] args)
     {
-        return string.Format(CultureInfo.CurrentCulture, T(key), args);
+        return string.Format(DisplayCulture.GregorianCurrent, T(key), args);
     }
 
     public static string DefaultText(string key)
