@@ -233,8 +233,16 @@ public static class TodoRecurrenceService
     }
 
     private static DateTimeOffset CreateMonthlyCandidate(DateTimeOffset anchorDueDate, int monthOffset)
+        => CreateMonthlyCandidate(anchorDueDate, monthOffset, TimeZoneInfo.Local);
+
+    // Internal DST seam: the wall-clock math above is what a machine in any
+    // time zone executes (LocalDateTime / new DateTimeOffset(local) are
+    // implicitly TimeZoneInfo.Local). The explicit-zone overload lets tests
+    // pin the DST-transition semantics without changing the machine's zone.
+    internal static DateTimeOffset CreateMonthlyCandidate(DateTimeOffset anchorDueDate, int monthOffset, TimeZoneInfo timeZone)
     {
-        DateTime anchorLocal = anchorDueDate.LocalDateTime;
+        ArgumentNullException.ThrowIfNull(timeZone);
+        DateTime anchorLocal = TimeZoneInfo.ConvertTime(anchorDueDate, timeZone).DateTime;
         DateTime targetMonth = new(anchorLocal.Year, anchorLocal.Month, 1, anchorLocal.Hour, anchorLocal.Minute, anchorLocal.Second, anchorLocal.Kind);
         targetMonth = targetMonth.AddMonths(monthOffset);
         int targetDay = Math.Min(anchorLocal.Day, DateTime.DaysInMonth(targetMonth.Year, targetMonth.Month));
@@ -245,8 +253,8 @@ public static class TodoRecurrenceService
             anchorLocal.Hour,
             anchorLocal.Minute,
             anchorLocal.Second,
-            DateTimeKind.Local);
-        return new DateTimeOffset(localCandidate);
+            DateTimeKind.Unspecified);
+        return new DateTimeOffset(localCandidate, timeZone.GetUtcOffset(localCandidate));
     }
 
     private static bool IsWeekend(DayOfWeek dayOfWeek)
@@ -255,8 +263,12 @@ public static class TodoRecurrenceService
     }
 
     private static DateTimeOffset AddLocalDays(DateTimeOffset value, int days)
+        => AddLocalDays(value, days, TimeZoneInfo.Local);
+
+    internal static DateTimeOffset AddLocalDays(DateTimeOffset value, int days, TimeZoneInfo timeZone)
     {
-        DateTime localDateTime = value.LocalDateTime.AddDays(days);
-        return new DateTimeOffset(localDateTime);
+        ArgumentNullException.ThrowIfNull(timeZone);
+        DateTime localDateTime = TimeZoneInfo.ConvertTime(value, timeZone).DateTime.AddDays(days);
+        return new DateTimeOffset(localDateTime, timeZone.GetUtcOffset(localDateTime));
     }
 }
