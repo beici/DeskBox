@@ -1693,6 +1693,7 @@
     "Widget.Error.ManagedFolderCleanupOnlyDefault": "デフォルトストレージパスの直下のフォルダーのみクリーンアップできます。",
     "Widget.Error.ManagedFolderStillActive": "このフォルダーは既存の管理ウィジェットに属しているため、孤立としてクリーンアップできません。",
     "Widget.Error.ManagedFolderActionOnlyDefault": "デフォルトストレージパスの下の管理ウィジェットのみフォルダー処理を同期できます。",
+    "Widget.Error.ManagedFolderUnavailable": "管理フォルダーに現在アクセスできません（ドライブが切断されているか、アクセスが拒否されています）。ウィジェットは保持されています。ドライブを再接続してもう一度お試しください。",
     "Widget.Error.ManagedFolderDeleteFailed": "フォルダーをごみ箱に移動できなかったため、ウィジェットは保持されています。後でもう一度お試しください。",
     "Widget.Error.ManagedFolderMoveIncomplete": "一部のファイルをデスクトップに戻せなかったため、ウィジェットは保持されています。ディスク領域を空けるか、これらのファイルを使用中のプログラムを閉じてもう一度お試しください。",
     "Widget.Error.ManagedFolderNameExists": "その名前の管理ウィジェットは既に存在します。別の名前を選んでください。",

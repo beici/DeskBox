@@ -367,6 +367,27 @@ public sealed class WidgetManagerStorageCleanupTests : IDisposable
     }
 
     [Fact]
+    public async Task RemoveWidgetAsync_UnreachableManagedFolder_KeepsWidgetAndConfig()
+    {
+        // An unplugged drive or a denied path looks exactly like a deleted
+        // folder to Directory.Exists. Removing the widget there strands the
+        // user's files with no way back, so the removal must refuse instead.
+        string unreachableRoot = Path.Combine(FindUnusedDriveRoot(), "DeskBox.Tests");
+        _settingsService.Settings.DefaultManagedStorageRootPath = unreachableRoot;
+        string unreachableFolder = Path.Combine(unreachableRoot, "Unreachable");
+        var widget = CreateManagedWidget("Unreachable", unreachableFolder);
+        _settingsService.Settings.Widgets.Add(widget);
+
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            _widgetManager.RemoveWidgetAsync(
+                widget.Id,
+                WidgetRemovalAction.MoveManagedFolderContentsToDesktop));
+
+        Assert.Contains(_settingsService.Settings.Widgets, item => item.Id == widget.Id);
+        Assert.DoesNotContain(widget.Id, _settingsService.Settings.DeletedWidgetIds);
+    }
+
+    [Fact]
     public async Task RemoveWidgetAsync_MissingManagedFolder_RemovesConfigWithoutCreatingFolder()
     {
         string missingFolder = Path.Combine(_storageRoot, "Missing");
@@ -867,6 +888,20 @@ public sealed class WidgetManagerStorageCleanupTests : IDisposable
             FollowsDefaultStoragePath = true,
             ManagedFolderName = Path.GetFileName(folderPath)
         };
+    }
+
+    private static string FindUnusedDriveRoot()
+    {
+        foreach (char letter in "ZYXWVUTSRQPON")
+        {
+            string root = letter + @":\";
+            if (!Directory.Exists(root))
+            {
+                return root;
+            }
+        }
+
+        throw new InvalidOperationException("No unused drive letter is available on this machine.");
     }
 
     private static bool TryCreateDirectoryJunction(string junction, string target)

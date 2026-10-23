@@ -1705,6 +1705,7 @@
     "Widget.Error.ManagedFolderCleanupOnlyDefault": "Only direct folders under the default storage path can be cleaned up.",
     "Widget.Error.ManagedFolderStillActive": "This folder still belongs to an existing managed widget and cannot be cleaned up as orphaned.",
     "Widget.Error.ManagedFolderActionOnlyDefault": "Only managed widgets under the default storage path can synchronize folder handling.",
+    "Widget.Error.ManagedFolderUnavailable": "The managed folder is not reachable right now (the drive may be disconnected or access denied), so the widget was kept. Reconnect the drive and try again.",
     "Widget.Error.ManagedFolderDeleteFailed": "The folder could not be moved to the Recycle Bin, so the widget was kept. Try again later.",
     "Widget.Error.ManagedFolderMoveIncomplete": "Some files could not be moved back to the desktop, so the widget was kept. Free up disk space or close the programs using these files, then try again.",
     "Widget.Error.ManagedFolderNameExists": "A managed widget with that name already exists. Choose a different name.",

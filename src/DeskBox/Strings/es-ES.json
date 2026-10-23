@@ -1707,6 +1707,7 @@
     "Widget.Error.ManagedFolderCleanupOnlyDefault": "Solo se pueden limpiar las carpetas directas en la ruta de almacenamiento predeterminada.",
     "Widget.Error.ManagedFolderStillActive": "Esta carpeta todavía pertenece a un widget administrado existente y no se puede limpiar como huérfana.",
     "Widget.Error.ManagedFolderActionOnlyDefault": "Solo los widgets administrados en la ruta de almacenamiento predeterminada pueden sincronizar el manejo de carpetas.",
+    "Widget.Error.ManagedFolderUnavailable": "No se puede acceder a la carpeta gestionada en este momento (la unidad puede estar desconectada o el acceso denegado). El widget se ha conservado. Vuelve a conectar la unidad e inténtalo de nuevo.",
     "Widget.Error.ManagedFolderDeleteFailed": "No se pudo mover la carpeta a la papelera de reciclaje, por lo que se conservó el widget. Inténtalo de nuevo más tarde.",
     "Widget.Error.ManagedFolderMoveIncomplete": "No se pudieron devolver algunos archivos al escritorio, por lo que se conservó el widget. Libera espacio en disco o cierra los programas que usan estos archivos e inténtalo de nuevo.",
     "Widget.Error.ManagedFolderNameExists": "Ya existe un widget administrado con ese nombre. Elija un nombre diferente.",

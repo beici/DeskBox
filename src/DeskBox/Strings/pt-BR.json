@@ -1693,6 +1693,7 @@
     "Widget.Error.ManagedFolderCleanupOnlyDefault": "Apenas pastas diretas sob o caminho de armazenamento padrão podem ser limpas.",
     "Widget.Error.ManagedFolderStillActive": "Esta pasta ainda pertence a um Widget gerenciado existente e não pode ser limpa como órfã.",
     "Widget.Error.ManagedFolderActionOnlyDefault": "Apenas Widgets gerenciados sob o caminho de armazenamento padrão podem sincronizar o tratamento de pastas.",
+    "Widget.Error.ManagedFolderUnavailable": "A pasta gerenciada não está acessível agora (a unidade pode estar desconectada ou o acesso negado). O widget foi mantido. Reconecte a unidade e tente novamente.",
     "Widget.Error.ManagedFolderDeleteFailed": "A pasta não pôde ser movida para a Lixeira, então o widget foi mantido. Tente novamente mais tarde.",
     "Widget.Error.ManagedFolderMoveIncomplete": "Alguns arquivos não puderam ser movidos de volta para a área de trabalho, então o widget foi mantido. Libere espaço em disco ou feche os programas que usam esses arquivos e tente novamente.",
     "Widget.Error.ManagedFolderNameExists": "Um Widget gerenciado com esse nome já existe. Escolha um nome diferente.",

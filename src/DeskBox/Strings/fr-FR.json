@@ -1707,6 +1707,7 @@
     "Widget.Error.ManagedFolderCleanupOnlyDefault": "Seuls les dossiers directs sous le chemin de stockage par défaut peuvent être nettoyés.",
     "Widget.Error.ManagedFolderStillActive": "Ce dossier appartient toujours à un widget géré existant et ne peut pas être nettoyé comme étant orphelin.",
     "Widget.Error.ManagedFolderActionOnlyDefault": "Seuls les widgets gérés sous le chemin de stockage par défaut peuvent synchroniser la gestion des dossiers.",
+    "Widget.Error.ManagedFolderUnavailable": "Le dossier géré est actuellement inaccessible (lecteur déconnecté ou accès refusé). Le widget a été conservé. Reconnectez le lecteur et réessayez.",
     "Widget.Error.ManagedFolderDeleteFailed": "Le dossier n'a pas pu être déplacé vers la corbeille ; le widget a été conservé. Réessayez plus tard.",
     "Widget.Error.ManagedFolderMoveIncomplete": "Certains fichiers n'ont pas pu être renvoyés vers le bureau ; le widget a été conservé. Libérez de l'espace disque ou fermez les programmes qui utilisent ces fichiers, puis réessayez.",
     "Widget.Error.ManagedFolderNameExists": "Un widget géré portant ce nom existe déjà. Choisissez un autre nom.",

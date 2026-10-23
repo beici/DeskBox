@@ -1693,6 +1693,7 @@
     "Widget.Error.ManagedFolderCleanupOnlyDefault": "Nur direkte Ordner unter dem Standard-Speicherpfad können bereinigt werden.",
     "Widget.Error.ManagedFolderStillActive": "Dieser Ordner gehört noch zu einem bestehenden verwalteten Widget und kann nicht als verwaist bereinigt werden.",
     "Widget.Error.ManagedFolderActionOnlyDefault": "Nur verwaltete Widgets unter dem Standard-Speicherpfad können die Ordner-Behandlung synchronisieren.",
+    "Widget.Error.ManagedFolderUnavailable": "Auf den verwalteten Ordner kann gerade nicht zugegriffen werden (Laufwerk getrennt oder Zugriff verweigert). Das Widget wurde behalten. Laufwerk wieder verbinden und erneut versuchen.",
     "Widget.Error.ManagedFolderDeleteFailed": "Der Ordner konnte nicht in den Papierkorb verschoben werden; das Widget wurde beibehalten. Versuchen Sie es später erneut.",
     "Widget.Error.ManagedFolderMoveIncomplete": "Einige Dateien konnten nicht zurück auf den Desktop verschoben werden; das Widget wurde beibehalten. Geben Sie Speicherplatz frei oder schließen Sie die Programme, die diese Dateien verwenden, und versuchen Sie es erneut.",
     "Widget.Error.ManagedFolderNameExists": "Ein verwaltetes Widget mit diesem Namen existiert bereits. Anderen Namen wählen.",

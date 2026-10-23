@@ -803,6 +803,7 @@
     "Common.Open": "開啟",
     "Widget.Compact.MoveOrCollapse": "拖動格子；按一下收起",
     "Widget.Error.ManagedFolderActionOnlyDefault": "僅有預設收納路徑下的收納格子可以同步處理資料夾。",
+    "Widget.Error.ManagedFolderUnavailable": "暫時無法存取這個收納資料夾(磁碟可能已中斷連線或沒有存取權限)，格子已保留。請接回磁碟後重試。",
     "Widget.Error.ManagedFolderDeleteFailed": "資料夾無法移到資源回收筒，格子已保留。請稍後再試一次。",
     "Widget.Error.ManagedFolderMoveIncomplete": "部分檔案無法移回桌面，格子已保留。請釋放磁碟空間或關閉佔用這些檔案的程式後再試一次。",
     "Settings.DefaultHeight.Title": "預設高度",

@@ -1,4 +1,4 @@
-﻿// Copyright (c) DeskBox. All rights reserved.
+// Copyright (c) DeskBox. All rights reserved.
 
 using DeskBox.Models;
 using DeskBox.Helpers;
@@ -554,6 +554,16 @@ public sealed partial class WidgetManager
         string folderPath = Path.GetFullPath(config.MappedFolderPath!);
         if (!Directory.Exists(folderPath))
         {
+            // Directory.Exists cannot tell "the folder is gone" from "the
+            // volume or the path is unreachable". Removing the widget on the
+            // latter strands files the user still has, so only a genuinely
+            // absent folder on a reachable volume may continue silently.
+            if (IsManagedFolderUnavailable(folderPath))
+            {
+                throw new InvalidOperationException(
+                    LocalizeOrKey("Widget.Error.ManagedFolderUnavailable"));
+            }
+
             return;
         }
 
@@ -589,6 +599,14 @@ public sealed partial class WidgetManager
     {
         if (!Directory.Exists(folderPath))
         {
+            // The folder disappearing after the caller checked it means the
+            // volume dropped mid-operation, not that everything moved.
+            if (IsManagedFolderUnavailable(folderPath))
+            {
+                throw new InvalidOperationException(
+                    LocalizeOrKey("Widget.Error.ManagedFolderUnavailable"));
+            }
+
             return;
         }
 
@@ -605,14 +623,20 @@ public sealed partial class WidgetManager
             await _fileService.ExecuteTransferPlanAsync(plans, move: true);
         }
 
-        if (!Directory.Exists(folderPath) ||
-            !Directory.EnumerateFileSystemEntries(folderPath).Any())
+        if (!Directory.Exists(folderPath))
         {
-            if (Directory.Exists(folderPath))
+            if (IsManagedFolderUnavailable(folderPath))
             {
-                Directory.Delete(folderPath, recursive: false);
+                throw new InvalidOperationException(
+                    LocalizeOrKey("Widget.Error.ManagedFolderUnavailable"));
             }
 
+            return;
+        }
+
+        if (!Directory.EnumerateFileSystemEntries(folderPath).Any())
+        {
+            Directory.Delete(folderPath, recursive: false);
             return;
         }
 
@@ -622,6 +646,48 @@ public sealed partial class WidgetManager
         // an already-removed widget.
         throw new InvalidOperationException(
             LocalizeOrKey("Widget.Error.ManagedFolderMoveIncomplete"));
+    }
+
+    /// <summary>
+    /// True when the folder cannot be looked at right now, as opposed to being
+    /// genuinely absent. <see cref="Directory.Exists"/> reports false for a
+    /// deleted folder, an offline drive and a denied path alike; treating the
+    /// last two as "nothing to clean up" removes the widget while the user's
+    /// files are still there, which is the exact outcome the removal flow is
+    /// meant to prevent.
+    /// </summary>
+    private static bool IsManagedFolderUnavailable(string folderPath)
+    {
+        // A missing volume root means the drive or the share is gone, not that
+        // the folder was deleted: the files are still there and a removal now
+        // would strand them.
+        string? root = Path.GetPathRoot(folderPath);
+        if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
+        {
+            return true;
+        }
+
+        try
+        {
+            // FileSystemInfo reports (FileAttributes)-1 instead of throwing
+            // when the path cannot be resolved, so a -1 needs a second look: a
+            // readable parent proves the folder is really gone, while a parent
+            // that cannot be read either is indistinguishable from a denied
+            // path and must be refused.
+            if ((int)new DirectoryInfo(folderPath).Attributes != -1)
+            {
+                return false;
+            }
+
+            string? parent = Path.GetDirectoryName(
+                folderPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            return parent is null || (int)new DirectoryInfo(parent).Attributes == -1;
+        }
+        catch (Exception ex) when (
+            ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return true;
+        }
     }
 
     private string ValidateOrphanManagedStorageFolderPath(string folderPath)
