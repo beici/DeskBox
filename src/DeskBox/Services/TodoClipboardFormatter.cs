@@ -106,8 +106,8 @@ public static class TodoClipboardFormatter
         DateTimeOffset localValue = value.ToLocalTime();
         var today = DateTimeOffset.Now.Date;
         string time = localValue.Second == 0
-            ? localValue.ToString("HH:mm")
-            : localValue.ToString("HH:mm:ss");
+            ? localValue.ToString("HH:mm", DisplayCulture.GregorianCurrent)
+            : localValue.ToString("HH:mm:ss", DisplayCulture.GregorianCurrent);
 
         if (localValue.Date == today)
         {

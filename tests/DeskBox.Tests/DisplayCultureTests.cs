@@ -1,6 +1,7 @@
 using System;
 using System.Globalization;
 using DeskBox.Helpers;
+using DeskBox.Models;
 using DeskBox.Services;
 using DeskBox.ViewModels;
 
@@ -90,6 +91,31 @@ public sealed class DisplayCultureTests
 
             Assert.NotNull(CloudBackupService.ParseSnapshotTimestamp(name));
             Assert.Contains($"{DateTimeOffset.UtcNow.Year}", name, StringComparison.Ordinal);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = original;
+        }
+    }
+
+    [Fact]
+    public void BackgroundDimPercent_RoundTripsAcrossCultureSwitches()
+    {
+        // The dim percent is persisted in widget metadata; it was written
+        // and read with the ambient culture, so moving between machines (or
+        // Windows format changes) silently reinterpreted "0.5" as 5 under a
+        // comma-decimal culture.
+        var config = new WidgetConfig();
+        CultureInfo original = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("en-US");
+            WidgetBackgroundCustomization.SetDimPercent(config, 0.5);
+            string stored = Assert.Single(config.Metadata).Value;
+            Assert.Equal("0.5", stored);
+
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
+            Assert.Equal(0.5, WidgetBackgroundCustomization.GetDimPercentOverride(config));
         }
         finally
         {

@@ -423,7 +423,8 @@ public sealed partial class SettingsWindow
                 string status = snapshot.IsReadable
                     ? _localizationService.T("Settings.DataBackup.Snapshots.Readable")
                     : _localizationService.T("Settings.DataBackup.Snapshots.Unreadable");
-                string title = $"{kind} · {snapshot.CreatedAtUtc.ToLocalTime():g}";
+                string createdAt = snapshot.CreatedAtUtc.ToLocalTime().ToString("g", DisplayCulture.GregorianCurrent);
+                string title = $"{kind} · {createdAt}";
                 string details = $"{ViewModel.FormatBytes(snapshot.SizeBytes)} · {status}\n{Path.GetFileName(snapshot.Path)}";
                 return new BackupSnapshotListItem(snapshot.Path, title, details, snapshot.IsReadable);
             }).ToArray();

@@ -678,8 +678,8 @@ public sealed partial class TodoItemViewModel : ObservableObject
     private static string FormatDueTime(DateTimeOffset dueDate)
     {
         return dueDate.Second == 0
-            ? dueDate.ToString("HH:mm")
-            : dueDate.ToString("HH:mm:ss");
+            ? dueDate.ToString("HH:mm", DisplayCulture.GregorianCurrent)
+            : dueDate.ToString("HH:mm:ss", DisplayCulture.GregorianCurrent);
     }
 
     private string FormatSnoozeDateTime(DateTimeOffset snoozedUntil)

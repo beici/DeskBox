@@ -2,6 +2,7 @@ using DeskBox.Contracts;
 using DeskBox.Helpers;
 using DeskBox.Models;
 using Windows.UI;
+using System.Globalization;
 
 namespace DeskBox.Services;
 
@@ -120,12 +121,20 @@ public static class WidgetBackgroundCustomization
             config.Metadata.TryGetValue(DimMetadataKey, out string? value))
         {
             string normalized = Math.Clamp(
-                double.TryParse(value, out double parsed) && double.IsFinite(parsed)
+                double.TryParse(
+                    value,
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out double parsed) && double.IsFinite(parsed)
                     ? parsed
                     : DefaultDimPercent,
                 MinDimPercent,
-                MaxDimPercent).ToString("0.#");
-            if (double.TryParse(normalized, out double result))
+                MaxDimPercent).ToString("0.#", CultureInfo.InvariantCulture);
+            if (double.TryParse(
+                    normalized,
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out double result))
             {
                 return result;
             }
@@ -252,7 +261,7 @@ public static class WidgetBackgroundCustomization
 
         double dim = Math.Clamp(dimPercent, MinDimPercent, MaxDimPercent);
         config.Metadata ??= [];
-        config.Metadata[DimMetadataKey] = dim.ToString("0.#");
+        config.Metadata[DimMetadataKey] = dim.ToString("0.#", CultureInfo.InvariantCulture);
     }
 
     public static void Clear(WidgetConfig config)
@@ -299,9 +308,10 @@ public static class WidgetBackgroundCustomization
         {
             if (TryNormalizeDim(dim, out double normalized))
             {
-                if (!string.Equals(dim, normalized.ToString("0.#"), StringComparison.Ordinal))
+                string normalizedText = normalized.ToString("0.#", CultureInfo.InvariantCulture);
+                if (!string.Equals(dim, normalizedText, StringComparison.Ordinal))
                 {
-                    config.Metadata[DimMetadataKey] = normalized.ToString("0.#");
+                    config.Metadata[DimMetadataKey] = normalizedText;
                     changed = true;
                 }
             }
@@ -357,7 +367,11 @@ public static class WidgetBackgroundCustomization
     private static bool TryNormalizeDim(string? value, out double dimPercent)
     {
         dimPercent = DefaultDimPercent;
-        if (!double.TryParse(value, out double parsed) || !double.IsFinite(parsed))
+        if (!double.TryParse(
+                value,
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out double parsed) || !double.IsFinite(parsed))
         {
             return false;
         }

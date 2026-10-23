@@ -735,8 +735,8 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
         DateTimeOffset localDueDate = dueDate.ToLocalTime();
         var today = _clock().Date;
         string time = localDueDate.Second == 0
-            ? localDueDate.ToString("HH:mm")
-            : localDueDate.ToString("HH:mm:ss");
+            ? localDueDate.ToString("HH:mm", DisplayCulture.GregorianCurrent)
+            : localDueDate.ToString("HH:mm:ss", DisplayCulture.GregorianCurrent);
 
         if (localDueDate.Date == today)
         {
