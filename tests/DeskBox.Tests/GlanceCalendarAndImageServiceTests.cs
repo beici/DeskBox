@@ -511,6 +511,44 @@ public sealed class GlanceCalendarAndImageServiceTests : IDisposable
     }
 
     [Fact]
+    public void FormatDateText_UsesGregorianCalendarForNonGregorianDefaultCulture()
+    {
+        DateTime date = new(2026, 10, 24);
+        CultureInfo arabic = CultureInfo.GetCultureInfo("ar-SA");
+        Assert.False(arabic.Calendar is GregorianCalendar, "ar-SA is expected to default to a non-Gregorian calendar");
+
+        CultureInfo gregorianArabic = (CultureInfo)arabic.Clone();
+        gregorianArabic.DateTimeFormat.Calendar =
+            arabic.OptionalCalendars.First(calendar => calendar is GregorianCalendar);
+
+        string withoutYear = GlanceWidgetViewModel.FormatDateText(date, arabic, includeYear: false);
+        string withYear = GlanceWidgetViewModel.FormatDateText(date, arabic, includeYear: true);
+
+        // The main date must match the same culture rendered with a forced
+        // Gregorian calendar (October 2026), not the default Um Al-Qura
+        // calendar (Rabi' II 1448) — the Glance grid and every other date in
+        // the app are Gregorian.
+        Assert.Equal(date.ToString("M", gregorianArabic), withoutYear);
+        Assert.NotEqual(date.ToString("M", arabic), withoutYear);
+        Assert.Equal(
+            GlanceWidgetViewModel.FormatDateText(date, gregorianArabic, includeYear: true),
+            withYear);
+    }
+
+    [Fact]
+    public void FormatDateText_KeepsGregorianCulturesUnchanged()
+    {
+        DateTime date = new(2026, 10, 24);
+
+        string chinese = GlanceWidgetViewModel.FormatDateText(date, CultureInfo.GetCultureInfo("zh-CN"), includeYear: true);
+        string english = GlanceWidgetViewModel.FormatDateText(date, CultureInfo.GetCultureInfo("en-US"), includeYear: false);
+
+        Assert.Equal("2026年10月24日", chinese);
+        Assert.Equal("October 24", english);
+    }
+
+
+    [Fact]
     public void TimeFormat_FollowSystemUsesTheSystemShortTimePattern()
     {
         DateTime date = new(2026, 8, 19, 17, 5, 0);
