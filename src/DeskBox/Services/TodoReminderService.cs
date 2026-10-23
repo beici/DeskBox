@@ -32,6 +32,13 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
     // ConfigureAwait(false)) — a plain HashSet would race.
     private readonly ConcurrentDictionary<string, byte> _sessionNotifiedKeys = new(StringComparer.Ordinal);
 
+    // Reminders whose toast WAS shown this session but whose consumption
+    // marks could not be persisted. They must never be re-shown in this
+    // session even though Start/Refresh clear _sessionNotifiedKeys when the
+    // feature is toggled — the persisted marks are the only durable gate,
+    // and they are missing for exactly these keys.
+    private readonly ConcurrentDictionary<string, byte> _shownWithoutPersistKeys = new(StringComparer.Ordinal);
+
     /// <summary>
     /// Raised on the UI thread after this service persists a change to a
     /// todo store (DEF-043). Open todo widgets listen and merge the change
@@ -98,7 +105,7 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
 
         // Clear notified keys from any previous session so that reminders
         // that were already shown before the app restarted can fire again.
-        _sessionNotifiedKeys.Clear();
+        ResetSessionClaimedKeys();
 
         _timer = _dispatcherQueue.CreateTimer();
         _timer.Interval = ScanInterval;
@@ -126,7 +133,7 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
                 // Clear notified keys when the timer is being (re)started
                 // after being stopped — old keys from a previous active
                 // period are no longer relevant.
-                _sessionNotifiedKeys.Clear();
+                ResetSessionClaimedKeys();
                 _timer = _dispatcherQueue.CreateTimer();
                 _timer.Interval = ScanInterval;
                 _timer.Tick += Timer_Tick;
@@ -140,7 +147,7 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
             _timer = null;
             // Clear notified keys when the feature is disabled so they
             // don't accumulate indefinitely while inactive.
-            _sessionNotifiedKeys.Clear();
+            ResetSessionClaimedKeys();
         }
     }
 
@@ -188,59 +195,91 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
             }
 
             List<TodoReminderCandidate> candidates = [];
-            foreach (var widget in widgets)
-            {
-                if (_disposed || !ShouldBeRunning()) return 0;
-                await CollectWidgetCandidatesAsync(widget, now, defaultOffsetMinutes, candidates);
-            }
-
-            if (candidates.Count == 0 || _disposed || !ShouldBeRunning())
-            {
-                return 0;
-            }
-
-            // A reminder is only consumed (marks persisted) after the
-            // notification surface confirmed it was actually shown. When
-            // nothing could display it, the in-memory claims are released so
-            // the next scan retries until the missed-reminder grace window
-            // closes — instead of persisting ReminderDismissedForDueDate for
-            // a toast nobody ever saw.
-            bool shown;
             try
             {
-                shown = await _notify(BuildNotification(candidates)).ConfigureAwait(false);
+                foreach (var widget in widgets)
+                {
+                    if (_disposed || !ShouldBeRunning())
+                    {
+                        // Nothing was shown for the already-claimed keys; a
+                        // scan that dies mid-flight must release them so the
+                        // next scan can pick the same items up again.
+                        ReleaseCandidateKeys(candidates);
+                        return 0;
+                    }
+
+                    await CollectWidgetCandidatesAsync(widget, now, defaultOffsetMinutes, candidates);
+                }
+
+                if (candidates.Count == 0 || _disposed || !ShouldBeRunning())
+                {
+                    ReleaseCandidateKeys(candidates);
+                    return 0;
+                }
+
+                // A reminder is only consumed (marks persisted) after the
+                // notification surface confirmed it was actually shown. When
+                // nothing could display it, the in-memory claims are released so
+                // the next scan retries until the missed-reminder grace window
+                // closes — instead of persisting ReminderDismissedForDueDate for
+                // a toast nobody ever saw.
+                bool shown;
+                try
+                {
+                    shown = await _notify(BuildNotification(candidates)).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    App.Log($"[TodoReminder] Notification dispatch failed: {ex}");
+                    shown = false;
+                }
+
+                if (!shown)
+                {
+                    ReleaseCandidateKeys(candidates);
+                    App.Log(
+                        $"[TodoReminder] Reminder for {candidates.Count} item(s) could not be shown; " +
+                        "consumption was withheld and the next scan will retry.");
+                    return candidates.Count;
+                }
+
+                await PersistDisplayedRemindersAsync(candidates, now).ConfigureAwait(false);
+                return candidates.Count;
             }
             catch (Exception ex)
             {
-                App.Log($"[TodoReminder] Notification dispatch failed: {ex}");
-                shown = false;
+                // The scan died mid-flight. Items whose marks were already
+                // persisted are protected by those persisted marks; every
+                // other claim belongs to a toast that was never shown (or a
+                // persist that never ran), so release them all for retry.
+                ReleaseCandidateKeys(candidates);
+                App.Log($"[TodoReminder] Check failed: {ex}");
+                return 0;
             }
-
-            if (!shown)
-            {
-                foreach (var candidate in candidates)
-                {
-                    _sessionNotifiedKeys.TryRemove(candidate.ReminderKey, out _);
-                }
-
-                App.Log(
-                    $"[TodoReminder] Reminder for {candidates.Count} item(s) could not be shown; " +
-                    "consumption was withheld and the next scan will retry.");
-                return candidates.Count;
-            }
-
-            await PersistDisplayedRemindersAsync(candidates, now).ConfigureAwait(false);
-            return candidates.Count;
-        }
-        catch (Exception ex)
-        {
-            App.Log($"[TodoReminder] Check failed: {ex}");
-            return 0;
         }
         finally
         {
             _isChecking = false;
         }
+    }
+
+    private void ReleaseCandidateKeys(IReadOnlyList<TodoReminderCandidate> candidates)
+    {
+        foreach (var candidate in candidates)
+        {
+            _sessionNotifiedKeys.TryRemove(candidate.ReminderKey, out _);
+        }
+    }
+
+    /// <summary>
+    /// The Start/Refresh key reset for a (re)started scan cycle. The
+    /// shown-without-persist keys deliberately survive: those toasts were
+    /// on screen while their consumption marks are not on disk, so clearing
+    /// them too would replay an already-shown notification.
+    /// </summary>
+    internal void ResetSessionClaimedKeys()
+    {
+        _sessionNotifiedKeys.Clear();
     }
 
     public void Dispose()
@@ -506,6 +545,11 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
             }
 
             string reminderKey = GetReminderKey(widget.Id, item, triggerKind, effectiveOffsetMinutes);
+            if (_shownWithoutPersistKeys.ContainsKey(reminderKey))
+            {
+                continue;
+            }
+
             if (!_sessionNotifiedKeys.TryAdd(reminderKey, 0))
             {
                 continue;
@@ -588,8 +632,16 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
             {
                 // The notification was shown but the marks could not be
                 // persisted. The session keys stay claimed so this session
-                // does not repeat the toast; a restart re-fires at most
-                // once (bounded by the missed-reminder grace window).
+                // does not repeat the toast, and the keys are also recorded
+                // as shown-without-persist so a Start/Refresh key reset
+                // (feature toggle) cannot replay a toast that was already
+                // on screen; a restart re-fires at most once (bounded by
+                // the missed-reminder grace window).
+                foreach (var candidate in group)
+                {
+                    _shownWithoutPersistKeys.TryAdd(candidate.ReminderKey, 0);
+                }
+
                 App.Log(
                     $"[TodoReminder] Persisting displayed reminder marks failed for widget {group.Key}: {ex}");
             }

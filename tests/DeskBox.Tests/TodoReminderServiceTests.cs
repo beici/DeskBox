@@ -278,6 +278,101 @@ public sealed class TodoReminderServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CheckNowAsync_ReleasesSessionKeysWhenTheScanAbortsMidway()
+    {
+        DateTimeOffset now = new(2026, 7, 7, 10, 0, 0, TimeSpan.Zero);
+        DateTimeOffset dueDate = now.AddMinutes(4);
+        var settingsService = CreateSettingsService("todo-widget-a");
+        settingsService.Settings.Widgets.Add(new WidgetConfig
+        {
+            Id = "todo-widget-b",
+            Name = "Todo 2",
+            WidgetKind = WidgetKind.Todo
+        });
+        await CreateStore("todo-widget-a").SaveAsync(new TodoWidgetData
+        {
+            Items = [new TodoItem { Id = "task-a", Text = "Send build", DueDate = dueDate }]
+        });
+
+        var notifications = new List<TodoReminderNotification>();
+        bool disabledOnce = false;
+        var service = new TodoReminderService(
+            settingsService,
+            TestServices.CreateLocalizationService(),
+            dispatcherQueue: null,
+            notification =>
+            {
+                notifications.Add(notification);
+                return Task.FromResult(true);
+            },
+            widgetId =>
+            {
+                // The feature is disabled once, while the second widget is
+                // being collected; the first widget's already-claimed keys
+                // must be released, not stranded for the rest of the
+                // session.
+                if (widgetId == "todo-widget-b" && !disabledOnce)
+                {
+                    disabledOnce = true;
+                    settingsService.Settings.TodoReminderEnabled = false;
+                }
+                return CreateStore(widgetId);
+            },
+            () => now);
+
+        Assert.Equal(0, await service.CheckNowAsync(now));
+        Assert.Empty(notifications);
+
+        settingsService.Settings.TodoReminderEnabled = true;
+        Assert.Equal(1, await service.CheckNowAsync(now));
+        Assert.Single(notifications);
+    }
+
+    [Fact]
+    public async Task CheckNowAsync_DoesNotReshownWhenPersistFailsAndTheClaimKeysReset()
+    {
+        DateTimeOffset now = new(2026, 7, 7, 10, 0, 0, TimeSpan.Zero);
+        DateTimeOffset dueDate = now.AddMinutes(4);
+        var settingsService = CreateSettingsService("todo-widget");
+        await CreateStore("todo-widget").SaveAsync(new TodoWidgetData
+        {
+            Items = [new TodoItem { Id = "task", Text = "Send build", DueDate = dueDate }]
+        });
+        string storePath = Path.Combine(_widgetsDataRoot, "todo-widget", "todo.json");
+
+        var notifications = new List<TodoReminderNotification>();
+        var service = new TodoReminderService(
+            settingsService,
+            TestServices.CreateLocalizationService(),
+            dispatcherQueue: null,
+            notification =>
+            {
+                notifications.Add(notification);
+                return Task.FromResult(true);
+            },
+            CreateStore,
+            () => now);
+
+        // Hold a reader handle on the store so the post-display persist
+        // fails (the replace cannot swap the file) while loads still work.
+        using (new FileStream(storePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            Assert.Equal(1, await service.CheckNowAsync(now));
+        }
+
+        Assert.Single(notifications);
+        var persisted = await CreateStore("todo-widget").LoadAsync();
+        Assert.Null(Assert.Single(persisted.Items).ReminderLastNotifiedAt);
+
+        // Simulate the Start/Refresh key reset that a reminder-feature
+        // toggle performs: the shown toast must not be replayed just
+        // because the in-memory claims were cleared.
+        service.ResetSessionClaimedKeys();
+        Assert.Equal(0, await service.CheckNowAsync(now));
+        Assert.Single(notifications);
+    }
+
+    [Fact]
     public async Task CheckNowAsync_DoesNotPersistMarksWhenNotificationIsNotShown()
     {
         DateTimeOffset now = new(2026, 7, 7, 10, 0, 0, TimeSpan.Zero);
