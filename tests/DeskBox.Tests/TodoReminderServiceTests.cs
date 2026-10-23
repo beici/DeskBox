@@ -452,6 +452,77 @@ public sealed class TodoReminderServiceTests : IDisposable
         Assert.Null(nextItem.SnoozedUntil);
     }
 
+    [Fact]
+    public async Task CheckNowAsync_DoesNotNotifyForDeletedItem()
+    {
+        DateTimeOffset now = new(2026, 7, 7, 10, 0, 0, TimeSpan.Zero);
+        DateTimeOffset dueDate = now.AddMinutes(4);
+        var settingsService = CreateSettingsService("todo-widget");
+        await CreateStore("todo-widget").SaveAsync(new TodoWidgetData
+        {
+            Items =
+            [
+                new TodoItem
+                {
+                    Id = "deleted-task",
+                    Text = "Deleted but still due",
+                    DueDate = dueDate,
+                    IsDeleted = true
+                }
+            ]
+        });
+        var notifications = new List<TodoReminderNotification>();
+        var service = CreateService(settingsService, now, notifications);
+
+        int notifiedCount = await service.CheckNowAsync(now);
+
+        Assert.Equal(0, notifiedCount);
+        Assert.Empty(notifications);
+        var reloaded = await CreateStore("todo-widget").LoadAsync();
+        var item = Assert.Single(reloaded.Items);
+        Assert.Null(item.ReminderLastNotifiedAt);
+        Assert.Null(item.ReminderDismissedForDueDate);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_DoesNotResurrectDeletedRecurringItem()
+    {
+        DateTimeOffset now = new(2026, 7, 7, 10, 0, 0, TimeSpan.Zero);
+        DateTimeOffset dueDate = now.AddMinutes(1);
+        var settingsService = CreateSettingsService("todo-widget");
+        await CreateStore("todo-widget").SaveAsync(new TodoWidgetData
+        {
+            Items =
+            [
+                new TodoItem
+                {
+                    Id = "deleted-recurring",
+                    Text = "Deleted recurring task",
+                    DueDate = dueDate,
+                    ReminderOffsetMinutes = 30,
+                    IsDeleted = true,
+                    Recurrence = new TodoRecurrence
+                    {
+                        Mode = TodoRecurrenceMode.Daily,
+                        AnchorDueDate = dueDate
+                    }
+                }
+            ]
+        });
+        var notifications = new List<TodoReminderNotification>();
+        var service = CreateService(settingsService, now, notifications);
+
+        bool completed = await service.CompleteAsync("todo-widget", "deleted-recurring");
+
+        Assert.False(completed);
+        var reloaded = await CreateStore("todo-widget").LoadAsync();
+        var item = Assert.Single(reloaded.Items);
+        Assert.Equal("deleted-recurring", item.Id);
+        Assert.True(item.IsDeleted);
+        Assert.False(item.IsCompleted);
+        Assert.Null(item.GeneratedNextItemId);
+    }
+
     public void Dispose()
     {
         try

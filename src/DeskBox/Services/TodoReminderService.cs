@@ -340,7 +340,7 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
                 }
 
                 var item = current.Items[itemIndex];
-                if (item.IsCompleted)
+                if (item.IsCompleted || item.IsDeleted)
                 {
                     return false;
                 }
@@ -639,7 +639,7 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
         triggerKind = ReminderTriggerKind.Due;
         effectiveOffsetMinutes = null;
 
-        if (item.IsCompleted || item.DueDate is null)
+        if (item.IsCompleted || item.IsDeleted || item.DueDate is null)
         {
             return false;
         }
@@ -671,7 +671,7 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
 
     private static bool ShouldNotifyDue(TodoItem item, DateTimeOffset now, TimeSpan reminderOffset)
     {
-        if (item.IsCompleted || item.DueDate is not { } dueDate)
+        if (item.IsCompleted || item.IsDeleted || item.DueDate is not { } dueDate)
         {
             return false;
         }
