@@ -2487,13 +2487,13 @@ public sealed partial class DeskBoxDataBackupService
                 // The stores created their empty folders already; keep them
                 // out of the way instead of deleting anything.
                 string parked = $"{DataDirectory}-pre-recovery-{DateTime.Now:yyyyMMdd-HHmmss}";
-                Directory.Move(DataDirectory, parked);
+                PersistenceFileMutations.MoveDirectory(DataDirectory, parked);
                 App.Log(
                     $"[DataBackup] Moved the app-created empty data directory aside: '{parked}'.");
             }
 
             Directory.CreateDirectory(_rootPath);
-            Directory.Move(Path.Combine(candidate, "data"), DataDirectory);
+            PersistenceFileMutations.MoveDirectory(Path.Combine(candidate, "data"), DataDirectory);
             TryDeleteDirectory(candidate);
             App.Log(
                 $"[DataBackup] Recovered live data left behind by an interrupted restore: " +

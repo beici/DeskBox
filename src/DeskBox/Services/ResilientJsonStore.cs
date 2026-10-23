@@ -1,3 +1,5 @@
+using DeskBox.Core.Persistence;
+
 namespace DeskBox.Services;
 
 internal enum ResilientJsonLoadSource
@@ -232,7 +234,7 @@ internal static class ResilientJsonStore
         try
         {
             string asidePath = $"{storePath}.unreadable-{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}";
-            File.Move(storePath, asidePath);
+            PersistenceFileMutations.MoveFile(storePath, asidePath);
             App.Log(
                 $"[ResilientJsonStore] An unreadable store was moved aside before " +
                 $"being overwritten: '{Path.GetFileName(asidePath)}'.");

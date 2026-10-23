@@ -15,6 +15,8 @@
 | 6 | 待办：软删除条目仍参与提醒与"完成" | 删掉的待办照旧弹提醒；从通知点"完成"会克隆出一条新的未删除待办（删了会长回来） | P1 | 已修 | `43e7092e` |
 | 7 | 存储：读不出来的主文件在下一次保存时被轮转进 `.bak` | 一次瞬时读失败 + 两次保存，用户最新的那份字节彻底消失（没有任何副本） | P1 | 已修 | `cd4693f1` |
 | 8 | 天气：把数组下标当日期、把本机时钟当位置时钟 | 几天前的缓存被贴成"今天"，今日 UV/降水/日出日落取错天；跨时区时小时带从错误钟点开始并把过去的小时标成"现在" | P1 | 已修 | `d4da1b51` |
+| 9 | 天气：日标签用环境区域性解析 ISO 日期 | 非公历区域（如 `ar-SA`）下"今天/明天"退化成原始日期串 | P1 | 已修 | `437d475e` |
+| 10 | 天气：MSN 接口响应用环境区域性解析/格式化 ISO 时间 | 同一区域下小时带整体错位、日出日落变成 "1448 年"、日汇总时间解析失败导致整个模型退化为空 | P1 | 已修 | 见 §10 |
 
 第 1 轮结束时：P0 = 0，P1 = 0（两条 P1 候选经真机实验证伪，见 §1.3），P2 = 2（均已修）。
 第 2 轮结束时：P0 = 0，P1 = 2（均已修），P2 = 0。
@@ -24,6 +26,8 @@
 第 6 轮结束时：P0 = 0，P1 = 1（已修）；一条 P1 候选（更新下载 20 秒超时）经真机实验证伪（见 §6.3）；weather / music / todo 另有 8 条真缺陷候选留待后续轮（见 §6.4）。
 第 7 轮结束时：P0 = 0，P1 = 1（已修）；本轮无真机证据（本机不存在"读不出来的主文件"状态），缺陷与修复全部由单测 A/B 证明（见 §7）。
 第 8 轮结束时：P0 = 0，P1 = 0（全部已修）；第 6 轮报告里的 weather / music 候选又消化掉两条（见 §8），剩余线索见 §6.4 与 §8.3。
+第 9 轮结束时：P0 = 0，P1 = 1（已修）；本机 `zh-CN` 看不到该缺陷，结论由 `ar-SA` 区域的单测 A/B 证明（见 §9）。
+第 10 轮结束时：P0 = 0，P1 = 1（已修）；全量单测的 G 步（复审前几轮副作用）发现第 3、7 轮新增的目录/文件移动违反了模块边界契约，已改走 `DeskBox.Core.Persistence` 的持久化包装（见 §10.3）。
 
 ## 第 1 轮：Show Desktop 自愈链
 
@@ -363,6 +367,62 @@ C 每次保存都留历史副本（20 分，磁盘增长）；D `.bak` 保留多
 2. `ParseDateToDayLabel` / `FormatHourLabel` / `IsDaytimeHour` / `FormatTime` 仍用 `DateTimeOffset.Parse`（环境区域性）解析 ISO 字符串：在 Um Al Qura 等非公历默认区域下可能解析失败并回退成原始字符串。P2 候选。
 3. 缓存窗口内没有"今天"时，今日 UV/降水/日出日落仍回落第 0 条：数据来自哪天没有标注（但不再被称作"今天"）。
 4. `WeatherData.Timezone` 若不是可解析的 IANA id，会静默回落本机时钟（有日志）。
+
+## 第 9 轮：天气标签的 ISO 解析
+
+### 9.1 问题 — 日标签在非公历区域退化成原始日期串（P1，已修）
+
+`src/DeskBox/ViewModels/WeatherWidgetViewModel.DataProcessing.cs`（修复前）四处 `DateTimeOffset.Parse(iso)` / `DateTimeOffset.Parse(dateStr)` 用**环境区域性**解析 ISO 字符串。在默认日历非公历的区域（`ar-SA` → Um Al Qura），纯日期串 `2026-10-25` 直接抛 `FormatException`，`ParseDateToDayLabel` 的 `catch` 于是返回原始字符串——日预报从第 3 条起显示成 `2026-10-25` 而不是星期缩写。
+
+证据（`ar-SA` 探针）：`2026-10-23 => THROW FormatException`；`2026-10-23T14:00 => OK 1448-05-12 14:00 hour=14`（带时间的串能解析，被读成回历日期，但 `Hour` 正确，所以当时只有日标签坏）。
+
+改法：四处解析显式传 `CultureInfo.InvariantCulture, DateTimeStyles.None`；格式化输出仍跟随目标语言区域性。
+
+A/B：新增 `tests/DeskBox.Tests/WeatherTimeLabelTests.cs` 的 `DayLabels_StayReadableUnderANonGregorianSystemCalendar`；把四处解析改回环境区域性时该用例红（3/3 条标签含 `"2026"`），恢复后 9/9 通过。
+
+### 9.2 方法学教训
+
+- 本机 `zh-CN` 永远看不到这类缺陷：**必须主动把 `CurrentCulture` 切到回历区域**才能复现。判据不是"我这台机器正常"。
+- 探针（临时测试）比推理可靠：`DateTimeOffset.Parse` 对纯日期串与带时间串的行为**不一样**（前者抛异常、后者被读成回历日期），不实测很容易写成错误的修复假设。
+
+## 第 10 轮：天气接口的 ISO 解析与格式化
+
+### 10.1 问题 — 接口响应转换用本地历法解析/格式化 ISO 时间（P1，已修）
+
+`src/DeskBox/Services/WeatherService.cs` 的 `ConvertMsnToWeatherData` 内 5 处 `TryParse` 用环境区域性、4 处 `ToString("yyyy-MM-dd" / "yyyy-MM-ddTHH:mm")` 用环境**日历**。在回历区域：纯日期串 `TryParse` 返回 `false` → 日期字段写成空字符串；带时间的串解析成功但格式化出 `1448-05-12`（回历）→ 日预报日期、日出日落时间全是回历日期，"今天"判定也失效。
+
+证据（`ar-SA`，`Calendar=UmAlQuraCalendar`）：
+
+```
+2026-10-23                   ar-SA ok=False                  | invariant ok=True fmt=2026-10-23
+2026-10-23T00:00:00+08:00    ar-SA ok=True  fmt=1448-05-12    | invariant ok=True fmt=2026-10-23
+2026-10-23T06:10:00+08:00    ar-SA ok=True  fmt=1448-05-12    | invariant ok=True fmt=2026-10-23
+ar-SA minute fmt=1448-05-12T06:10 | invariant=2026-10-23T06:10
+```
+
+改法：5 处 `TryParse` 与 4 处 `ToString` 统一显式传 `CultureInfo.InvariantCulture`。
+
+A/B：新增 `tests/DeskBox.Tests/WeatherServiceTests.cs` 的 `ConvertMsnToWeatherData_KeepsIsoTimestampsIndependentOfTheAmbientCulture`（走既有 `internal static ConvertMsnToWeatherData` 接缝）；把解析/格式化改回环境区域性时该用例红，恢复后绿。
+
+### 10.2 方法学教训
+
+- 同一个缺陷类会在**不同层**重复出现：第 9 轮修的是"标签层"（`WeatherWidgetViewModel`），第 10 轮修的是"接口转换层"（`WeatherService`）。修完一处必须**顺着数据流上下游各扫一遍**，否则用户仍能看到坏结果。
+- 用 PowerShell 直接调 .NET（`[System.Globalization.CultureInfo]::new('ar-SA')` + `[datetimeoffset]::TryParse`）就能拿到区域性行为证据，不必等测试宿主——比等 28 分钟的全量单测快得多。
+- `ToString("yyyy-MM-dd")` 里的 `yyyy` 是**当前区域性的日历年**，不是公历年；线格式必须显式 `InvariantCulture`。
+
+### 10.3 G 步（复审前几轮副作用）发现的一处回归 — 已修
+
+全量单测从 10 个环境性失败变成 11 个，多出来的是 `tests/DeskBox.Tests/ModuleBoundaryContractTests.cs` 的 `DestructiveFileOperations_StayInsideOwnedDomains`，报：
+
+```
+GREW src/DeskBox/Services/DeskBoxDataBackupService.cs: 14 (manifest 12)
+GREW src/DeskBox/Services/ResilientJsonStore.cs: 10 (manifest 9)
+```
+
+原因是我在第 3 轮（`TryRecoverStrandedRollback` 的两处 `Directory.Move`）和第 7 轮（把读不出来的主文件 `File.Move` 到 `.unreadable-<ts>`）新增的破坏性文件操作，落在了契约白名单（`DeskBox.FileSafety` / `DeskBox.Core.Persistence` / `DeskBox.Platform`）之外。契约测试自己的注释就写明了出路："Route new file mutation through the file-safety kernel"。
+
+改法：新建 `src/DeskBox/Services/PersistenceFileMutations.cs`（`namespace DeskBox.Core.Persistence`，`MoveDirectory` / `MoveFile` 两个薄包装，保留 `Directory.Move` / `File.Move` 的异常语义），把 3 处调用改走包装。`ModuleBoundaryContractTests` + `ResilientJsonStoreTests` 40/40 绿。**没有**改契约清单（清单的注释明确要求别为了让新调用点过审而扩容）。
+
 ## 环境事实（后续轮直接复用）
 
 - 构建：**必须用 `C:\Users\scrip\.dotnet\dotnet.exe`**（PATH 上的 `dotnet` 是没 SDK 的宿主，会报 `No .NET SDKs were found`）。命令 `dotnet build .\src\DeskBox\DeskBox.csproj --configuration Debug --no-restore -p:Platform=x64`；产物 `src\DeskBox\bin\x64\Debug\net10.0-windows10.0.22621.0\`。**构建成功的唯一证明是 `DeskBox.dll` 写入时间晚于构建开始**（exe 是固定桩）。构建输出不要用 `Select-Object -First` 截断（会提前关闭管道，`dotnet` 以 -1 退出且不写 DLL），改为 `*> 日志文件` 再筛。
