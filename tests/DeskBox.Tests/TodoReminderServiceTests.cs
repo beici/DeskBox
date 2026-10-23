@@ -237,6 +237,47 @@ public sealed class TodoReminderServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CheckNowAsync_SnoozeReminderStopsRetryingAfterTheGraceWindow()
+    {
+        DateTimeOffset now = new(2026, 7, 7, 10, 0, 0, TimeSpan.Zero);
+        DateTimeOffset dueDate = now.AddMinutes(-10);
+        var settingsService = CreateSettingsService("todo-widget");
+        await CreateStore("todo-widget").SaveAsync(new TodoWidgetData
+        {
+            Items =
+            [
+                new TodoItem
+                {
+                    Id = "task",
+                    Text = "Send build",
+                    DueDate = dueDate,
+                    ReminderDismissedForDueDate = dueDate,
+                    // Expired well past the grace window: like a due date
+                    // older than MissedReminderGrace, a snooze whose moment
+                    // is long gone must not be retried forever.
+                    SnoozedUntil = now.AddMinutes(-5)
+                }
+            ]
+        });
+
+        var notifications = new List<TodoReminderNotification>();
+        var service = new TodoReminderService(
+            settingsService,
+            TestServices.CreateLocalizationService(),
+            dispatcherQueue: null,
+            notification =>
+            {
+                notifications.Add(notification);
+                return Task.FromResult(false);
+            },
+            CreateStore,
+            () => now);
+
+        Assert.Equal(0, await service.CheckNowAsync(now));
+        Assert.Empty(notifications);
+    }
+
+    [Fact]
     public async Task CheckNowAsync_DoesNotPersistMarksWhenNotificationIsNotShown()
     {
         DateTimeOffset now = new(2026, 7, 7, 10, 0, 0, TimeSpan.Zero);
