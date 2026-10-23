@@ -30,7 +30,12 @@ public static class DisplayCulture
             return culture;
         }
 
-        return s_gregorianByCultureName.GetOrAdd(culture.Name, _ => CreateGregorianClone(culture));
+        // Same-named cultures can differ in origin: CultureInfo.CurrentCulture
+        // carries the user's Windows format overrides while GetCultureInfo(name)
+        // does not. Key the cache so the two sources never share a clone — the
+        // first arrival's overrides would otherwise silently win everywhere.
+        string cacheKey = culture.UseUserOverride ? culture.Name + "|user" : culture.Name;
+        return s_gregorianByCultureName.GetOrAdd(cacheKey, _ => CreateGregorianClone(culture));
     }
 
     private static CultureInfo CreateGregorianClone(CultureInfo culture)
