@@ -1364,6 +1364,48 @@ public sealed class DeskBoxDataBackupServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ScopedRestore_ReplaceMode_MissingStagingPayloadKeepsLiveData()
+    {
+        // A snapshot-faithful scoped replace used to delete the live domain
+        // files BEFORE it checked whether the staged payload still existed.
+        // A marker whose staging had already been cleaned up — an abandoned
+        // attempt, a wiped temp directory — therefore deleted the live store
+        // and then reported a successful restore, because the copy phase
+        // silently skipped the missing directory.
+        string dataDir = Directory.CreateDirectory(Path.Combine(_appDataRoot, "data")).FullName;
+        string todoPath = Path.Combine(dataDir, "widgets", "w1", "todo.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(todoPath)!);
+        await File.WriteAllTextAsync(todoPath, """{"items":[{"id":"live","text":"live item"}]}""");
+
+        string backupPath = await new DeskBoxDataBackupService(_appDataRoot)
+            .ExportScopedBackupAsync(
+                _exportRoot,
+                CloudBackupDomain.TodoData,
+                _ => Task.FromResult<byte[]?>(null));
+
+        var service = new DeskBoxDataBackupService(_appDataRoot);
+        await service.PrepareScopedRestoreAsync(backupPath, CloudBackupDomain.TodoData);
+        Assert.True(await service.SetPendingRestoreItemReplaceModeAsync(true));
+
+        string stagingRoot;
+        using (JsonDocument marker = JsonDocument.Parse(
+            await File.ReadAllTextAsync(service.PendingRestoreMarkerPath)))
+        {
+            stagingRoot = marker.RootElement.GetProperty("stagingRoot").GetString()!;
+        }
+
+        Directory.Delete(Path.Combine(stagingRoot, "data"), recursive: true);
+
+        DeskBoxRestoreApplyResult result = await service.ApplyPendingRestoreAsync();
+
+        Assert.False(result.Succeeded);
+        Assert.True(
+            File.Exists(todoPath),
+            "the live todo store must survive a restore whose staged payload is gone");
+        Assert.Contains("live item", await File.ReadAllTextAsync(todoPath));
+    }
+
+    [Fact]
     public async Task PendingRestore_RecoversDataLeftBehindByAnInterruptedFullRestore()
     {
         // A full restore moves the live data directory into

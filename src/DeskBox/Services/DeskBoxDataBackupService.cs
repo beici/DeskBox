@@ -1398,6 +1398,41 @@ public sealed partial class DeskBoxDataBackupService
                 // Snapshot-faithful domain replace: live domain files absent
                 // from the staged snapshot are deleted, then staged files
                 // are copied in. Non-domain paths are never enumerated.
+                //
+                // Nothing may be deleted until the staged payload for THIS
+                // domain is proven to exist. A wiped or half-extracted
+                // staging directory — or a marker whose staging was cleaned
+                // up after an abandoned attempt while the marker survived —
+                // used to take the live store with it and then report
+                // success, because the copy phase silently skipped the
+                // missing directory.
+                string[] stagedFiles = Directory.Exists(stagedDataDirectory)
+                    ? Directory
+                        .EnumerateFiles(stagedDataDirectory, "*", SearchOption.AllDirectories)
+                        .Where(stagedFile => CloudBackupDomains.IsInDomain(
+                            domain,
+                            Path.GetRelativePath(stagedDataDirectory, stagedFile)
+                                .Replace(Path.DirectorySeparatorChar, '/')))
+                        .ToArray()
+                    : [];
+                if (!Directory.Exists(stagedDataDirectory))
+                {
+                    // The marker outlived its staging payload: nothing can be
+                    // restored, so fail loudly (the retry/abandon budget
+                    // handles the marker) instead of reporting a restore that
+                    // silently removed the live domain files.
+                    throw new InvalidDataException(
+                        "The staged restore payload is missing; the live data was left untouched.");
+                }
+
+                if (stagedFiles.Length == 0)
+                {
+                    App.Log(
+                        $"[DataBackup] Scoped restore skipped domain {domain}: the staged " +
+                        "snapshot carries no files for it, so the live data is left untouched.");
+                    continue;
+                }
+
                 foreach (string liveFile in Directory
                              .EnumerateFiles(DataDirectory, "*", SearchOption.AllDirectories)
                              .ToArray())
@@ -1411,23 +1446,12 @@ public sealed partial class DeskBoxDataBackupService
                     }
                 }
 
-                if (!Directory.Exists(stagedDataDirectory))
-                {
-                    continue;
-                }
-
-                foreach (string stagedFile in Directory.EnumerateFiles(
-                             stagedDataDirectory, "*", SearchOption.AllDirectories))
+                foreach (string stagedFile in stagedFiles)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     string stagedRelative = Path
                         .GetRelativePath(stagedDataDirectory, stagedFile)
                         .Replace(Path.DirectorySeparatorChar, '/');
-                    if (!CloudBackupDomains.IsInDomain(domain, stagedRelative))
-                    {
-                        continue;
-                    }
-
                     string destinationPath = Path.Combine(
                         DataDirectory,
                         stagedRelative.Replace('/', Path.DirectorySeparatorChar));
