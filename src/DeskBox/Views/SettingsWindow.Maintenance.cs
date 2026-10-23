@@ -248,7 +248,7 @@ public sealed partial class SettingsWindow
                 {
                     Text = _localizationService.Format(
                         "Settings.DataBackup.RestoreConfirmBody",
-                        preparation.BackupCreatedAtUtc.ToLocalTime().ToString("g"),
+                        preparation.BackupCreatedAtUtc.ToLocalTime().ToString("g", DisplayCulture.GregorianCurrent),
                         preparation.AppVersion,
                         preparation.FileCount,
                         ViewModel.FormatBytes(preparation.TotalUncompressedBytes),
@@ -435,7 +435,7 @@ public sealed partial class SettingsWindow
                     "Settings.DataBackup.Snapshots.Summary",
                     rows.Length,
                     ViewModel.FormatBytes(snapshots.Sum(snapshot => snapshot.SizeBytes)),
-                    snapshots[0].CreatedAtUtc.ToLocalTime().ToString("g"));
+                    snapshots[0].CreatedAtUtc.ToLocalTime().ToString("g", DisplayCulture.GregorianCurrent));
         }
         catch (Exception ex)
         {

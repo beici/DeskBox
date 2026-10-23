@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using DeskBox.Contracts;
 using DeskBox.Models;
+using DeskBox.Helpers;
 
 namespace DeskBox.Features.Backup;
 
@@ -531,20 +532,20 @@ public sealed partial class BackupSettingsViewModel
             long failureTicks = state.CloudLastFailureUtcTicks;
             string status = successTicks > 0
                 ? Format("Settings.CloudBackup.LastSuccess",
-                    new DateTimeOffset(successTicks, TimeSpan.Zero).ToLocalTime().ToString("g"))
+                    new DateTimeOffset(successTicks, TimeSpan.Zero).ToLocalTime().ToString("g", DisplayCulture.GregorianCurrent))
                 : Localize("Settings.CloudBackup.LastSuccess.Never");
 
             if (failureTicks > successTicks)
             {
                 status += " · " + Format("Settings.CloudBackup.LastFailure",
-                    new DateTimeOffset(failureTicks, TimeSpan.Zero).ToLocalTime().ToString("g"));
+                    new DateTimeOffset(failureTicks, TimeSpan.Zero).ToLocalTime().ToString("g", DisplayCulture.GregorianCurrent));
             }
 
             long unverifiedTicks = state.CloudLastUnverifiedUtcTicks;
             if (unverifiedTicks > 0)
             {
                 status += " · " + Format("Settings.CloudBackup.LastUnverified",
-                    new DateTimeOffset(unverifiedTicks, TimeSpan.Zero).ToLocalTime().ToString("g"));
+                    new DateTimeOffset(unverifiedTicks, TimeSpan.Zero).ToLocalTime().ToString("g", DisplayCulture.GregorianCurrent));
             }
 
             return status;
@@ -587,7 +588,7 @@ public sealed partial class BackupSettingsViewModel
             string details = item.Name;
             if (item.CreatedAtUtc is { } createdUtc)
             {
-                title = createdUtc.ToLocalTime().ToString("g", CultureInfo.CurrentCulture);
+                title = createdUtc.ToLocalTime().ToString("g", DisplayCulture.GregorianCurrent);
                 string stem = item.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)
                     ? item.Name[..^4] : item.Name;
                 string tail = stem.Split('-').Last();

@@ -6,6 +6,7 @@ using DeskBox.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using System.Collections.Specialized;
+using DeskBox.Helpers;
 
 namespace DeskBox.Views;
 
@@ -394,7 +395,7 @@ public sealed partial class SettingsWindow
                 : _localizationService.T("Settings.CloudBackup.RestoreDomains.None");
             var bodyText = new System.Text.StringBuilder(_localizationService.Format(
                 "Settings.CloudBackup.RestoreConfirm.Body",
-                preparation.BackupCreatedAtUtc.ToLocalTime().ToString("g"),
+                preparation.BackupCreatedAtUtc.ToLocalTime().ToString("g", DisplayCulture.GregorianCurrent),
                 preparation.AppVersion,
                 preparation.FileCount,
                 ViewModel.FormatBytes(preparation.TotalUncompressedBytes),

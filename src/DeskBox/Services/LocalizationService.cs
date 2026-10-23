@@ -201,7 +201,7 @@ public sealed class LocalizationService
 
     public static string DefaultFormat(string key, params object[] args)
     {
-        return string.Format(CultureInfo.CurrentCulture, DefaultText(key), args);
+        return string.Format(DisplayCulture.GregorianCurrent, DefaultText(key), args);
     }
 
     public static string NormalizeLanguageSetting(string? language)

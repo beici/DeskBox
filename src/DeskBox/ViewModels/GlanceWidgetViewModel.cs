@@ -768,7 +768,7 @@ public sealed partial class GlanceWidgetViewModel : ObservableObject, IDisposabl
         TimeText = FormatTimeText(now, _settings.TimeFormat, culture);
         DateText = FormatDateText(now, culture, _settings.ShowYear);
         CompactCalendarDateText = FormatCompactCalendarDateText(now, culture);
-        WeekdayText = now.ToString("dddd", culture);
+        WeekdayText = now.ToString("dddd", DisplayCulture.EnsureGregorian(culture));
     }
 
     internal static string FormatTimeText(

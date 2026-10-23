@@ -1,5 +1,6 @@
 using DeskBox.Models;
 using DeskBox.Services;
+using DeskBox.Helpers;
 
 namespace DeskBox.ViewModels;
 
@@ -43,7 +44,7 @@ public partial class SettingsViewModel
                 : _localizationService.T("Settings.RuntimeHealth.Summary.Healthy");
 
         string lastLifecycle = snapshot.LastLifecycleEventAt is { } lifecycleAt
-            ? lifecycleAt.ToLocalTime().ToString("g")
+            ? lifecycleAt.ToLocalTime().ToString("g", DisplayCulture.GregorianCurrent)
             : _localizationService.T("Settings.RuntimeHealth.Never");
         string everythingStatus = !everythingEnabled
             ? _localizationService.T("Settings.Search.Everything.Status.NotConfirmed")
