@@ -1229,6 +1229,15 @@ public sealed partial class DeskBoxDataBackupService
         string? rollbackRoot = null;
         try
         {
+            // A full restore moves the live data aside before it swaps the
+            // staged copy in. When the swap and its move-back both fail — or
+            // the process dies between them — the live directory is left
+            // missing while the only copy sits in restore-rollback/<id>/data.
+            // Nothing else in the app reads that directory, so the user's
+            // data used to be unreachable: the app just started empty. Put it
+            // back before anything else looks at the data.
+            TryRecoverStrandedRollback();
+
             if (!File.Exists(PendingRestoreMarkerPath))
             {
                 return DeskBoxRestoreApplyResult.NoPendingRestore;
@@ -2406,6 +2415,102 @@ public sealed partial class DeskBoxDataBackupService
         {
             throw new InvalidDataException("The pending restore marker is invalid.", ex);
         }
+    }
+
+    /// <summary>
+    /// Restores a live data directory that a failed or interrupted full
+    /// restore moved into <c>restore-rollback</c> and never moved back. The
+    /// rollback copy is the user's only remaining data at that point and
+    /// nothing else in the app reads it, so without this the next launch
+    /// simply starts with an empty data directory.
+    ///
+    /// Acts only while the live directory holds no user documents (the
+    /// stores create their own empty subdirectories long before this runs),
+    /// and parks such a directory instead of deleting it, so it can never
+    /// destroy data the app is actually using.
+    /// </summary>
+    private void TryRecoverStrandedRollback()
+    {
+        string rollbackRoot = Path.Combine(_rootPath, "restore-rollback");
+        if (!Directory.Exists(rollbackRoot))
+        {
+            return;
+        }
+
+        if (HasUserDocuments(DataDirectory))
+        {
+            return;
+        }
+
+        try
+        {
+            string? candidate = Directory
+                .EnumerateDirectories(rollbackRoot)
+                .Where(root => Directory.Exists(Path.Combine(root, "data")))
+                .OrderByDescending(Directory.GetLastWriteTimeUtc)
+                .FirstOrDefault();
+            if (candidate is null)
+            {
+                return;
+            }
+
+            App.LogVerbose(
+                $"[DataBackup] Interrupted-restore rollback found at '{candidate}'; " +
+                $"live data has no user documents, recovering.");
+
+            if (Directory.Exists(DataDirectory))
+            {
+                // The stores created their empty folders already; keep them
+                // out of the way instead of deleting anything.
+                string parked = $"{DataDirectory}-pre-recovery-{DateTime.Now:yyyyMMdd-HHmmss}";
+                Directory.Move(DataDirectory, parked);
+                App.Log(
+                    $"[DataBackup] Moved the app-created empty data directory aside: '{parked}'.");
+            }
+
+            Directory.CreateDirectory(_rootPath);
+            Directory.Move(Path.Combine(candidate, "data"), DataDirectory);
+            TryDeleteDirectory(candidate);
+            App.Log(
+                $"[DataBackup] Recovered live data left behind by an interrupted restore: " +
+                $"'{candidate}' → '{DataDirectory}'.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            App.Log(
+                $"[DataBackup] Could not recover data left behind by an interrupted restore: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// True when the data directory holds something a restore could destroy:
+    /// a settings document, the widget layout, or any file belonging to a
+    /// user-owned store. Empty store folders do not count.
+    /// </summary>
+    private static bool HasUserDocuments(string dataDirectory)
+    {
+        if (!Directory.Exists(dataDirectory))
+        {
+            return false;
+        }
+
+        if (File.Exists(Path.Combine(dataDirectory, "settings.json")) ||
+            File.Exists(Path.Combine(dataDirectory, "widget-layout.json")))
+        {
+            return true;
+        }
+
+        foreach (string relative in new[] { "widgets", Path.Combine("quick-capture", "attachments") })
+        {
+            string directory = Path.Combine(dataDirectory, relative);
+            if (Directory.Exists(directory) &&
+                Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).Any())
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void DeletePendingRestoreCore()

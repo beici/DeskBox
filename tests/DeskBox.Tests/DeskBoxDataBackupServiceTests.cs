@@ -1363,6 +1363,58 @@ public sealed class DeskBoxDataBackupServiceTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task PendingRestore_RecoversDataLeftBehindByAnInterruptedFullRestore()
+    {
+        // A full restore moves the live data directory into
+        // restore-rollback/<id>/data before it swaps the staged copy in. When
+        // the swap and its move-back both fail (or the process dies between
+        // them) the live directory stays missing while the only copy sits in
+        // restore-rollback — a directory nothing else in the app reads. The
+        // app then started with an empty data directory and there was no way
+        // back to the user's data.
+        string rollbackRoot = Path.Combine(_appDataRoot, "restore-rollback");
+        string rollbackData = Path.Combine(rollbackRoot, "0123456789abcdef", "data");
+        Directory.CreateDirectory(rollbackData);
+        await File.WriteAllTextAsync(
+            Path.Combine(rollbackData, "settings.json"),
+            """{"language":"xx-STRANDED"}""");
+
+        var service = new DeskBoxDataBackupService(_appDataRoot);
+        DeskBoxRestoreApplyResult result = await service.ApplyPendingRestoreAsync();
+
+        Assert.True(result.Succeeded);
+        string recoveredSettings = Path.Combine(_appDataRoot, "data", "settings.json");
+        Assert.True(File.Exists(recoveredSettings));
+        Assert.Contains("xx-STRANDED", await File.ReadAllTextAsync(recoveredSettings));
+        Assert.False(Directory.Exists(Path.Combine(rollbackRoot, "0123456789abcdef")));
+    }
+
+    [Fact]
+    public async Task PendingRestore_LeavesLiveDataAloneWhenRollbackCopyExists()
+    {
+        // The recovery sweep may only fill a missing/empty data directory —
+        // it must never replace data the app is actually using.
+        string dataDir = Directory.CreateDirectory(Path.Combine(_appDataRoot, "data")).FullName;
+        await File.WriteAllTextAsync(
+            Path.Combine(dataDir, "settings.json"),
+            """{"language":"xx-LIVE"}""");
+        string rollbackData = Path.Combine(
+            _appDataRoot, "restore-rollback", "aaaaaaaaaaaaaaaa", "data");
+        Directory.CreateDirectory(rollbackData);
+        await File.WriteAllTextAsync(
+            Path.Combine(rollbackData, "settings.json"),
+            """{"language":"xx-STALE"}""");
+
+        var service = new DeskBoxDataBackupService(_appDataRoot);
+        await service.ApplyPendingRestoreAsync();
+
+        Assert.Contains(
+            "xx-LIVE",
+            await File.ReadAllTextAsync(Path.Combine(dataDir, "settings.json")));
+        Assert.True(File.Exists(Path.Combine(rollbackData, "settings.json")));
+    }
+
     public void Dispose()
     {
         try
