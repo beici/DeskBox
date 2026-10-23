@@ -92,6 +92,42 @@ public sealed class CloudBackupTransportTests : IDisposable
     }
 
     [Fact]
+    public async Task List_DecodesHrefsOnce_AndSkipsEscapedCollectionSelf()
+    {
+        // The remote folder contains a space (escaped as %20 in hrefs and in
+        // the request path) and a file whose name contains a literal "%2D".
+        const string multistatus =
+            """
+            <?xml version="1.0"?>
+            <D:multistatus xmlns:D="DAV:">
+              <D:response>
+                <D:href>/dav/My%20Folder/</D:href>
+                <D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop>
+                <D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+              </D:response>
+              <D:response>
+                <D:href>/dav/My%20Folder/DeskBox-CloudBackup-2026%252D10-aaaaaaaa.zip</D:href>
+                <D:propstat><D:prop>
+                  <D:getcontentlength>42</D:getcontentlength>
+                  <D:resourcetype/>
+                </D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat>
+              </D:response>
+            </D:multistatus>
+            """;
+        var handler = new RecordingHandler(_ => XmlResponse(HttpStatusCode.MultiStatus, multistatus));
+        var transport = new WebDavBackupTransport(Options(), handler);
+
+        IReadOnlyList<CloudBackupRemoteEntry> entries = await transport.ListAsync("My Folder");
+
+        CloudBackupRemoteEntry file = Assert.Single(entries);
+        // Exactly one unescape: the literal "%2D" survives as text (a second
+        // pass would turn it into "-"), and the escaped collection self
+        // entry is skipped by comparing decoded against decoded.
+        Assert.Equal("DeskBox-CloudBackup-2026%2D10-aaaaaaaa.zip", file.Name);
+        Assert.Equal(42, file.Length);
+    }
+
+    [Fact]
     public async Task List_ParsesJianguoyunShapedMultistatus()
     {
         // Captured from dav.jianguoyun.com: lowercase prefix, vendor namespace,

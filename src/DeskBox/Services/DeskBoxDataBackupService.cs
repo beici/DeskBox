@@ -1238,6 +1238,7 @@ public sealed partial class DeskBoxDataBackupService
             // data used to be unreachable: the app just started empty. Put it
             // back before anything else looks at the data.
             TryRecoverStrandedRollback();
+            PruneStalePreRecoveryParkedDirectories();
 
             if (!File.Exists(PendingRestoreMarkerPath))
             {
@@ -2504,6 +2505,50 @@ public sealed partial class DeskBoxDataBackupService
         {
             App.Log(
                 $"[DataBackup] Could not recover data left behind by an interrupted restore: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Interrupted-revert parking directories (`&lt;data&gt;-pre-recovery-*`) are
+    /// only ever created for a data directory that held no user documents
+    /// (the app-created scaffolding moved aside before a rollback recovery),
+    /// and nothing ever reads them again. Prune stale ones so they cannot
+    /// accumulate forever; anything that has somehow gained user documents
+    /// is kept — deletion requires that the payload is provably worthless.
+    /// </summary>
+    private void PruneStalePreRecoveryParkedDirectories()
+    {
+        try
+        {
+            string? parent = Path.GetDirectoryName(DataDirectory);
+            if (parent is null || !Directory.Exists(parent))
+            {
+                return;
+            }
+
+            foreach (string parked in Directory.EnumerateDirectories(
+                         parent,
+                         Path.GetFileName(DataDirectory) + "-pre-recovery-*"))
+            {
+                if ((DateTimeOffset.UtcNow - Directory.GetLastWriteTimeUtc(parked)).TotalDays < 7)
+                {
+                    continue;
+                }
+
+                if (HasUserDocuments(parked))
+                {
+                    App.LogVerbose(
+                        $"[DataBackup] Keeping a pre-recovery parked directory that now holds user documents: '{parked}'.");
+                    continue;
+                }
+
+                TryDeleteDirectory(parked);
+                App.Log($"[DataBackup] Pruned a stale empty pre-recovery parked directory: '{parked}'.");
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            App.Log($"[DataBackup] Pre-recovery parked directory pruning failed: {ex.Message}");
         }
     }
 

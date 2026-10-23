@@ -210,7 +210,7 @@ internal sealed class WebDavBackupTransport : ICloudBackupTransport
     /// describes the collection itself and is skipped by comparing the
     /// decoded href path with the requested directory path.
     /// </summary>
-    private static List<CloudBackupRemoteEntry> ParseMultistatus(string body, Uri requestedUri)
+    internal static List<CloudBackupRemoteEntry> ParseMultistatus(string body, Uri requestedUri)
     {
         var entries = new List<CloudBackupRemoteEntry>();
         XDocument document;
@@ -230,7 +230,10 @@ internal sealed class WebDavBackupTransport : ICloudBackupTransport
             throw new CloudBackupTransportException("The server returned an invalid PROPFIND response.", inner: ex);
         }
 
-        string requestedPath = requestedUri.AbsolutePath.TrimEnd('/');
+        // Compare decoded against decoded: the request path is escaped
+        // (e.g. "My%20Folder") exactly like the hrefs are before their single
+        // decode below.
+        string requestedPath = Uri.UnescapeDataString(requestedUri.AbsolutePath).TrimEnd('/');
 
         foreach (XElement response in document.Descendants(Dav + "response"))
         {
@@ -282,8 +285,9 @@ internal sealed class WebDavBackupTransport : ICloudBackupTransport
             // server-controlled decoration and is never used for addressing
             // (a forged name could otherwise smuggle path traversal into
             // retention deletes).
-            string name = Uri.UnescapeDataString(
-                decodedPath.TrimEnd('/').Split('/').Last());
+            // decodedPath is already unescaped once; a second pass would
+            // corrupt names that legitimately contain "%XX" sequences.
+            string name = decodedPath.TrimEnd('/').Split('/').Last();
             long? length = long.TryParse(
                 prop.Element(Dav + "getcontentlength")?.Value,
                 NumberStyles.Integer,

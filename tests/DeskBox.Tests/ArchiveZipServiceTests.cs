@@ -130,6 +130,36 @@ public sealed class ArchiveZipServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Extract_AcceptsRootDotDirectoryEntries()
+    {
+        // `zip -r out.zip .` on Unix writes a "./" root directory entry;
+        // normalized it IS the destination root, which must not be rejected
+        // as an escaping entry.
+        string zipPath = Path.Combine(_root, "unix.zip");
+        using (var stream = new FileStream(
+            zipPath,
+            FileMode.CreateNew,
+            FileAccess.Write))
+        using (var archive = new System.IO.Compression.ZipArchive(
+            stream,
+            System.IO.Compression.ZipArchiveMode.Create))
+        {
+            System.IO.Compression.ZipArchiveEntry root =
+                archive.CreateEntry("./");
+            System.IO.Compression.ZipArchiveEntry file =
+                archive.CreateEntry("./a.txt");
+            using var writer = new StreamWriter(file.Open());
+            await writer.WriteAsync("alpha");
+        }
+
+        string destination = await ArchiveZipService.ExtractAllAsync(zipPath);
+
+        Assert.Equal(
+            "alpha",
+            await File.ReadAllTextAsync(Path.Combine(destination, "a.txt")));
+    }
+
+    [Fact]
     public async Task Extract_GbkEncodedNames_FallBackToAnsiCodePage()
     {
         // Build an archive whose entry name is raw GBK bytes without the
