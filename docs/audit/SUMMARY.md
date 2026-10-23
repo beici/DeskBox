@@ -9,6 +9,7 @@
 | --- | --- | --- | --- | --- | --- |
 | 1 | `WidgetManager.ShowDesktop` 自愈 + `WidgetLayerService` 桌面层 attach 日志 | 稳态日志风暴；attach 失败行错误码恒为 0 | P2 / P2 | 已修 | `9dda3be4` `f789df27` |
 | 2 | 数据面：`ResilientJsonStore` 读失败处理 + `QuickCaptureService` 附件清理 | 读不到被当成"内容坏了"（隔离健康文件并用旧备份覆盖）；加载失败后把附件当孤儿递归删除 | P1 / P1 | 已修 | `ecd3e8d6` `4dab3ef8` |
+| 3 | 恢复路径：全量恢复的 `restore-rollback` 弃留 + 域级覆盖式恢复的"先删后验" | 恢复失败后用户数据只留在没人读的目录（等于数据全丢）；暂存缺失时先删光本地域再报成功 | P1 / P1 | 已修 | `ae3c90df` `238da40f` |
 
 第 1 轮结束时：P0 = 0，P1 = 0（两条 P1 候选经真机实验证伪，见 §1.3），P2 = 2（均已修）。
 第 2 轮结束时：P0 = 0，P1 = 2（均已修），P2 = 0。
@@ -90,11 +91,46 @@
 
 ### 2.4 留给后续轮的线索（本轮不主张、不定级）
 
-1. **全量恢复失败会把用户数据弃留在 `restore-rollback/<guid>/data`**：两次 `Directory.Move` 都失败时（`DeskBoxDataBackupService.cs:1285` 与 `:1290`），外层 catch 会 `DeletePendingRestoreCore()` 删掉 marker 与 staging，启动流程见不到 marker 就直接走默认数据，全仓库对 `restore-rollback` 只有创建处一处引用 —— 没有任何入口能把数据找回来，用户看到的是"数据全没了"。本机从未做过恢复（无 `restore-rollback` 目录），属潜在缺陷，需先造可复现条件再定级。
-2. **scoped 云恢复"先删后拷"**：`DeskBoxDataBackupService.cs:1392-1403` 先删目标域、`:1410-1427` 再拷；暂存域目录缺失时 `:1405-1408` 直接 `continue`，删完不回填。
+1. **全量恢复失败会把用户数据弃留在 `restore-rollback/<guid>/data`**：第 3 轮已修（`ae3c90df`），见 §3.1。
+2. **scoped 云恢复"先删后拷"**：第 3 轮已修（`238da40f`），见 §3.2。
 3. **自动快照按 mtime 裁剪且不校验新包可打开**：`DeskBoxDataBackupService.cs:2943-2957`，时钟回拨/同步盘 mtime 异常时可能删掉唯一可读快照而仍报成功。
 4. **用户数据文件不 fsync、无跨进程锁**：`ResilientJsonStore.SaveCoreAsync` 只做 temp + `File.Replace`，不 `Flush(flushToDisk: true)`；首次保存走 `File.Move` 无 `.bak`；跨进程互斥完全不存在（只有进程内 `SemaphoreSlim`）。
 5. **自愈看门狗会整段静默**（第 1 轮遗留）：`DESKBOX_VERBOSE_LOG=1` 下实测出现 95 s、44 s 两段完全静默，同期 UI 线程未挂。怀疑 WinUI `DispatcherQueueTimer` 在非前台被节流，需独立探针隔离。
+
+## 第 3 轮：恢复路径的数据安全
+
+### 3.1 问题一 — 全量恢复失败后，用户数据被弃留在没人读的目录（P1，已修）
+
+**人话摘要**：点"恢复备份"时，应用会先把当前数据整体挪到一边（`restore-rollback/<id>/data`），再把备份内容放回原位。如果"放回原位"这一步失败，而且"把刚才挪走的数据挪回来"也失败，当前数据就只剩在那个人人都不读的目录里；下一次启动看到一个空数据目录，就当成新用户开始用了。用户看到的是"我的桌面格子、待办、快速记录全没了"，而唯一的副本还在硬盘上，没有任何入口能找回来。
+
+**根因**：`restore-rollback` 只被一个代码路径写，没有任何代码读它——这个失败模式在设计上就是不可恢复的。
+
+**改法**：应用待恢复标记前先扫一遍 `restore-rollback`，若某个 payload 从未被拷回、且当前数据目录里**没有任何用户文档**（`settings.json` / `widget-layout.json`），就把它当作当前数据恢复回来并写日志；当前数据目录已带真实文档时绝不覆盖（只写跳过日志）。
+
+**验证**：`PendingRestore_RecoversDataLeftBehindByAnInterruptedFullRestore` 修复前红、修复后绿；`PendingRestore_LeavesLiveDataAloneWhenRollbackCopyExists` 两种状态都绿（守卫）。真机：删掉数据目录、把全部真实数据留在 `restore-rollback/smoketest/data`，启动后日志出现 `Recovered live data left behind by an interrupted restore`，17 个数据项全部回来（`settings.json` 9522 B、`widget-layout.json` 118274 B）。
+
+### 3.2 问题二 — 域级覆盖式恢复"先删后验"：暂存没了也照删不误（P1，已修）
+
+**人话摘要**：按域恢复（比如只恢复待办）且选了"用备份覆盖"时，应用先把本地该域的文件全删掉，然后才去拷贝备份内容。如果暂存目录已经不在了（上一次尝试失败后清理过、临时目录被清空），删除照做、拷贝静默跳过，最后还报"恢复成功"。用户看到的是待办/快速记录被清空，且界面说恢复成功。
+
+**根因**：删除阶段默认"备份内容一定在"，把"暂存缺失"当成"没有东西要拷"而不是"没法恢复"。
+
+**改法**：先解析该域的暂存文件清单，暂存目录不存在就抛 `InvalidDataException`（交给既有的重试/放弃预算处理 marker），清单为空则跳过该域且不删本地数据。**只有确实有东西可以放回去时才删。**
+
+**验证**：`ScopedRestore_ReplaceMode_MissingStagingPayloadKeepsLiveData` 修复前红（本地待办被删）、修复后绿；`DeskBoxDataBackupServiceTests` 37/37 全绿（修复前 2 红 / 35 绿）。
+
+### 3.3 方法学教训
+
+1. **"先破坏后校验"的顺序问题，单测很难自然覆盖**：既有测试只覆盖了两次 `Move` 之前的失败，没有一条注入 `Move` 之后的失败。这一轮的三个新测试全部靠"人为制造缺失条件"（删暂存目录、删数据目录、留一个 rollback payload）才复现。
+2. **修复要连"守卫"一起写**：3.1 的恢复逻辑如果只写"找到就恢复"，很容易变成"每次启动都拿旧数据覆盖新数据"。配一条"当前已有用户文档时不得覆盖"的测试，才敢让它上线。
+3. **真机 smoke 的价值**：单测里"数据目录不存在"是构造出来的；真机上数据目录是被应用自己在启动早期创建的（`data/quick-capture`、`data/music` 先出现），所以判据不能是"目录不存在"，必须是"没有用户文档"。这个差异只有真机跑才会暴露。
+
+### 3.4 留给后续轮的线索（本轮不主张、不定级）
+
+1. **自动快照按 mtime 裁剪且不校验新包可打开**：`DeskBoxDataBackupService.cs:2943-2957`，时钟回拨/同步盘 mtime 异常时可能删掉唯一可读快照而仍报成功。
+2. **用户数据文件不 fsync、无跨进程锁**：`ResilientJsonStore.SaveCoreAsync` 只做 temp + `File.Replace`，不 `Flush(flushToDisk: true)`；首次保存走 `File.Move` 无 `.bak`；跨进程互斥完全不存在（只有进程内 `SemaphoreSlim`）。
+3. **自愈看门狗会整段静默**（第 1 轮遗留）：`DESKBOX_VERBOSE_LOG=1` 下实测出现 95 s、44 s 两段完全静默，同期 UI 线程未挂。怀疑 WinUI `DispatcherQueueTimer` 在非前台被节流，需独立探针隔离。
+4. **恢复失败后的用户提示**：失败通知只出现在启动后的托盘通知里（`ShowDataRestoreResultNotification`），若用户在别处，可能完全看不到；且提示文案不含"数据现在在哪"。本轮修复保证数据不丢，但"怎么找回来"的指引仍缺。
 
 ## 环境事实（后续轮直接复用）
 
