@@ -82,8 +82,11 @@ public sealed class MusicSessionService : IDisposable
         }
 
         var manager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
-        if (_isDisposed)
+        if (_isDisposed || _isInitialized)
         {
+            // A concurrent first caller finished initializing while this
+            // call was awaiting; subscribing again would double every SMTC
+            // event and leak the first manager's subscriptions.
             return;
         }
 
