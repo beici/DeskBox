@@ -25,6 +25,15 @@ internal static class ResilientJsonStore
         TimeSpan.FromMilliseconds(150)
     ];
 
+    // Loading retries a failed read before deciding the store is unusable: a
+    // momentary sharing violation from a scanner or the indexer is common and
+    // must not fall through to the corrupt-store path.
+    private static readonly TimeSpan[] s_readRetryDelays =
+    [
+        TimeSpan.FromMilliseconds(40),
+        TimeSpan.FromMilliseconds(80)
+    ];
+
     internal static string GetBackupPath(string storePath) => $"{storePath}.bak";
 
     public static async Task<T> LoadAsync<T>(
@@ -52,19 +61,45 @@ internal static class ResilientJsonStore
         ArgumentNullException.ThrowIfNull(createDefault);
 
         bool primaryFailed = false;
+        bool primaryUnreadable = false;
         if (File.Exists(storePath))
         {
+            string? primaryJson = null;
             try
             {
-                return new ResilientJsonLoadResult<T>(
-                    deserialize(await File.ReadAllTextAsync(storePath)),
-                    ResilientJsonLoadSource.Primary);
+                primaryJson = await ReadAllTextRetryingAsync(storePath);
+            }
+            catch (Exception ex) when (IsTransientReadFailure(ex))
+            {
+                // Nothing was read, so nothing here says the content is bad.
+                // Quarantining would rename a healthy store, and the backup
+                // restore below would then replace the user's newer data with an
+                // older copy: a momentary lock would cost the last change.
+                primaryFailed = true;
+                primaryUnreadable = true;
+                App.Log($"[{logName}] Primary store could not be read (left in place): {ex.Message}");
             }
             catch (Exception ex)
             {
                 primaryFailed = true;
                 App.Log($"[{logName}] Primary store is invalid: {ex}");
                 QuarantineCorruptFile(storePath, logName);
+            }
+
+            if (primaryJson is not null)
+            {
+                try
+                {
+                    return new ResilientJsonLoadResult<T>(
+                        deserialize(primaryJson),
+                        ResilientJsonLoadSource.Primary);
+                }
+                catch (Exception ex)
+                {
+                    primaryFailed = true;
+                    App.Log($"[{logName}] Primary store is invalid: {ex}");
+                    QuarantineCorruptFile(storePath, logName);
+                }
             }
         }
 
@@ -78,25 +113,17 @@ internal static class ResilientJsonStore
                     : ResilientJsonLoadSource.DefaultMissing);
         }
 
-        T recovered;
+        string backupJson;
         try
         {
-            string backupJson = await File.ReadAllTextAsync(backupPath);
-            recovered = deserialize(backupJson);
-
-            try
-            {
-                await RestorePrimaryAsync(storePath, backupJson);
-                App.Log($"[{logName}] Restored store from '{backupPath}'.");
-            }
-            catch (Exception restoreException)
-            {
-                // A read-only or temporarily locked data directory must not
-                // turn a valid backup into an apparent total settings loss.
-                App.Log(
-                    $"[{logName}] Backup loaded, but primary restore failed: " +
-                    restoreException);
-            }
+            backupJson = await ReadAllTextRetryingAsync(backupPath);
+        }
+        catch (Exception ex) when (IsTransientReadFailure(ex))
+        {
+            App.Log($"[{logName}] Backup store could not be read (left in place): {ex.Message}");
+            return new ResilientJsonLoadResult<T>(
+                createDefault(),
+                ResilientJsonLoadSource.DefaultAfterFailure);
         }
         catch (Exception ex)
         {
@@ -111,9 +138,71 @@ internal static class ResilientJsonStore
                 ResilientJsonLoadSource.DefaultAfterFailure);
         }
 
+        T recovered;
+        try
+        {
+            recovered = deserialize(backupJson);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[{logName}] Backup store is invalid: {ex}");
+            QuarantineCorruptFile(backupPath, logName);
+            return new ResilientJsonLoadResult<T>(
+                createDefault(),
+                ResilientJsonLoadSource.DefaultAfterFailure);
+        }
+
+        if (primaryUnreadable)
+        {
+            // The unreadable primary may be newer than this backup, so leave it
+            // untouched: the next successful read still sees the user's data.
+            App.Log($"[{logName}] Backup loaded without replacing the unreadable primary store.");
+            return new ResilientJsonLoadResult<T>(
+                recovered,
+                ResilientJsonLoadSource.Backup);
+        }
+
+        try
+        {
+            await RestorePrimaryAsync(storePath, backupJson);
+            App.Log($"[{logName}] Restored store from '{backupPath}'.");
+        }
+        catch (Exception restoreException)
+        {
+            // A read-only or temporarily locked data directory must not
+            // turn a valid backup into an apparent total settings loss.
+            App.Log(
+                $"[{logName}] Backup loaded, but primary restore failed: " +
+                restoreException);
+        }
+
         return new ResilientJsonLoadResult<T>(
             recovered,
             ResilientJsonLoadSource.Backup);
+    }
+
+    /// <summary>
+    /// A read that failed says nothing about the content. A virus scanner, the
+    /// search indexer or another process holding the file for a moment must not
+    /// be mistaken for a corrupt store, because that mistake renames a healthy
+    /// file and lets an older backup replace the user's latest data.
+    /// </summary>
+    private static bool IsTransientReadFailure(Exception exception) =>
+        exception is IOException or UnauthorizedAccessException;
+
+    private static async Task<string> ReadAllTextRetryingAsync(string path)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await File.ReadAllTextAsync(path);
+            }
+            catch (IOException) when (attempt < s_readRetryDelays.Length)
+            {
+                await Task.Delay(s_readRetryDelays[attempt]);
+            }
+        }
     }
 
     public static Task SaveAsync(string storePath, string json)

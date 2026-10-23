@@ -155,6 +155,47 @@ public sealed class ResilientJsonStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsync_LockedPrimary_KeepsFileAndDoesNotQuarantine()
+    {
+        string storePath = Path.Combine(_tempRoot, "locked.json");
+        const string newerJson = "{\"value\":\"newer\"}";
+        const string olderJson = "{\"value\":\"older\"}";
+        await File.WriteAllTextAsync(storePath, newerJson);
+        await File.WriteAllTextAsync(ResilientJsonStore.GetBackupPath(storePath), olderJson);
+
+        // A scanner holding a byte-range lock: the read fails with a lock
+        // violation, but the bytes on disk are perfectly valid and newer than
+        // .bak. The handle deliberately allows delete sharing so that the
+        // quarantine path stays reachable - that is what makes the difference
+        // between "read failed" and "content is broken" observable.
+        using (var handle = new FileStream(
+            storePath,
+            FileMode.Open,
+            FileAccess.ReadWrite,
+            FileShare.ReadWrite | FileShare.Delete))
+        {
+            handle.Lock(0, 1);
+            var result = await ResilientJsonStore.LoadWithResultAsync(
+                storePath,
+                json =>
+                {
+                    using var document = JsonDocument.Parse(json);
+                    return document.RootElement.GetProperty("value").GetString()!;
+                },
+                () => "default",
+                "ResilientJsonStoreTests");
+
+            Assert.Equal(ResilientJsonLoadSource.Backup, result.Source);
+            Assert.Equal("older", result.Value);
+        }
+
+        // The failed read must not cost the user's data: the primary keeps its
+        // bytes, nothing is quarantined, and the backup did not replace it.
+        Assert.Equal(newerJson, await File.ReadAllTextAsync(storePath));
+        Assert.Empty(Directory.EnumerateFiles(_tempRoot, "*.corrupt-*"));
+    }
+
+    [Fact]
     public async Task SaveAsync_StreamedTemp_RoundTripsAndPreservesPreviousVersionAsBackup()
     {
         string storePath = Path.Combine(_tempRoot, "streamed.json");
