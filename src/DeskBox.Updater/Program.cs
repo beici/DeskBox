@@ -67,14 +67,19 @@ internal static class Program
                 return RestartApp(options.AppPath) ? 0 : 3;
             }
 
+            // Wait for the old instance to release the single-instance
+            // mutex before any restart attempt, including the failure path:
+            // RestartAfterIncompleteUpdate starts a new DeskBox process, and
+            // starting it while the parent is still shutting down makes the
+            // new instance exit silently against the parent's mutex.
+            WaitForParentExit(options.ParentProcessId);
+
             if (string.IsNullOrWhiteSpace(options.InstallerPath) || !File.Exists(options.InstallerPath))
             {
                 Log("Installer not found.");
                 RestartAfterIncompleteUpdate(options, "failed");
                 return 2;
             }
-
-            WaitForParentExit(options.ParentProcessId);
 
             int exitCode = RunInstaller(options);
             if (exitCode == 0 && !string.IsNullOrWhiteSpace(options.AppPath) && File.Exists(options.AppPath))
