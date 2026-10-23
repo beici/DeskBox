@@ -423,6 +423,33 @@ GREW src/DeskBox/Services/ResilientJsonStore.cs: 10 (manifest 9)
 
 改法：新建 `src/DeskBox/Services/PersistenceFileMutations.cs`（`namespace DeskBox.Core.Persistence`，`MoveDirectory` / `MoveFile` 两个薄包装，保留 `Directory.Move` / `File.Move` 的异常语义），把 3 处调用改走包装。`ModuleBoundaryContractTests` + `ResilientJsonStoreTests` 40/40 绿。**没有**改契约清单（清单的注释明确要求别为了让新调用点过审而扩容）。
 
+## 线索台账（截至第 10 轮）
+
+### 已证伪（不要再追，理由与证据见对应轮次）
+1. High/Medium 双开时 `new Mutex` 抛 `UnauthorizedAccessException`（第 1 轮）：实测 Medium 实例能打开 High 实例持有的互斥体、正常激活并退出。
+2. explorer 重启会销毁 owner-attached 的格子窗口（第 1 轮）：实测 13 个格子窗口全部存活、可见性不变（owner 丢失但无用户可感知后果）。
+3. 应用内更新下载被 20 秒总超时掐断（第 6 轮）：裸 `TcpListener` 实验证明响应头到达后 `HttpClient.Timeout` 不再作用于响应体读取。
+4. 无回收站卷上无主回收会静默永久删除（第 4 轮）：exFAT VHD 实测 `Directory.Move` 抛异常并走"保留文件"分支，修复已撤回。
+5. 布局夹取后的尺寸不会被写回配置（第 5 轮）：实测会被写回，已改写为"已知代价（需产品决策）"。
+
+### 未修、已确认（每条都写了为什么本轮不修）
+1. 托盘创建 15 次失败后本进程永久没有托盘（`App.Tray.cs:241`）：要决定"TaskbarCreated 后是否重建"和"是否告诉用户"，属产品决策。
+2. 桌面整理用系统 DPI 而不是目标显示器 DPI（`DesktopOrganizationCoordinator.cs:371`、`:390-391`、`:396`）：修法要动 coordinator → planner 的 DPI 来源与拓扑映射，回归面大，需要单独一轮。
+3. 自动快照按 mtime 裁剪、删除前不校验新包可打开（`DeskBoxDataBackupService.cs:2943-2957`）：涉及快照命名与保留策略，需产品确认。
+4. 用户数据文件不 fsync、无跨进程锁（`ResilientJsonStore.SaveCoreAsync`）：加 fsync 会让每次保存变慢（用户可感知的输入延迟），需产品权衡。
+5. 启动期恢复信号风暴时同步恢复占用 UI 线程数秒（`WidgetDisplayChangeWatcher` 回调里同步跑恢复链）：要改成异步分片，属架构改动。
+6. music：媒体会话释放未包 try/catch（`MusicSessionService.cs:482-483`）、无封面被当成解码失败（`MusicWidgetViewModel.MediaInfo.cs:244`）、暂停时长被计入播放（`MusicWidgetViewModel.cs:865-866`）：缺 SMTC 复现手段，且用户可感知后果是"封面闪一下 / 统计偏大"。
+7. search：Everything 查询挂死时永久占用 `_nativeGate`（`EverythingSearchService.cs:229`）、超时被当成"零结果"（`:268`）、回车可能执行上一条查询的选中项（`SearchPopupViewModel.cs:480`）：前者需要给 Everything 加注入接缝（否则无法验证），后者需要 UI 自动化。
+8. 天气：陈旧缓存没有"可能已过期"提示（需 12 语言新字符串 + 产品决策）；缓存窗口内没有"今天"时今日 UV/降水/日出日落仍回落第 0 条（数据来源未标注）。
+9. 布局：夹出来的尺寸会被写回配置（`WidgetManager.cs:3109` → `:3147`）：需产品决策"显示尺寸与存储尺寸是否分离"。
+10. 待办：`MissedReminderGrace` 只有 1 分钟（`TodoReminderService.cs:20`），错过就永不补发；"明天/本周"预设复用今天的 UTC 偏移（`FilteringAndAppearance.cs:544-554`），只在跨 DST 的时区有偏差。
+11. 更新流程：响应体没有空闲超时（服务端挂死时进度条停在某个百分比），但用户可取消 → 设计取舍。
+
+### 疑似、未证实（下一步怎么查）
+1. 自愈看门狗整段静默（第 1 轮遗留：`DESKBOX_VERBOSE_LOG=1` 下出现 95 s / 44 s 无日志）：下一步给 `DispatcherQueueTimer` 的 tick 加不经过产品代码的独立探针，确认是否被系统节流。
+2. 待办文档读失败后 `_data` 为空、下一次保存覆盖（`TodoWidgetStore.cs:197-203`）：第 2、7 轮的存储层修复已降低风险，但 todo 侧仍丢弃 `LoadSource`；下一步仿照 QuickCapture 加"未可信"标记。
+3. 天气 `Timezone` 不是可解析的 IANA id 时静默回落本机时钟（有日志）：下一步在测试里构造非法 `Timezone`，确认小时带偏移。
+
 ## 环境事实（后续轮直接复用）
 
 - 构建：**必须用 `C:\Users\scrip\.dotnet\dotnet.exe`**（PATH 上的 `dotnet` 是没 SDK 的宿主，会报 `No .NET SDKs were found`）。命令 `dotnet build .\src\DeskBox\DeskBox.csproj --configuration Debug --no-restore -p:Platform=x64`；产物 `src\DeskBox\bin\x64\Debug\net10.0-windows10.0.22621.0\`。**构建成功的唯一证明是 `DeskBox.dll` 写入时间晚于构建开始**（exe 是固定桩）。构建输出不要用 `Select-Object -First` 截断（会提前关闭管道，`dotnet` 以 -1 退出且不写 DLL），改为 `*> 日志文件` 再筛。
