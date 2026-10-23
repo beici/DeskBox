@@ -17,6 +17,7 @@
 | 8 | 天气：把数组下标当日期、把本机时钟当位置时钟 | 几天前的缓存被贴成"今天"，今日 UV/降水/日出日落取错天；跨时区时小时带从错误钟点开始并把过去的小时标成"现在" | P1 | 已修 | `38426f50` |
 | 9 | 天气：日标签用环境区域性解析 ISO 日期 | 非公历区域（如 `ar-SA`）下"今天/明天"退化成原始日期串 | P1 | 已修 | `6e1c1145` |
 | 10 | 天气：MSN 接口响应用环境区域性解析/格式化 ISO 时间 | 同一区域下小时带整体错位、日出日落变成 "1448 年"、日汇总时间解析失败导致整个模型退化为空 | P1 | 已修 | 见 §10 |
+| 11 | **从零重审**（不信任历史结论，双 SubAgent 禁读 docs/audit 独立审查 + 主流程逐条复核）：A-1 待办提醒"先落盘消费后显示" + B-1 ar-SA 回历主日期 | 显示失败（无原生 toast 且无托盘 / TryEnqueue 失败 / 进程死亡）时提醒被永久静默；保存失败时整会话静默。ar-SA 下 Glance 主日期显示回历 1448 年，与公历网格自相矛盾 | P2 / P2 | 已修 | 见 §11 |
 
 第 1 轮结束时：P0 = 0，P1 = 0（两条 P1 候选经真机实验证伪，见 §1.3），P2 = 2（均已修）。
 第 2 轮结束时：P0 = 0，P1 = 2（均已修），P2 = 0。
@@ -28,6 +29,7 @@
 第 8 轮结束时：P0 = 0，P1 = 0（全部已修）；第 6 轮报告里的 weather / music 候选又消化掉两条（见 §8），剩余线索见 §6.4 与 §8.3。
 第 9 轮结束时：P0 = 0，P1 = 1（已修）；本机 `zh-CN` 看不到该缺陷，结论由 `ar-SA` 区域的单测 A/B 证明（见 §9）。
 第 10 轮结束时：P0 = 0，P1 = 1（已修）；全量单测的 G 步（复审前几轮副作用）发现第 3、7 轮新增的目录/文件移动违反了模块边界契约，已改走 `DeskBox.Core.Persistence` 的持久化包装（见 §10.3）。
+第 11 轮结束时：P0 = 0，P1 = 0，P2 = 4（A-1、B-1 已修；A-2 重复任务 DST 漂移与 B-2 RTL 缺失入台账待下轮/产品决策），P3 = 21（全部入台账）；本地化 12×3091 键经程序化对比全等。本轮为**从零重审**模式：应用户要求不信任此前任何审查结论，两个 SubAgent 禁读 docs/audit 独立产出报告，主流程逐条复核代码证据（1 条降级、1 条触发面修正、1 条销案为有意设计）；两份报告独立标注的稳健区域与此前 10 轮修复方向重合，交叉验证通过（见 §11 与 `round-11-review-summary.md`）。
 
 ## 第 1 轮：Show Desktop 自愈链
 
@@ -423,7 +425,35 @@ GREW src/DeskBox/Services/ResilientJsonStore.cs: 10 (manifest 9)
 
 改法：新建 `src/DeskBox/Services/PersistenceFileMutations.cs`（`namespace DeskBox.Core.Persistence`，`MoveDirectory` / `MoveFile` 两个薄包装，保留 `Directory.Move` / `File.Move` 的异常语义），把 3 处调用改走包装。`ModuleBoundaryContractTests` + `ResilientJsonStoreTests` 40/40 绿。**没有**改契约清单（清单的注释明确要求别为了让新调用点过审而扩容）。
 
-## 线索台账（截至第 10 轮）
+## 第 11 轮（从零重审）：提醒消费时序 + 回历主日期
+
+> 本轮起改为"从零重审"模式：应用户要求**不信任此前任何审查结论**。两个 SubAgent（维度 A 服务/数据/原生互操作、维度 B UI/架构/本地化）禁读 `docs/audit/`，只信当前代码；主流程逐条复核两份报告的全部代码证据后合并去重定级。总报告见 `round-11-review-summary.md`（P0=0、P1=0、P2=4、P3=21、本地化全等），线索台账同步扩充（见下方"第 11 轮从零重审新增"小节）。
+
+### 11.1 问题一 — 待办提醒"先落盘消费、后显示"，显示失败即永久静默（P2，已修）
+
+**人话摘要**：提醒扫描先把"这条已通知过"的持久化标记（`ReminderDismissedForDueDate = DueDate`、小睡路径清 `SnoozedUntil`）写进 todo.json，**然后**才去弹通知。而显示端有三个静默落空点：`TryEnqueue` 返回值无人检查（关机/队列停摆）、原生 toast 失败且托盘图标为 null 时直接 return（无日志无补偿）、落盘与显示之间进程死亡。任一发生 → 该到期日的提醒永久静默（闸门跨重启生效），小睡计划也被清掉。另一变体：保存抛出时会话去重键已占用 → 本会话不再提醒。
+
+**改法**（方案 A"显示确认后才消费"，完整方案与候选对比见 `round-11-reminder-consumption.md`）：选择阶段改为只读（gate 内 `LoadAsync` 快照 + 占会话键，不落盘）；`_notify` 从 `Action` 改为 `Func<TodoReminderNotification, Task<bool>>`，App 侧 `ShowTodoReminderNotificationAsync` 跨线程取回"确实展示成功"（TCS + TryEnqueue，托盘缺失分支补日志）；仅成功后 `PersistDisplayedRemindersAsync` 落盘标记，带并发守卫（到期日变了/被完成/被删除 → 跳过；小睡目标变了 → 不清）；显示失败/抛异常 → 释放本轮会话键，下个 tick（30 s）重试直到 `MissedReminderGrace` 窗口关闭。顺带修正旧代码每 widget 只广播最后一个变更条目的遗漏（改为逐条 `PublishStoreChanged`）。
+
+**验证**：新增 3 用例（不显示不落盘且重试 / 显示期间用户完成条目不落盘标记 / 显示期间用户重新小睡不被清空）；A/B 接线改回旧语义时前两条红（`Assert.Null Failure` + `Expected: 1, Actual: 0`）；定向 10 套件 176/176 绿；真机端到端（部署新构建 + 注入不可见 Todo widget 与 70 s 后到期条目，现场已还原）：提醒经 tray fallback 于 02:59:14.867 显示，注入条目 `reminderLastNotifiedAt` 落盘值与显示同 tick——**先显示、后消费**在真实 toast 路径上成立；还原现场后重启 39 步 0 失败。
+
+### 11.2 问题二 — ar-SA 语言下 Glance 主日期按默认回历渲染（P2，已修）
+
+**人话摘要**：.NET 的 `ar-SA` culture 默认日历是 Um Al-Qura（回历），Glance 主日期用应用语言 culture 的日期模式渲染 → 阿语用户看到 "13 جمادى الأولى"（1448 年）而不是 "24 أكتوبر"，与同组件的公历日历网格、应用其余全部日期、以及"传统历法"功能（回历本应是用户显式选择的附加行）三方矛盾。
+
+**改法**（见 `round-11-glance-hijri-date.md`）：`FormatDateText` 入口对默认日历非公历的 culture 做克隆并从 `OptionalCalendars` 挑第一个 `GregorianCalendar` 赋给 `DateTimeFormat.Calendar`（try/catch 回退保渲染不中断）；默认公历语言零开销短路。其余日历无关格式（星期、时间、日号）不动。
+
+**验证**：新增 2 用例；A/B 注释掉接线时断言全文直接呈现缺陷本体：`Expected: "24 أكتوبر"  Actual: "13 جمادى الأولى"`；zh-CN/en-US 回归逐字节不变；176/176 绿；真机启动 40/39 步 0 失败。
+
+### 11.3 方法论备注
+
+1. **"先落盘后执行"这一类消费协议缺陷，复核时要顺着三个落空点各走一遍**：执行端失败、跨线程投递失败、执行与落盘之间进程死亡。本轮修的是协议顺序，不是给某一个落空点打补丁。
+2. **真机注入测试要注意"退出时覆写"**：第一次注入 settings.json 后忘记先停应用，旧实例退出时把内存里的 settings 整体写回、注入被覆盖（widgets 归零）。正确顺序是**先停、再注入、立即启动**；注入前备份、跑完还原、还原后再验证启动流水。
+3. **A/B 验证的"接线回退法"继续有效**：不改测试、不改 helper，只把生产代码的两处接线临时改回旧语义，3 条新用例中 2 条精确变红（第 3 条按推演应保持绿，实际如此——写 A/B 预期时先想清楚每条用例到底区分什么）。
+
+## 线索台账（截至第 11 轮）
+
+> 第 11 轮起为"从零重审"模式：应用户要求不再信任历史结论，两个 SubAgent 禁读 docs/audit 独立审查 + 主流程逐条复核。第 11 轮总报告见 `round-11-review-summary.md`（P0=0、P1=0、P2=4、P3=21；本地化 12×3091 键全等）。以下 11.x 编号为该报告条目。
 
 ### 已证伪（不要再追，理由与证据见对应轮次）
 1. High/Medium 双开时 `new Mutex` 抛 `UnauthorizedAccessException`（第 1 轮）：实测 Medium 实例能打开 High 实例持有的互斥体、正常激活并退出。
@@ -444,6 +474,31 @@ GREW src/DeskBox/Services/ResilientJsonStore.cs: 10 (manifest 9)
 9. 布局：夹出来的尺寸会被写回配置（`WidgetManager.cs:3109` → `:3147`）：需产品决策"显示尺寸与存储尺寸是否分离"。
 10. 待办：`MissedReminderGrace` 只有 1 分钟（`TodoReminderService.cs:20`），错过就永不补发；"明天/本周"预设复用今天的 UTC 偏移（`FilteringAndAppearance.cs:544-554`），只在跨 DST 的时区有偏差。
 11. 更新流程：响应体没有空闲超时（服务端挂死时进度条停在某个百分比），但用户可取消 → 设计取舍。
+
+### 未修、已确认（第 11 轮从零重审新增；详见 round-11-review-summary.md）
+1. **11.A-2（P2）**：重复任务下次到期时间跨 DST 漂移 1 小时；月度候选在 DST 不存在的本地时刻被静默平移（`TodoRecurrenceService.cs:185-197,235-250,257-261`）：需先定"跨 DST 保持挂钟时刻"的产品语义，纯静态可测，**下轮优先**。
+2. **11.B-2（P2）**：全仓库无 RTL/FlowDirection 处理，ar-SA 整体按 LTR 渲染：改动面横跨全部窗口，需产品决策"支持 RTL vs 发布说明声明不支持"。
+3. **11.A-4（P3，下轮优先）**：约 14 处文件名/远端名日期格式化未传 InvariantCulture（`DeskBoxDataBackupService.cs:276,332,393,2489,3115`、`CloudBackupService.cs:648`、`AttachmentStorageService.cs:45`、`DeskBoxDragData.cs:252,523`、`QuickCaptureService.cs:2211`、`DeskBoxDiagnosticsBundleService.cs:431`、`ResilientJsonStore.cs:236,527`、`GlanceImageService.cs:421`）：ar-SA/th-TH 生成回历/佛历年份文件名，云快照名解析失败退化排序；与第 9/10 轮同缺陷类，可批量机械整改。
+4. **11.A-3（P3）**：`EverythingSearchService.Dispose` 在有排队等待者时 Dispose 信号量 → `ObjectDisposedException` 逃逸（catch 清单不含）：仅关机竞态，一次性异常。
+5. **11.A-5（P3）**：`.unreadable-*` 侧车未被 `IsInternalStoreRecoveryArtifact` 过滤，全量备份携带取证残留。
+6. **11.A-6（P3）**：`SyncOutboxStore.DequeueAsync` 只删主文件，`.bak` 永久残留（含已发送载荷）。
+7. **11.A-7（P3）**：QuickCapture 附件导入在服务 gate 外，落盘失败留孤儿文件（有 GC 兜底，暂态）。
+8. **11.A-8（P3）**：`WeatherCacheStore.UpdateAsync` 主备同败时默认态整体回写清掉另一半缓存（缓存可再生）。
+9. **11.A-9（P3）**：`HasUserDocuments` 不认 quick-capture.json/music-store 等文档，搁浅回滚恢复可能 park 掉只含这些文档的目录（需 settings+layout 双缺失，极低概率，字节保留）。
+10. **11.A-10（P3）**：3 处 `Process.Start` 句柄未释放（`AppUpdateService.cs:332`、`AppRelaunchService.cs:50`、`Updater/Program.cs:498`）。
+11. **11.A-11（P3）**：ArchiveZipService 压缩丢嵌套空目录、输出非原子、解压中断留残目录。
+12. **11.A-12（P3）**：`DesktopOrganizationTransaction.RecordCompleted` 的 `First(...)` 在路径规范化差异时把整批当失败（数据不丢，仅本轮不动）。
+13. **11.A-13（P3）**：`CloudBackupService.DownloadSnapshotAsync` 失败留截断 zip 无清理。
+14. **11.A-14（P3）**：`QuickCaptureStore.cs:293` 标签去重用 `CurrentCultureIgnoreCase`。
+15. **11.A-15（P3）**：`MusicSessionService.InitializeAsync` check-then-act 双初始化竞态（当前调用点均在 UI 线程，难触发）。
+16. **11.A-16（P3）**：桌面整理每个移动项完成同步阻塞 STA 写盘一次（`DesktopOrganizationRecoveryStore.cs:61-62` 等）。
+17. **11.B-3（P3）**：`TodoItemViewModel.cs:388` `MarkerGlyph` 三元两分支相同（"\uE915"）：非红分支意图丢失，需设计决策后补正确 glyph 或删三元。
+18. **11.B-4（P3）**：Glance VM Dispose 与已排队回调竞态，回调读已释放 `_lifetimeCts.Token` 抛 ODE（全局兜底吞掉，日志噪音）。
+19. **11.B-5（P3）**：`WidgetManager.ZOrder.cs:1148` `QueueRequestedLayerRestoreCheck` 死方法 + `RequestRestoreRaisedWidgetsToDesktopLayer` 名称误导；注意它是契约测试切片锚点，删除需同步改 `WidgetRaiseBandContractTests`。
+20. **11.B-6（P3）**：Onboarding 两个 Toggle 的 async void 只有 try/finally 无 catch，异常时回滚 UI 不执行（`OnboardingWindow.TaskFlow.cs:110-180`）。
+21. **11.B-7（P3）**：Todo 到期/草稿日期硬编码 "月/日" 顺序与同屏 "yyyy/M/d" 风格不一致（`TodoItemViewModel.cs:515-518`、`TodoWidgetViewModel.cs:184-187`）。
+22. **11.B-8（P3）**：QuickCapture 图片搜索硬编码英文 "Image"（`QuickCaptureWidgetViewModel.ItemSync.cs:282-287`），违反本地化约定。
+23. **11.B-9（P3）**：Glance 在线刷新 `Apply()` 过滤后为空时不清 `CurrentImage`/`StatusText`（极边缘）。
 
 ### 疑似、未证实（下一步怎么查）
 1. 自愈看门狗整段静默（第 1 轮遗留：`DESKBOX_VERBOSE_LOG=1` 下出现 95 s / 44 s 无日志）：下一步给 `DispatcherQueueTimer` 的 tick 加不经过产品代码的独立探针，确认是否被系统节流。
