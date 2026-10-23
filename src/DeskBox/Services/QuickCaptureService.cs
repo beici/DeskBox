@@ -41,6 +41,15 @@ public sealed class QuickCaptureService
     private QuickCaptureStoreData? _data;
 
     /// <summary>
+    /// True when <see cref="_data"/> reflects what is on disk: the stored
+    /// document was actually read, or this process wrote it. A load that fell
+    /// back to defaults leaves this false, and every destructive cleanup keyed
+    /// on "which attachments are referenced" is skipped while it is false — an
+    /// unreadable document must never be mistaken for an empty one.
+    /// </summary>
+    private bool _dataTrusted;
+
+    /// <summary>
     /// DEF-012: image paths belonging to items inside the delete-undo window.
     /// A deleted item lives only in its undo snapshot — outside Items and
     /// RecentItems — so the image cache GC (which keys on "referenced by the
@@ -1511,6 +1520,13 @@ public sealed class QuickCaptureService
         }
 
         _data = await _store.LoadAsync();
+        _dataTrusted = _store.LastLoadSource is ResilientJsonLoadSource.Primary or ResilientJsonLoadSource.DefaultMissing;
+        if (!_dataTrusted)
+        {
+            App.Log(
+                $"[QuickCaptureService] Quick capture store could not be read (source={_store.LastLoadSource}); " +
+                "attachment cleanup stays disabled until this process writes the document.");
+        }
         bool migrated = false;
         foreach (QuickCaptureItem item in _data.Items.Where(item => !item.IsDeleted))
         {
@@ -1562,6 +1578,9 @@ public sealed class QuickCaptureService
     private async Task SaveCoreAsync(bool notify = true)
     {
         await _store.SaveAsync(_data!);
+        // The document on disk now matches the in-memory one, so cleanup keyed
+        // on "referenced by the live lists" is authoritative again.
+        _dataTrusted = true;
         if (notify)
         {
             Changed?.Invoke();
@@ -1869,6 +1888,18 @@ public sealed class QuickCaptureService
     {
         if (!Directory.Exists(_store.AttachmentDirectory))
         {
+            return;
+        }
+
+        // FQC-13 safety: "referenced" is only meaningful when the document was
+        // read. After a failed load every item looks deleted, so this pass
+        // would recursively delete attachments/<id>/ for records that still
+        // exist on disk — irreversible loss from a transient read failure.
+        if (!_dataTrusted)
+        {
+            App.Log(
+                "[QuickCaptureService] Skipped orphaned attachment cleanup: the stored document " +
+                "was not read successfully, so referenced attachments cannot be determined.");
             return;
         }
 

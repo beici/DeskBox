@@ -133,18 +133,28 @@ public sealed class QuickCaptureStore
             Path.DirectorySeparatorChar;
     }
 
+    /// <summary>
+    /// Source of the most recent <see cref="LoadAsync"/> call. Callers use it to
+    /// tell "the stored document was read" apart from "the read failed and the
+    /// default document was handed back": the latter must never be treated as
+    /// authoritative, because it looks exactly like an empty user document.
+    /// </summary>
+    internal ResilientJsonLoadSource LastLoadSource { get; private set; } = ResilientJsonLoadSource.DefaultMissing;
+
     public async Task<QuickCaptureStoreData> LoadAsync()
     {
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            return await ResilientJsonStore.LoadAsync(
+            ResilientJsonLoadResult<QuickCaptureStoreData> result = await ResilientJsonStore.LoadWithResultAsync(
                 _storePath,
                 json => Normalize(JsonSerializer.Deserialize(
                     json,
                     QuickCaptureJsonContext.Default.StoreData)),
                 () => new QuickCaptureStoreData(),
                 nameof(QuickCaptureStore)).ConfigureAwait(false);
+            LastLoadSource = result.Source;
+            return result.Value;
         }
         finally
         {
