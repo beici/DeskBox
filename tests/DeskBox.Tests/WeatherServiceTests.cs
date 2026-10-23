@@ -1,5 +1,6 @@
 using DeskBox.Models;
 using DeskBox.Services;
+using System.Globalization;
 
 namespace DeskBox.Tests;
 
@@ -116,5 +117,65 @@ public sealed class WeatherServiceTests
         Assert.Equal(2, data.Hourly.Time.Count);
         Assert.Equal([27d, 26d], data.Hourly.Temperature);
         Assert.Equal([20d, 30d], data.Hourly.PrecipitationProbability);
+    }
+
+    [Fact]
+    public void ConvertMsnToWeatherData_KeepsIsoTimestampsIndependentOfTheAmbientCulture()
+    {
+        var response = new MsnWeatherBody
+        {
+            Forecast = new MsnWeatherForecast
+            {
+                Days =
+                [
+                    new MsnForecastDay
+                    {
+                        // A date-time string: the ambient culture parses it but formats
+                        // it with a non-Gregorian calendar, which used to shift the date.
+                        Daily = new MsnDailySummary { Valid = "2026-10-23T00:00:00+08:00" },
+                        Almanac = new MsnAlmanac
+                        {
+                            Sunrise = "2026-10-23T06:10:00+08:00",
+                            Sunset = "2026-10-23T17:52:00+08:00"
+                        },
+                        Hourly =
+                        [
+                            new MsnForecastHour
+                            {
+                                Valid = "2026-10-23T06:10:00+08:00",
+                                Temp = 21,
+                                Precip = 0,
+                                Cap = "Clear",
+                                Icon = 1
+                            }
+                        ]
+                    },
+                    new MsnForecastDay
+                    {
+                        // A date-only string: the ambient culture cannot parse it at all.
+                        Daily = new MsnDailySummary { Valid = "2026-10-24" }
+                    }
+                ]
+            }
+        };
+
+        var previous = CultureInfo.CurrentCulture;
+        WeatherData data;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo("ar-SA");
+            data = WeatherService.ConvertMsnToWeatherData(response, 30.5, 114.3);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
+
+        Assert.NotNull(data.Daily);
+        Assert.Equal(["2026-10-23", "2026-10-24"], data.Daily.Time);
+        Assert.Equal("2026-10-23T06:10", data.Daily.Sunrise[0]);
+        Assert.Equal("2026-10-23T17:52", data.Daily.Sunset[0]);
+        Assert.NotNull(data.Hourly);
+        Assert.Equal("2026-10-23T06:10", data.Hourly.Time[0]);
     }
 }

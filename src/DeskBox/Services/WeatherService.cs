@@ -496,9 +496,13 @@ public sealed class WeatherService : IDisposable
                 // Parse date from "valid" field (ISO 8601)
                 string dateStr = string.Empty;
                 if (!string.IsNullOrEmpty(day.Daily.Valid) &&
-                    DateTimeOffset.TryParse(day.Daily.Valid, out var dt))
+                    DateTimeOffset.TryParse(
+                        day.Daily.Valid,
+                        CultureInfo.InvariantCulture,
+                        DateTimeStyles.None,
+                        out var dt))
                 {
-                    dateStr = dt.ToString("yyyy-MM-dd");
+                    dateStr = dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
                 }
 
                 daily.Time.Add(dateStr);
@@ -522,10 +526,23 @@ public sealed class WeatherService : IDisposable
                 string sunset = string.Empty;
                 if (day.Almanac is not null)
                 {
-                    if (DateTimeOffset.TryParse(day.Almanac.Sunrise, out var sr))
-                        sunrise = sr.ToString("yyyy-MM-ddTHH:mm");
-                    if (DateTimeOffset.TryParse(day.Almanac.Sunset, out var ss))
-                        sunset = ss.ToString("yyyy-MM-ddTHH:mm");
+                    if (DateTimeOffset.TryParse(
+                            day.Almanac.Sunrise,
+                            CultureInfo.InvariantCulture,
+                            DateTimeStyles.None,
+                            out var sr))
+                    {
+                        sunrise = sr.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
+                    }
+
+                    if (DateTimeOffset.TryParse(
+                            day.Almanac.Sunset,
+                            CultureInfo.InvariantCulture,
+                            DateTimeStyles.None,
+                            out var ss))
+                    {
+                        sunset = ss.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
+                    }
                 }
                 daily.Sunrise.Add(sunrise);
                 daily.Sunset.Add(sunset);
@@ -546,7 +563,11 @@ public sealed class WeatherService : IDisposable
             .GroupBy(hour => hour.Valid, StringComparer.Ordinal)
             .Select(group => group.First())
             .OrderBy(hour =>
-                DateTimeOffset.TryParse(hour.Valid, out var parsed)
+                DateTimeOffset.TryParse(
+                    hour.Valid,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out var parsed)
                     ? parsed
                     : DateTimeOffset.MaxValue)
             .ToList();
@@ -556,9 +577,13 @@ public sealed class WeatherService : IDisposable
             foreach (var h in forecastHours)
             {
                 // Parse time from "valid" field
-                if (DateTimeOffset.TryParse(h.Valid, out var ht))
+                if (DateTimeOffset.TryParse(
+                        h.Valid,
+                        CultureInfo.InvariantCulture,
+                        DateTimeStyles.None,
+                        out var ht))
                 {
-                    hourly.Time.Add(ht.ToString("yyyy-MM-ddTHH:mm"));
+                    hourly.Time.Add(ht.ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture));
                 }
                 else
                 {
