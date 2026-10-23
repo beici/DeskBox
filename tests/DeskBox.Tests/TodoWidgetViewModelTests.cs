@@ -1370,6 +1370,43 @@ public sealed class TodoWidgetViewModelTests : IDisposable
         return new TodoWidgetStore(_widgetsDataRoot, widgetId);
     }
 
+    [Fact]
+    public async Task ApplyExternalStoreChange_RefreshesSnoozeStateForOpenWidgets()
+    {
+        DateTimeOffset dueDate = new(2026, 7, 8, 9, 0, 0, TimeSpan.Zero);
+        await CreateStore("todo-widget").SaveAsync(new TodoWidgetData
+        {
+            Items =
+            [
+                new TodoItem
+                {
+                    Id = "task",
+                    Text = "Send build",
+                    DueDate = dueDate,
+                    SnoozedUntil = dueDate
+                }
+            ]
+        });
+        var viewModel = CreateViewModel("todo-widget");
+        await viewModel.InitializeAsync();
+        Assert.True(viewModel.Items[0].HasActiveSnooze);
+
+        // The reminder service consumed the snooze (persisted null) and
+        // published the store change; the open widget must drop the badge
+        // instead of showing a stale "snoozed until" line.
+        viewModel.ApplyExternalStoreChange(
+            new TodoItem
+            {
+                Id = "task",
+                Text = "Send build",
+                DueDate = dueDate,
+                SnoozedUntil = null
+            },
+            insertedItem: null);
+
+        Assert.False(viewModel.Items[0].HasActiveSnooze);
+    }
+
     private TodoWidgetViewModel CreateViewModel(string widgetId, SettingsService? settingsService = null)
     {
         var config = new WidgetConfig
