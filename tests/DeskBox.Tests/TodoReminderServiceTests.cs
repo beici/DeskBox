@@ -19,7 +19,11 @@ public sealed class TodoReminderServiceTests : IDisposable
         var notifications = new List<TodoReminderNotification>();
         TodoReminderService? service = null;
         service = new TodoReminderService(settings, TestServices.CreateLocalizationService(), null,
-            notifications.Add, widgetId =>
+            notification =>
+            {
+                notifications.Add(notification);
+                return Task.FromResult(true);
+            }, widgetId =>
             {
                 // The check already captured its widget/settings list. The
                 // owner disables it before the asynchronous load completes.
@@ -230,6 +234,128 @@ public sealed class TodoReminderServiceTests : IDisposable
         Assert.Null(item.SnoozedUntil);
         Assert.Equal(now, item.SnoozeLastNotifiedAt);
         Assert.Equal(dueDate, item.ReminderDismissedForDueDate);
+    }
+
+    [Fact]
+    public async Task CheckNowAsync_DoesNotPersistMarksWhenNotificationIsNotShown()
+    {
+        DateTimeOffset now = new(2026, 7, 7, 10, 0, 0, TimeSpan.Zero);
+        DateTimeOffset dueDate = now.AddMinutes(4);
+        var settingsService = CreateSettingsService("todo-widget");
+        await CreateStore("todo-widget").SaveAsync(new TodoWidgetData
+        {
+            Items = [new TodoItem { Id = "task", Text = "Send build", DueDate = dueDate }]
+        });
+
+        var notifications = new List<TodoReminderNotification>();
+        var service = new TodoReminderService(
+            settingsService,
+            TestServices.CreateLocalizationService(),
+            dispatcherQueue: null,
+            notification =>
+            {
+                notifications.Add(notification);
+                return Task.FromResult(false);
+            },
+            CreateStore,
+            () => now);
+
+        // Both scans attempt the notification: without persisted marks the
+        // reminder must keep retrying instead of being silently consumed.
+        Assert.Equal(1, await service.CheckNowAsync(now));
+        Assert.Equal(1, await service.CheckNowAsync(now.AddSeconds(20)));
+        Assert.Equal(2, notifications.Count);
+
+        var reloaded = await CreateStore("todo-widget").LoadAsync();
+        var item = Assert.Single(reloaded.Items);
+        Assert.Null(item.ReminderLastNotifiedAt);
+        Assert.Null(item.ReminderDismissedForDueDate);
+    }
+
+    [Fact]
+    public async Task CheckNowAsync_DoesNotStampMarksWhenUserCompletesItemWhileNotificationShows()
+    {
+        DateTimeOffset now = new(2026, 7, 7, 10, 0, 0, TimeSpan.Zero);
+        DateTimeOffset dueDate = now.AddMinutes(4);
+        var settingsService = CreateSettingsService("todo-widget");
+        await CreateStore("todo-widget").SaveAsync(new TodoWidgetData
+        {
+            Items = [new TodoItem { Id = "task", Text = "Send build", DueDate = dueDate }]
+        });
+
+        var service = new TodoReminderService(
+            settingsService,
+            TestServices.CreateLocalizationService(),
+            dispatcherQueue: null,
+            async notification =>
+            {
+                // The user completes the item while the notification is on
+                // screen: the consumption marks must not be stamped onto the
+                // completed item after the fact.
+                var data = await CreateStore("todo-widget").LoadAsync();
+                var stored = Assert.Single(data.Items);
+                stored.IsCompleted = true;
+                stored.CompletedAt = now;
+                await CreateStore("todo-widget").SaveAsync(data);
+                return true;
+            },
+            CreateStore,
+            () => now);
+
+        Assert.Equal(1, await service.CheckNowAsync(now));
+
+        var reloaded = await CreateStore("todo-widget").LoadAsync();
+        var item = Assert.Single(reloaded.Items);
+        Assert.True(item.IsCompleted);
+        Assert.Null(item.ReminderLastNotifiedAt);
+        Assert.Null(item.ReminderDismissedForDueDate);
+    }
+
+    [Fact]
+    public async Task CheckNowAsync_KeepsUserResnoozeWhenSnoozeNotificationShows()
+    {
+        DateTimeOffset now = new(2026, 7, 7, 10, 0, 0, TimeSpan.Zero);
+        DateTimeOffset dueDate = now.AddMinutes(1);
+        DateTimeOffset resnoozedUntil = now.AddMinutes(5);
+        var settingsService = CreateSettingsService("todo-widget");
+        await CreateStore("todo-widget").SaveAsync(new TodoWidgetData
+        {
+            Items =
+            [
+                new TodoItem
+                {
+                    Id = "task",
+                    Text = "Send build",
+                    DueDate = dueDate,
+                    ReminderDismissedForDueDate = dueDate,
+                    SnoozedUntil = now
+                }
+            ]
+        });
+
+        var service = new TodoReminderService(
+            settingsService,
+            TestServices.CreateLocalizationService(),
+            dispatcherQueue: null,
+            async notification =>
+            {
+                // The user picks a new snooze target from the toast while it
+                // is showing: persisting the old snooze's consumption must
+                // not clear the newer snooze plan.
+                var data = await CreateStore("todo-widget").LoadAsync();
+                var stored = Assert.Single(data.Items);
+                stored.SnoozedUntil = resnoozedUntil;
+                await CreateStore("todo-widget").SaveAsync(data);
+                return true;
+            },
+            CreateStore,
+            () => now);
+
+        Assert.Equal(1, await service.CheckNowAsync(now));
+
+        var reloaded = await CreateStore("todo-widget").LoadAsync();
+        var item = Assert.Single(reloaded.Items);
+        Assert.Equal(resnoozedUntil, item.SnoozedUntil);
     }
 
     [Fact]
@@ -566,7 +692,11 @@ public sealed class TodoReminderServiceTests : IDisposable
             settingsService,
             localization,
             dispatcherQueue: null,
-            notifications.Add,
+            notification =>
+            {
+                notifications.Add(notification);
+                return Task.FromResult(true);
+            },
             CreateStore,
             () => now);
     }

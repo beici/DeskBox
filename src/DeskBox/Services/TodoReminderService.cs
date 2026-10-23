@@ -22,7 +22,7 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
     private readonly SettingsService _settingsService;
     private readonly LocalizationService _localizationService;
     private readonly DispatcherQueue? _dispatcherQueue;
-    private readonly Action<TodoReminderNotification> _notify;
+    private readonly Func<TodoReminderNotification, Task<bool>> _notify;
     private readonly Func<string, TodoWidgetStore> _storeFactory;
     private readonly Func<DateTimeOffset> _clock;
     // DEF-110: cleared on the UI thread (Start/Refresh) and written from
@@ -56,7 +56,7 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
         SettingsService settingsService,
         LocalizationService localizationService,
         DispatcherQueue dispatcherQueue,
-        Action<TodoReminderNotification> notify)
+        Func<TodoReminderNotification, Task<bool>> notify)
         : this(
             settingsService,
             localizationService,
@@ -64,14 +64,14 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
             notify,
             widgetId => new TodoWidgetStore(widgetId),
             () => DateTimeOffset.Now)
-    {
+        {
     }
 
     internal TodoReminderService(
         SettingsService settingsService,
         LocalizationService localizationService,
         DispatcherQueue? dispatcherQueue,
-        Action<TodoReminderNotification> notify,
+        Func<TodoReminderNotification, Task<bool>> notify,
         Func<string, TodoWidgetStore> storeFactory,
         Func<DateTimeOffset> clock)
     {
@@ -198,7 +198,37 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
                 return 0;
             }
 
-            _notify(BuildNotification(candidates));
+            // A reminder is only consumed (marks persisted) after the
+            // notification surface confirmed it was actually shown. When
+            // nothing could display it, the in-memory claims are released so
+            // the next scan retries until the missed-reminder grace window
+            // closes — instead of persisting ReminderDismissedForDueDate for
+            // a toast nobody ever saw.
+            bool shown;
+            try
+            {
+                shown = await _notify(BuildNotification(candidates)).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                App.Log($"[TodoReminder] Notification dispatch failed: {ex}");
+                shown = false;
+            }
+
+            if (!shown)
+            {
+                foreach (var candidate in candidates)
+                {
+                    _sessionNotifiedKeys.TryRemove(candidate.ReminderKey, out _);
+                }
+
+                App.Log(
+                    $"[TodoReminder] Reminder for {candidates.Count} item(s) could not be shown; " +
+                    "consumption was withheld and the next scan will retry.");
+                return candidates.Count;
+            }
+
+            await PersistDisplayedRemindersAsync(candidates, now).ConfigureAwait(false);
             return candidates.Count;
         }
         catch (Exception ex)
@@ -450,57 +480,118 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
         List<TodoReminderCandidate> candidates)
     {
         var store = _storeFactory(widget.Id);
-        List<TodoReminderCandidate> widgetCandidates = [];
-        TodoItem? lastChangedItem = null;
-        _ = await store.MutateAsync(current =>
+
+        // Read-only selection under the store gate: nothing is persisted
+        // here. The consumption marks are written only after the
+        // notification was actually shown (PersistDisplayedRemindersAsync),
+        // so a display failure can never strand a due reminder as already
+        // consumed.
+        TodoWidgetData current = await store.LoadAsync().ConfigureAwait(false);
+
+        // The owner may disable the feature or dispose this service while
+        // the store gate is still being awaited (the check already
+        // captured its widget list). Producing candidates after that point
+        // would announce items for a notification nobody will ever show.
+        if (_disposed || !ShouldBeRunning())
         {
-            // The owner may disable the feature or dispose this service while
-            // the store gate is still being awaited (the check already
-            // captured its widget list). Persisting reminder bookkeeping after
-            // that point would mark items notified for a notification nobody
-            // will ever show, so the mutation is abandoned instead.
-            if (_disposed || !ShouldBeRunning())
+            return;
+        }
+
+        foreach (var item in current.Items)
+        {
+            if (!TryGetReminderTrigger(item, now, defaultOffsetMinutes, out ReminderTriggerKind triggerKind, out int? effectiveOffsetMinutes))
             {
-                return false;
+                continue;
             }
 
-            bool changed = false;
-            foreach (var item in current.Items)
+            string reminderKey = GetReminderKey(widget.Id, item, triggerKind, effectiveOffsetMinutes);
+            if (!_sessionNotifiedKeys.TryAdd(reminderKey, 0))
             {
-                if (!TryGetReminderTrigger(item, now, defaultOffsetMinutes, out ReminderTriggerKind triggerKind, out int? effectiveOffsetMinutes))
-                {
-                    continue;
-                }
-
-                string reminderKey = GetReminderKey(widget.Id, item, triggerKind, effectiveOffsetMinutes);
-                if (!_sessionNotifiedKeys.TryAdd(reminderKey, 0))
-                {
-                    continue;
-                }
-
-                if (triggerKind == ReminderTriggerKind.Snooze)
-                {
-                    item.SnoozeLastNotifiedAt = now;
-                    item.SnoozedUntil = null;
-                }
-                else
-                {
-                    item.ReminderLastNotifiedAt = now;
-                    item.ReminderDismissedForDueDate = item.DueDate;
-                }
-
-                changed = true;
-                lastChangedItem = item;
-                widgetCandidates.Add(new TodoReminderCandidate(widget.Id, widget.Name, item));
+                continue;
             }
 
-            return changed;
-        }).ConfigureAwait(false);
+            candidates.Add(new TodoReminderCandidate(
+                widget.Id,
+                widget.Name,
+                item,
+                reminderKey,
+                triggerKind,
+                item.DueDate,
+                item.SnoozedUntil));
+        }
+    }
 
-        if (widgetCandidates.Count > 0)
+    /// <summary>
+    /// Persists the consumption marks for candidates whose notification was
+    /// confirmed as shown. Every candidate is guarded against concurrent
+    /// user edits (due-date change, re-snooze, completion, deletion, or a
+    /// notification-button action that already wrote the store): when a
+    /// guard fails, the user's own write wins and the mark is skipped.
+    /// </summary>
+    private async Task PersistDisplayedRemindersAsync(
+        IReadOnlyList<TodoReminderCandidate> candidates,
+        DateTimeOffset now)
+    {
+        foreach (var group in candidates.GroupBy(candidate => candidate.WidgetId))
         {
-            candidates.AddRange(widgetCandidates);
-            PublishStoreChanged(widget.Id, lastChangedItem, insertedItem: null);
+            try
+            {
+                var store = _storeFactory(group.Key);
+                List<TodoItem> changedItems = [];
+                _ = await store.MutateAsync(current =>
+                {
+                    bool changed = false;
+                    foreach (var candidate in group)
+                    {
+                        var item = current.Items.FirstOrDefault(entry =>
+                            string.Equals(entry.Id, candidate.Item.Id, StringComparison.Ordinal));
+                        if (item is null || item.IsCompleted || item.IsDeleted)
+                        {
+                            continue;
+                        }
+
+                        if (candidate.TriggerKind == ReminderTriggerKind.Snooze)
+                        {
+                            if (item.SnoozedUntil != candidate.SnoozedUntilAtSelection)
+                            {
+                                continue;
+                            }
+
+                            item.SnoozeLastNotifiedAt = now;
+                            item.SnoozedUntil = null;
+                        }
+                        else
+                        {
+                            if (item.DueDate != candidate.DueDateAtSelection)
+                            {
+                                continue;
+                            }
+
+                            item.ReminderLastNotifiedAt = now;
+                            item.ReminderDismissedForDueDate = item.DueDate;
+                        }
+
+                        changed = true;
+                        changedItems.Add(item);
+                    }
+
+                    return changed;
+                }).ConfigureAwait(false);
+
+                foreach (var changedItem in changedItems)
+                {
+                    PublishStoreChanged(group.Key, changedItem, insertedItem: null);
+                }
+            }
+            catch (Exception ex)
+            {
+                // The notification was shown but the marks could not be
+                // persisted. The session keys stay claimed so this session
+                // does not repeat the toast; a restart re-fires at most
+                // once (bounded by the missed-reminder grace window).
+                App.Log(
+                    $"[TodoReminder] Persisting displayed reminder marks failed for widget {group.Key}: {ex}");
+            }
         }
     }
 
@@ -707,5 +798,9 @@ public sealed class TodoReminderService : IDisposable, ITodoReminderSession
     private sealed record TodoReminderCandidate(
         string WidgetId,
         string WidgetName,
-        TodoItem Item);
+        TodoItem Item,
+        string ReminderKey,
+        ReminderTriggerKind TriggerKind,
+        DateTimeOffset? DueDateAtSelection,
+        DateTimeOffset? SnoozedUntilAtSelection);
 }

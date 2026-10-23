@@ -201,8 +201,11 @@ public partial class App
             settingsService,
             localizationService,
             dispatcherQueue: null,
-            notification => callbackNotifications.Add(
-                CaptureAotTodoNotification(notification)),
+            notification =>
+            {
+                callbackNotifications.Add(CaptureAotTodoNotification(notification));
+                return Task.FromResult(true);
+            },
             widgetId => new TodoWidgetStore(widgetsRoot, widgetId),
             () => currentClock);
 

@@ -2409,7 +2409,7 @@ public partial class App : Application
                 SettingsService,
                 LocalizationService,
                 UiDispatcherQueue,
-                ShowTodoReminderNotification,
+                ShowTodoReminderNotificationAsync,
                 widgetId => new TodoWidgetStore(widgetId),
                 GetTodoNotificationActivationNow);
         }
@@ -2418,7 +2418,7 @@ public partial class App : Application
             SettingsService,
             LocalizationService,
             UiDispatcherQueue,
-            ShowTodoReminderNotification);
+            ShowTodoReminderNotificationAsync);
         // Fork: the reminder sweep is a background writer of the todo store,
         // so live todo widgets must observe its mutations instead of holding a
         // stale projection until the next manual refresh (DEF-043 family).
@@ -2881,14 +2881,31 @@ public partial class App : Application
         };
     }
 
-    private void ShowTodoReminderNotification(TodoReminderNotification notification)
+    private Task<bool> ShowTodoReminderNotificationAsync(TodoReminderNotification notification)
     {
-        if (UiDispatcherQueue is { HasThreadAccess: false } dispatcherQueue)
+        if (UiDispatcherQueue is not { } dispatcherQueue || dispatcherQueue.HasThreadAccess)
         {
-            dispatcherQueue.TryEnqueue(() => ShowTodoReminderNotification(notification));
-            return;
+            return Task.FromResult(ShowTodoReminderNotificationCore(notification));
         }
 
+        // The reminder service calls from a thread-pool thread after its
+        // store awaits; the toast/tray surfaces need the UI thread, and the
+        // service must learn whether anything was actually shown before it
+        // persists the reminder's consumption marks.
+        var completion = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!dispatcherQueue.TryEnqueue(
+                () => completion.TrySetResult(ShowTodoReminderNotificationCore(notification))))
+        {
+            Log("[TodoReminder] Reminder could not be enqueued onto the UI thread; it will be retried.");
+            return Task.FromResult(false);
+        }
+
+        return completion.Task;
+    }
+
+    private bool ShowTodoReminderNotificationCore(TodoReminderNotification notification)
+    {
         if (TryShowNativeTodoReminderNotification(
                 notification,
                 new NativeAppNotificationOptions(
@@ -2896,12 +2913,17 @@ public partial class App : Application
                     TodoReminderNotificationGroup)))
         {
             Log($"[TodoReminder] Native notification shown count={notification.Count} widget={notification.WidgetId ?? "none"} item={notification.ItemId ?? "none"}");
-            return;
+            return true;
         }
 
         if (_trayIcon is null)
         {
-            return;
+            // Both notification surfaces are unavailable. Reporting the
+            // failure lets the reminder service withhold its consumption
+            // marks and retry on the next scan instead of permanently
+            // silencing the reminder.
+            Log($"[TodoReminder] No notification surface available; reminder for {notification.Count} item(s) was not shown.");
+            return false;
         }
 
         try
@@ -2917,10 +2939,12 @@ public partial class App : Application
                 realtime: false,
                 timeout: TimeSpan.FromSeconds(8));
             Log($"[TodoReminder] Tray notification fallback shown count={notification.Count}");
+            return true;
         }
         catch (Exception ex)
         {
             Log($"[TodoReminder] Tray notification failed: {ex.Message}");
+            return false;
         }
     }
 

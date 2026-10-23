@@ -334,7 +334,7 @@ public sealed class TodoNotificationActivationRouterTests : IDisposable
             settingsService,
             TestServices.CreateLocalizationService(),
             dispatcherQueue: null,
-            _ => { },
+            _ => Task.FromResult(true),
             id => new TodoWidgetStore(_widgetsRoot, id),
             () => FixedNow);
         return new RouterHarness(store, service);
