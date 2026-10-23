@@ -18,6 +18,7 @@
 | 9 | 天气：日标签用环境区域性解析 ISO 日期 | 非公历区域（如 `ar-SA`）下"今天/明天"退化成原始日期串 | P1 | 已修 | `6e1c1145` |
 | 10 | 天气：MSN 接口响应用环境区域性解析/格式化 ISO 时间 | 同一区域下小时带整体错位、日出日落变成 "1448 年"、日汇总时间解析失败导致整个模型退化为空 | P1 | 已修 | 见 §10 |
 | 11 | **从零重审**（不信任历史结论，双 SubAgent 禁读 docs/audit 独立审查 + 主流程逐条复核）：A-1 待办提醒"先落盘消费后显示" + B-1 ar-SA 回历主日期 | 显示失败（无原生 toast 且无托盘 / TryEnqueue 失败 / 进程死亡）时提醒被永久静默；保存失败时整会话静默。ar-SA 下 Glance 主日期显示回历 1448 年，与公历网格自相矛盾 | P2 / P2 | 已修 | 见 §11 |
+| 12 | 从零重审第 2 轮（重点攻击第 11 轮新改动）：R12-1 全应用公历渲染（15 位点+Format token）/ R12-2 原生 toast 开关守卫 / R12-3 更新器不等父进程重启 / R12-5 snooze 重试无上限 | ar-SA 系统区域下 Todo/速记/设置/文件提示全部渲染回历；通知被系统关闭时提醒仍被消费；安装包缺失时更新器与单实例锁竞态；snooze 空转重试到会话结束 | P2×3 / P3 | 已修 | 见 §12 |
 
 第 1 轮结束时：P0 = 0，P1 = 0（两条 P1 候选经真机实验证伪，见 §1.3），P2 = 2（均已修）。
 第 2 轮结束时：P0 = 0，P1 = 2（均已修），P2 = 0。
@@ -30,6 +31,7 @@
 第 9 轮结束时：P0 = 0，P1 = 1（已修）；本机 `zh-CN` 看不到该缺陷，结论由 `ar-SA` 区域的单测 A/B 证明（见 §9）。
 第 10 轮结束时：P0 = 0，P1 = 1（已修）；全量单测的 G 步（复审前几轮副作用）发现第 3、7 轮新增的目录/文件移动违反了模块边界契约，已改走 `DeskBox.Core.Persistence` 的持久化包装（见 §10.3）。
 第 11 轮结束时：P0 = 0，P1 = 0，P2 = 4（A-1、B-1 已修；A-2 重复任务 DST 漂移与 B-2 RTL 缺失入台账待下轮/产品决策），P3 = 21（全部入台账）；本地化 12×3091 键经程序化对比全等。本轮为**从零重审**模式：应用户要求不信任此前任何审查结论，两个 SubAgent 禁读 docs/audit 独立产出报告，主流程逐条复核代码证据（1 条降级、1 条触发面修正、1 条销案为有意设计）；两份报告独立标注的稳健区域与此前 10 轮修复方向重合，交叉验证通过（见 §11 与 `round-11-review-summary.md`）。
+第 12 轮结束时：P0 = 0，P1 = 0，P2 = 3（已修：全应用公历渲染、原生 toast 开关守卫、更新器重启竞态），P3 = 10（其中 R12-5 snooze 宽限已随本轮修掉，其余 9 条入台账）；两份子报告独立确认第 11 轮两笔修复主体稳健并各留痕；本地化连续第 2 轮程序化全等。
 
 ## 第 1 轮：Show Desktop 自愈链
 
@@ -451,7 +453,39 @@ GREW src/DeskBox/Services/ResilientJsonStore.cs: 10 (manifest 9)
 2. **真机注入测试要注意"退出时覆写"**：第一次注入 settings.json 后忘记先停应用，旧实例退出时把内存里的 settings 整体写回、注入被覆盖（widgets 归零）。正确顺序是**先停、再注入、立即启动**；注入前备份、跑完还原、还原后再验证启动流水。
 3. **A/B 验证的"接线回退法"继续有效**：不改测试、不改 helper，只把生产代码的两处接线临时改回旧语义，3 条新用例中 2 条精确变红（第 3 条按推演应保持绿，实际如此——写 A/B 预期时先想清楚每条用例到底区分什么）。
 
-## 线索台账（截至第 11 轮）
+## 第 12 轮（从零重审）：全应用公历渲染 + 通知开关守卫 + 更新器竞态
+
+> 从零重审第 2 轮。两个 SubAgent 重点攻击第 11 轮新改动后全量扫描；两份报告独立确认第 11 轮修复主体稳健，同时各发现其残余缺口。总报告 `round-12-review-summary.md`（P0=0、P1=0、P2=3、P3=10）。
+
+### 12.1 R12-1 — 公历修复只修了 Glance，全应用 15 个位点仍渲染回历（P2，已修）
+
+**人话摘要**：第 11 轮修复的提交信息说"应用内其他日期本来就是公历"——不成立。Todo 行内截止日期、提醒 toast、剪贴板、速记详情、设置页更新时间、文件 tooltip 等 15 处直接 `ToString(...)` 不传 culture，ar-SA 系统区域格式下全部渲染回历 1448 年；`LocalizationService.Format` 的 `{1:yyyy/M/d HH:mm}` token 求值也是同一载体。附带消除 UmAlQura 1900-2077 年份范围异常面。
+
+**改法**：新增共享 `Helpers/DisplayCulture.cs`（`EnsureGregorian` + `GregorianCurrent`，克隆换公历、按名缓存）；15 个位点与 `LocalizationService.Format` 全部改走公历变体（保留各文化的月名/数字/语序）；Glance 私有实现改为委托。文化来源（应用语言 vs 系统区域）口径统一留给产品决策。
+
+**运行时事实**：.NET 10 上对克隆 culture 赋 `DateTimeFormat.Calendar` 后，`CultureInfo.Calendar` **属性**仍报旧日历（不反映赋值），但 `DateTimeFormat.Calendar` 与格式化输出正确切换——断言必须落在 `DateTimeFormat.Calendar` 或输出上（探针实证，已写入 `round-12-gregorian-display-culture.md`）。
+
+**验证**：新增 `DisplayCultureTests`（5 用例）；A/B 接线回退 3 用例红（`Expected "2026/10/24 09:30" Actual "1448/5/13 09:30"`）；316/316 绿；构建 0 错误；部署真机 40 步 0 失败。
+
+### 12.2 R12-2 — 原生 toast"乐观显示成功"（P2，已修）
+
+`TryShow` 丢弃 `Show` 返回值、从不查 `Setting`：应用通知被系统关闭时 toast 被静默吞掉但返回 true，第 11 轮两阶段协议据此消费提醒且跳过托盘兜底。改法：`Register()` 后探测 `AppNotificationManager.Default.Setting`，非 `Enabled` 记日志返回 false → 调用方回落托盘/重试协议。平台前提（Show 静默 vs 抛异常）未实测即修——守卫是文档化判断途径且无害。
+
+### 12.3 R12-3 — 更新器"安装包缺失"不等父进程就重启（P2，已修）
+
+`WaitForParentExit` 提升到安装包存在性检查之前（对齐"App 不存在"分支），消除与单实例互斥体的竞态（DEF-113 要防的"整机无 DeskBox"结局）。
+
+### 12.4 R12-5 — snooze 重试无宽限上限（P3，已修，修正第 11 轮过度承诺）
+
+snooze 触发加对称上界 `snoozedUntil + MissedReminderGrace`；A/B 红（`Expected: 0, Actual: 1`）恢复绿；既有 snooze 用例（宽限内）不受影响。
+
+### 12.5 方法论备注
+
+1. **修复的提交信息/注释也是审查对象**：第 12 轮两条 P2（R12-1、R12-5）的直接诱因是第 11 轮提交声明（"其他日期本来就是公历"、"bounded by the missed-reminder grace window"）与代码事实不符——写声明时全仓 grep 一次就能避免。
+2. **.NET 10 的 `CultureInfo.Calendar` 属性陷阱**：克隆换历后属性不反映、格式化却正确——探针先于断言，别用属性当行为证据。
+3. **位点清单要自己再扫一遍**：两份子报告合计 11 处，主流程 grep 复核出 15 处（多出 OrganizationHistoryEntry、QuickCaptureItemViewModel、ContentWidgetWindow 三处）——子报告的位点清单是下限不是全集。
+
+## 线索台账（截至第 12 轮）
 
 > 第 11 轮起为"从零重审"模式：应用户要求不再信任历史结论，两个 SubAgent 禁读 docs/audit 独立审查 + 主流程逐条复核。第 11 轮总报告见 `round-11-review-summary.md`（P0=0、P1=0、P2=4、P3=21；本地化 12×3091 键全等）。以下 11.x 编号为该报告条目。
 
@@ -499,6 +533,21 @@ GREW src/DeskBox/Services/ResilientJsonStore.cs: 10 (manifest 9)
 21. **11.B-7（P3）**：Todo 到期/草稿日期硬编码 "月/日" 顺序与同屏 "yyyy/M/d" 风格不一致（`TodoItemViewModel.cs:515-518`、`TodoWidgetViewModel.cs:184-187`）。
 22. **11.B-8（P3）**：QuickCapture 图片搜索硬编码英文 "Image"（`QuickCaptureWidgetViewModel.ItemSync.cs:282-287`），违反本地化约定。
 23. **11.B-9（P3）**：Glance 在线刷新 `Apply()` 过滤后为空时不清 `CurrentImage`/`StatusText`（极边缘）。
+
+### 未修、已确认（第 12 轮从零重审新增；详见 round-12-review-summary.md，编号 R12-x）
+1. **R12-4（P3）**：提醒扫描中途中止（禁用/退役/读盘抛错）时已占用的会话键不回收（显示失败路径有回收、收集中止路径没有）：与 R12-6 同属会话键生命周期边缘，可在某轮 reminder 改动时合并处理。
+2. **R12-6（P3）**：`Refresh()`/`Start()` 的全量 Clear 会清掉"已显示但持久化失败"保留的会话键：不经重启的开关循环也会重放已显示的提醒（`TodoReminderService.cs:100,125-133`）。
+3. **R12-7（P3）**：WebDAV PROPFIND 条目名二次 `UnescapeDataString`（`WebDavBackupTransport.cs:285-286`）：含字面 `%XX` 的远端名被错误寻址（验证降级为主，理论删错文件窗口）。
+4. **R12-8（P3）**：全量恢复成功路径在删 rollback 前崩溃 → 整份数据大小的 `restore-rollback/<guid>` 目录永久累积，无清理路径。
+5. **R12-9（P3）**：ArchiveZipService 三个健壮性缺口：`./` 根条目解压误报越界；解压无文件数/字节预算；压缩直写最终路径非原子、失败留残档。
+6. **R12-10（P3）**：snooze"明天 9 点"在 DST 切换日的无效本地时刻取近似偏移（`TodoNotificationActivationRouter.cs:258-268`，误差 ≤1h）。
+7. **R12-11（P3）**：Glance 在线刷新命中同 Id 只回写 `_currentIndex` 不更新 `CurrentImage`：元数据滞后一拍，Content-Type 变化时可能留断图（`GlanceWidgetViewModel.cs:648-659`）。
+8. **R12-12（P3）**：`WidgetShellContentHost.ApplyContentAppearance` 注释承诺的防重入与实现不符（行为幂等良性，注释误导）。
+9. **R12-13（P3）**：多 Glance 格子并发迁移共享 legacy 文件无跨实例互斥，归属不确定（`GlanceWidgetStore.cs:65-83,179-208`）。
+10. **产品决策**：日期显示"跟随应用语言 vs 系统区域"的策略口径（本轮只统一日历、不改文化来源）。
+
+### 第 12 轮销案/修正
+- **R12-2 平台前提**（`Show()` 在通知被关时是否静默）未实测即修：守卫本身是文档化判断途径且无害；真机关闭 DeskBox 通知可观察日志验证。
 
 ### 疑似、未证实（下一步怎么查）
 1. 自愈看门狗整段静默（第 1 轮遗留：`DESKBOX_VERBOSE_LOG=1` 下出现 95 s / 44 s 无日志）：下一步给 `DispatcherQueueTimer` 的 tick 加不经过产品代码的独立探针，确认是否被系统节流。
