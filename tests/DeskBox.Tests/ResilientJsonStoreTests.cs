@@ -196,6 +196,47 @@ public sealed class ResilientJsonStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task SaveAsync_AfterUnreadablePrimary_KeepsTheOldBytesInsteadOfRotatingThemAway()
+    {
+        string storePath = Path.Combine(_tempRoot, "unreadable-then-saved.json");
+        const string newerJson = "{\"value\":\"newer\"}";
+        const string olderJson = "{\"value\":\"older\"}";
+        await File.WriteAllTextAsync(storePath, newerJson);
+        await File.WriteAllTextAsync(ResilientJsonStore.GetBackupPath(storePath), olderJson);
+
+        using (var handle = new FileStream(
+            storePath,
+            FileMode.Open,
+            FileAccess.ReadWrite,
+            FileShare.ReadWrite | FileShare.Delete))
+        {
+            handle.Lock(0, 1);
+            var result = await ResilientJsonStore.LoadWithResultAsync(
+                storePath,
+                json =>
+                {
+                    using var document = JsonDocument.Parse(json);
+                    return document.RootElement.GetProperty("value").GetString()!;
+                },
+                () => "default",
+                "ResilientJsonStoreTests");
+
+            Assert.Equal(ResilientJsonLoadSource.Backup, result.Source);
+        }
+
+        // The load fell back to .bak because the primary could not be read. The
+        // primary still holds the user's newest bytes, so the next two saves must
+        // not rotate them into .bak and then delete them: the first commit would
+        // move them to .bak, the second would overwrite .bak with the new data.
+        await ResilientJsonStore.SaveAsync(storePath, "{\"value\":\"saved-1\"}");
+        await ResilientJsonStore.SaveAsync(storePath, "{\"value\":\"saved-2\"}");
+
+        string asidePath = Assert.Single(Directory.EnumerateFiles(_tempRoot, "*.unreadable-*"));
+        Assert.Contains("newer", await File.ReadAllTextAsync(asidePath));
+        Assert.Contains("saved-2", await File.ReadAllTextAsync(storePath));
+    }
+
+    [Fact]
     public async Task SaveAsync_StreamedTemp_RoundTripsAndPreservesPreviousVersionAsBackup()
     {
         string storePath = Path.Combine(_tempRoot, "streamed.json");

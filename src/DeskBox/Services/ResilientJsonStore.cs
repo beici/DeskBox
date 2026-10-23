@@ -34,6 +34,15 @@ internal static class ResilientJsonStore
         TimeSpan.FromMilliseconds(80)
     ];
 
+    // Stores whose primary file could not be read on the last load. Those bytes
+    // are still on disk and may be newer than any backup, so the next save must
+    // move them aside: a normal commit would rotate them into .bak, where the
+    // save after that overwrites them for good.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte>
+        s_unreadablePrimaries = new(StringComparer.OrdinalIgnoreCase);
+
+    private const int MaxUnreadableAsides = 3;
+
     internal static string GetBackupPath(string storePath) => $"{storePath}.bak";
 
     public static async Task<T> LoadAsync<T>(
@@ -77,6 +86,7 @@ internal static class ResilientJsonStore
                 // older copy: a momentary lock would cost the last change.
                 primaryFailed = true;
                 primaryUnreadable = true;
+                s_unreadablePrimaries[storePath] = 0;
                 App.Log($"[{logName}] Primary store could not be read (left in place): {ex.Message}");
             }
             catch (Exception ex)
@@ -205,6 +215,59 @@ internal static class ResilientJsonStore
         }
     }
 
+    /// <summary>
+    /// A store that could not be read on the last load still holds the user's
+    /// newest bytes. Rename it out of the way before the commit, so the write
+    /// path cannot rotate it into .bak (where the following save would delete
+    /// it). Best effort: failing to preserve must not fail the save, or the new
+    /// edit is lost as well.
+    /// </summary>
+    private static void PreserveUnreadablePrimary(string storePath)
+    {
+        if (!s_unreadablePrimaries.TryRemove(storePath, out _) || !File.Exists(storePath))
+        {
+            return;
+        }
+
+        try
+        {
+            string asidePath = $"{storePath}.unreadable-{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}";
+            File.Move(storePath, asidePath);
+            App.Log(
+                $"[ResilientJsonStore] An unreadable store was moved aside before " +
+                $"being overwritten: '{Path.GetFileName(asidePath)}'.");
+            PruneUnreadableAsides(storePath);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[ResilientJsonStore] Could not move an unreadable store aside: {ex.Message}");
+        }
+    }
+
+    private static void PruneUnreadableAsides(string storePath)
+    {
+        try
+        {
+            string? directory = Path.GetDirectoryName(storePath);
+            if (directory is null)
+            {
+                return;
+            }
+
+            foreach (string file in Directory
+                .EnumerateFiles(directory, $"{Path.GetFileName(storePath)}.unreadable-*")
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .Skip(MaxUnreadableAsides))
+            {
+                TryDeleteFile(file);
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[ResilientJsonStore] Could not prune preserved unreadable stores: {ex.Message}");
+        }
+    }
+
     public static Task SaveAsync(string storePath, string json)
     {
         return SaveAsync(
@@ -297,6 +360,7 @@ internal static class ResilientJsonStore
         ArgumentNullException.ThrowIfNull(delayAsync);
 
         Directory.CreateDirectory(Path.GetDirectoryName(storePath)!);
+        PreserveUnreadablePrimary(storePath);
         string tempPath = $"{storePath}.{Guid.NewGuid():N}.tmp";
         try
         {
