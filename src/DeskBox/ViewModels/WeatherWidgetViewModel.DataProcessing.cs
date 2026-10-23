@@ -642,7 +642,7 @@ public sealed partial class WeatherWidgetViewModel
     {
         try
         {
-            var dt = DateTimeOffset.Parse(isoTime);
+            var dt = DateTimeOffset.Parse(isoTime, CultureInfo.InvariantCulture, DateTimeStyles.None);
             return dt.Hour >= 6 && dt.Hour < 19;
         }
         catch
@@ -655,7 +655,7 @@ public sealed partial class WeatherWidgetViewModel
     {
         try
         {
-            var dt = DateTimeOffset.Parse(isoTime);
+            var dt = DateTimeOffset.Parse(isoTime, CultureInfo.InvariantCulture, DateTimeStyles.None);
             return dt.Hour == 0 ? "0:00" : $"{dt.Hour}:00";
         }
         catch
@@ -668,7 +668,7 @@ public sealed partial class WeatherWidgetViewModel
     {
         try
         {
-            var dt = DateTimeOffset.Parse(isoTime);
+            var dt = DateTimeOffset.Parse(isoTime, CultureInfo.InvariantCulture, DateTimeStyles.None);
             return dt.ToString("HH:mm");
         }
         catch
@@ -681,7 +681,7 @@ public sealed partial class WeatherWidgetViewModel
     {
         try
         {
-            var dt = DateTimeOffset.Parse(dateStr);
+            var dt = DateTimeOffset.Parse(dateStr, CultureInfo.InvariantCulture, DateTimeStyles.None);
             var culture = language switch
             {
                 "zh-CN" => new System.Globalization.CultureInfo("zh-CN"),

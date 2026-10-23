@@ -192,6 +192,37 @@ public sealed class WeatherTimeLabelTests : IDisposable
         Assert.All(viewModel.HourlyForecast, item => Assert.False(item.IsCurrentHour));
     }
 
+    [Fact]
+    public async Task DayLabels_StayReadableUnderANonGregorianSystemCalendar()
+    {
+        DateOnly today = DateOnly.FromDateTime(DateTime.Now);
+        WeatherCacheStore store = CreateStore();
+        Assert.True(await store.SaveForecastAsync(CreateStaleForecast(today)));
+
+        SettingsService settings = CreateManualCitySettings();
+        CultureInfo previous = CultureInfo.CurrentCulture;
+        try
+        {
+            // ar-SA's default calendar is Um Al Qura: parsing an ISO date with the
+            // ambient culture throws, and the label then degrades to the raw string.
+            CultureInfo.CurrentCulture = new CultureInfo("ar-SA");
+
+            using var viewModel = new WeatherWidgetViewModel(
+                CreateConfig(),
+                new WeatherService(store),
+                TestServices.CreateLocalizationService(),
+                settings);
+
+            await viewModel.InitializeAsync();
+
+            Assert.True(viewModel.HasData);
+            Assert.All(viewModel.DailyForecast, day => Assert.DoesNotContain("2026", day.DayLabel));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
+    }
     private WeatherCacheStore CreateStore() =>
         new(Path.Combine(_tempRoot, WeatherCacheStore.FileName));
 
