@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DeskBox.Helpers;
 using DeskBox.Models;
@@ -296,29 +297,34 @@ public sealed partial class WeatherWidgetViewModel
         if (data.Daily is not null)
         {
             PopulateDailyForecast(data.Daily);
-        
-            if (data.Daily.UvIndexMax.Count > 0)
+
+            // The daily arrays start at the first day the response covers, which is
+            // only "today" for a fresh response. A cached response starts in the past,
+            // so the "today" cards below must look the day up by its date.
+            int todayIndex = ResolveTodayIndex(data.Daily, DateOnly.FromDateTime(ResolveNowInLocation().DateTime));
+
+            if (data.Daily.UvIndexMax.Count > todayIndex)
             {
-                double uv = data.Daily.UvIndexMax[0];
+                double uv = data.Daily.UvIndexMax[todayIndex];
                 UvIndexValueText = $"{uv:0}";
                 UvIndexText = _localizationService.Format("Weather.UVLabel", UvIndexValueText);
             }
         
-            if (data.Daily.PrecipitationProbabilityMax.Count > 0)
+            if (data.Daily.PrecipitationProbabilityMax.Count > todayIndex)
             {
-                double precip = data.Daily.PrecipitationProbabilityMax[0];
+                double precip = data.Daily.PrecipitationProbabilityMax[todayIndex];
                 PrecipitationValueText = $"{(int)precip}%";
                 PrecipitationText = _localizationService.Format("Weather.PrecipChance", PrecipitationValueText);
             }
 
-            if (data.Daily.Sunrise.Count > 0)
+            if (data.Daily.Sunrise.Count > todayIndex)
             {
-                SunriseText = FormatTime(data.Daily.Sunrise[0]);
+                SunriseText = FormatTime(data.Daily.Sunrise[todayIndex]);
             }
 
-            if (data.Daily.Sunset.Count > 0)
+            if (data.Daily.Sunset.Count > todayIndex)
             {
-                SunsetText = FormatTime(data.Daily.Sunset[0]);
+                SunsetText = FormatTime(data.Daily.Sunset[todayIndex]);
             }
         }
         else
@@ -427,6 +433,7 @@ public sealed partial class WeatherWidgetViewModel
         if (weekRange < 1) weekRange = 1; // avoid division by zero
     
         string lang = _localizationService.CurrentCultureName;
+        DateOnly today = DateOnly.FromDateTime(ResolveNowInLocation().DateTime);
         for (int i = 0; i < count; i++)
         {
             string dateStr = i < daily.Time.Count ? daily.Time[i] : string.Empty;
@@ -435,19 +442,12 @@ public sealed partial class WeatherWidgetViewModel
             double tempMin = i < daily.TemperatureMin.Count ? daily.TemperatureMin[i] : 0;
             double precipProb = i < daily.PrecipitationProbabilityMax.Count ? daily.PrecipitationProbabilityMax[i] : 0;
     
-            string dayLabel;
-            if (i == 0)
+            string dayLabel = ClassifyDayLabel(dateStr, today) switch
             {
-                dayLabel = _localizationService.T("Weather.Today");
-            }
-            else if (i == 1)
-            {
-                dayLabel = _localizationService.T("Weather.Tomorrow");
-            }
-            else
-            {
-                dayLabel = ParseDateToDayLabel(dateStr, lang);
-            }
+                DayLabelKind.Today => _localizationService.T("Weather.Today"),
+                DayLabelKind.Tomorrow => _localizationService.T("Weather.Tomorrow"),
+                _ => ParseDateToDayLabel(dateStr, lang)
+            };
     
             double barOffset = (tempMin - weekMin) / weekRange;
             double barWidth = (tempMax - tempMin) / weekRange;
@@ -490,7 +490,16 @@ public sealed partial class WeatherWidgetViewModel
     private void PopulateHourlyForecast(WeatherHourly hourly)
     {
         HourlyForecast.Clear();
-        int startIndex = FindCurrentHourIndex(hourly.Time);
+
+        // The hourly entries are in the location's timezone. Comparing them with the
+        // machine clock only works when the user sits in that timezone, so resolve
+        // "now" there; a stale cache has no matching hour, in which case the strip
+        // starts at the first upcoming hour and nothing is marked as current.
+        DateTimeOffset nowInLocation = ResolveNowInLocation();
+        int currentIndex = FindCurrentHourIndex(hourly.Time, nowInLocation);
+        int startIndex = currentIndex >= 0
+            ? currentIndex
+            : FindFirstHourAtOrAfter(hourly.Time, nowInLocation);
         int count = Math.Min(24, hourly.Time.Count - startIndex);
         for (int i = 0; i < count; i++)
         {
@@ -515,7 +524,7 @@ public sealed partial class WeatherWidgetViewModel
                 PrecipitationText = precip > 0 ? $"{(int)precip}%" : "",
                 IconGlyph = WeatherCodeMapper.GetGlyph(wmoCode, isDaytime),
                 Icon = CreateIcon(wmoCode, isDaytime),
-                IsCurrentHour = i == 0,
+                IsCurrentHour = idx == currentIndex,
                 ForecastHourTextSize = this.ForecastHourTextSize
             });
         }
@@ -523,23 +532,110 @@ public sealed partial class WeatherWidgetViewModel
         OnPropertyChanged(nameof(HourlyForecastItemsSource));
     }
 
-    private static int FindCurrentHourIndex(List<string> times)
+    internal static int FindCurrentHourIndex(List<string> times, DateTimeOffset now)
     {
-        if (times.Count == 0)
-        {
-            return 0;
-        }
-
-        string now = DateTimeOffset.Now.ToString("yyyy-MM-ddTHH");
+        string prefix = now.ToString("yyyy-MM-ddTHH", CultureInfo.InvariantCulture);
         for (int i = 0; i < times.Count; i++)
         {
-            if (times[i].StartsWith(now, StringComparison.OrdinalIgnoreCase))
+            if (times[i].StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    internal static int FindFirstHourAtOrAfter(List<string> times, DateTimeOffset now)
+    {
+        string prefix = now.ToString("yyyy-MM-ddTHH", CultureInfo.InvariantCulture);
+        for (int i = 0; i < times.Count; i++)
+        {
+            if (string.CompareOrdinal(times[i], prefix) >= 0)
             {
                 return i;
             }
         }
 
         return 0;
+    }
+
+    internal enum DayLabelKind
+    {
+        Date,
+        Today,
+        Tomorrow
+    }
+
+    /// <summary>
+    /// Decides whether a daily entry is today, tomorrow, or just a date. The daily
+    /// arrays are positional, so an entry is only "today" when its own date says so.
+    /// </summary>
+    internal static DayLabelKind ClassifyDayLabel(string dateStr, DateOnly today)
+    {
+        if (!TryParseIsoDate(dateStr, out DateOnly date))
+        {
+            return DayLabelKind.Date;
+        }
+
+        if (date == today)
+        {
+            return DayLabelKind.Today;
+        }
+
+        return date == today.AddDays(1) ? DayLabelKind.Tomorrow : DayLabelKind.Date;
+    }
+
+    internal static bool TryParseIsoDate(string dateStr, out DateOnly date)
+    {
+        return DateOnly.TryParseExact(
+            dateStr,
+            "yyyy-MM-dd",
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.None,
+            out date);
+    }
+
+    /// <summary>
+    /// Index of the entry that covers today, or 0 when the response does not cover
+    /// today at all (a cache older than its own forecast window).
+    /// </summary>
+    internal static int ResolveTodayIndex(WeatherDaily daily, DateOnly today)
+    {
+        for (int i = 0; i < daily.Time.Count; i++)
+        {
+            if (TryParseIsoDate(daily.Time[i], out DateOnly date) && date == today)
+            {
+                return i;
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// The forecast is expressed in the location's timezone. "Now" therefore has to be
+    /// resolved there, otherwise a location in another timezone is shown the wrong
+    /// hour, and a cached response is shown as if it were current.
+    /// </summary>
+    private DateTimeOffset ResolveNowInLocation()
+    {
+        try
+        {
+            string timezone = _weatherData?.Timezone ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(timezone)
+                && TimeZoneInfo.TryFindSystemTimeZoneById(timezone, out TimeZoneInfo? zone)
+                && zone is not null)
+            {
+                return TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, zone);
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[Weather] Could not resolve the location timezone: {ex.Message}");
+        }
+
+        return DateTimeOffset.Now;
     }
 
     private static bool IsDaytimeHour(string isoTime)
