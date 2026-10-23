@@ -1,3 +1,4 @@
+using System;
 using System.Globalization;
 using DeskBox.Helpers;
 using DeskBox.Services;
@@ -27,6 +28,73 @@ public sealed class DisplayCultureTests
         Assert.False(arabic.DateTimeFormat.Calendar is GregorianCalendar, "the source culture instance must stay untouched");
         // Cached per culture name: a second call returns the same clone.
         Assert.Same(gregorian, DisplayCulture.EnsureGregorian(arabic));
+    }
+
+    [Fact]
+    public void FileMetaFormatDate_RendersGregorianUnderANonGregorianSystemFormat()
+    {
+        CultureInfo original = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo arabic = CultureInfo.GetCultureInfo("ar-SA");
+            CultureInfo.CurrentCulture = arabic;
+            CultureInfo gregorianArabic = GregorianArabic(arabic);
+            DateTime thisYear = new(DateTime.Now.Year, 10, 24);
+            DateTime olderYear = new(DateTime.Now.Year - 6, 1, 1);
+
+            Assert.Equal(
+                thisYear.ToString("M", gregorianArabic),
+                FileMetaService.FormatDate(thisYear));
+            Assert.Equal(
+                olderYear.ToString("d", gregorianArabic),
+                FileMetaService.FormatDate(olderYear));
+            Assert.NotEqual(olderYear.ToString("d", arabic), FileMetaService.FormatDate(olderYear));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = original;
+        }
+    }
+
+    [Fact]
+    public void FileMetaFormatDate_DoesNotThrowForFileTimesOutsideTheNonGregorianCalendarRange()
+    {
+        // UmAlQuraCalendar only supports 1900-04-30..2077-11-16, and file
+        // system timestamps are untrusted inputs.
+        CultureInfo original = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("ar-SA");
+
+            Assert.NotEmpty(FileMetaService.FormatDate(new DateTime(2099, 1, 1)));
+            Assert.NotEmpty(FileMetaService.FormatDate(new DateTime(1601, 1, 1)));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = original;
+        }
+    }
+
+    [Fact]
+    public void RemoteSnapshotName_RoundTripsUnderANonGregorianSystemFormat()
+    {
+        // The remote snapshot name is a protocol identifier that the same
+        // service parses back with the invariant culture; it must be built
+        // with the invariant culture too, whatever the system format is.
+        CultureInfo original = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("ar-SA");
+
+            string name = CloudBackupService.BuildRemoteSnapshotName();
+
+            Assert.NotNull(CloudBackupService.ParseSnapshotTimestamp(name));
+            Assert.Contains($"{DateTimeOffset.UtcNow.Year}", name, StringComparison.Ordinal);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = original;
+        }
     }
 
     private static CultureInfo GregorianArabic(CultureInfo arabic)

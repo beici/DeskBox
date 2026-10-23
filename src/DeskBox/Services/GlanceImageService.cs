@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using DeskBox.Models;
 using Windows.Networking.Connectivity;
+using System.Globalization;
 
 namespace DeskBox.Services;
 
@@ -418,7 +419,7 @@ public sealed class GlanceImageService
     {
         string categoryTitle = category switch
         {
-            GlanceOnlineImageCategory.Featured => $"Category:Pictures of the day ({DateTime.UtcNow:yyyy})",
+            GlanceOnlineImageCategory.Featured => string.Create(CultureInfo.InvariantCulture, $"Category:Pictures of the day ({DateTime.UtcNow:yyyy})"),
             GlanceOnlineImageCategory.Landscapes => "Category:Featured pictures of landscapes",
             GlanceOnlineImageCategory.Cities => "Category:Quality images of cityscapes",
             GlanceOnlineImageCategory.Architecture => "Category:Featured pictures of architecture",

@@ -9,6 +9,7 @@ using DeskBox.FileSafety;
 using DeskBox.Models;
 
 using DeskBox.Contracts;
+using System.Globalization;
 
 namespace DeskBox.Services;
 
@@ -273,7 +274,7 @@ public sealed partial class DeskBoxDataBackupService
 
             string snapshotPath = GetAvailableArchivePath(
                 target.Directory,
-                $"DeskBox-Auto-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
+                string.Create(CultureInfo.InvariantCulture, $"DeskBox-Auto-{DateTime.Now:yyyyMMdd-HHmmss}.zip"));
             await CreateArchiveCoreAsync(snapshotPath, "automatic", cancellationToken);
             PruneAutomaticSnapshots(target.Directory, options.RetentionCount);
             if (target.UsedFallback)
@@ -329,7 +330,7 @@ public sealed partial class DeskBoxDataBackupService
             Directory.CreateDirectory(destinationDirectory);
             string backupPath = GetAvailableArchivePath(
                 destinationDirectory,
-                $"DeskBox-Backup-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
+                string.Create(CultureInfo.InvariantCulture, $"DeskBox-Backup-{DateTime.Now:yyyyMMdd-HHmmss}.zip"));
             await CreateArchiveCoreAsync(backupPath, "manual", cancellationToken);
             App.Log($"[DataBackup] Exported backup '{backupPath}'.");
             return backupPath;
@@ -390,7 +391,7 @@ public sealed partial class DeskBoxDataBackupService
 
             string backupPath = GetAvailableArchivePath(
                 destinationDirectory,
-                $"DeskBox-CloudBackup-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
+                string.Create(CultureInfo.InvariantCulture, $"DeskBox-CloudBackup-{DateTime.Now:yyyyMMdd-HHmmss}.zip"));
             // The manifest must only claim domains that actually shipped —
             // WidgetStyle without a produced document does not count.
             CloudBackupDomain shippedScope = rootEntries is null
@@ -2486,7 +2487,7 @@ public sealed partial class DeskBoxDataBackupService
             {
                 // The stores created their empty folders already; keep them
                 // out of the way instead of deleting anything.
-                string parked = $"{DataDirectory}-pre-recovery-{DateTime.Now:yyyyMMdd-HHmmss}";
+                string parked = string.Create(CultureInfo.InvariantCulture, $"{DataDirectory}-pre-recovery-{DateTime.Now:yyyyMMdd-HHmmss}");
                 PersistenceFileMutations.MoveDirectory(DataDirectory, parked);
                 App.Log(
                     $"[DataBackup] Moved the app-created empty data directory aside: '{parked}'.");
@@ -3112,7 +3113,7 @@ public sealed partial class DeskBoxDataBackupService
         Directory.CreateDirectory(PreRestoreBackupDirectory);
         string preRestorePath = GetAvailableArchivePath(
             PreRestoreBackupDirectory,
-            $"DeskBox-PreRestore-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
+            string.Create(CultureInfo.InvariantCulture, $"DeskBox-PreRestore-{DateTime.Now:yyyyMMdd-HHmmss}.zip"));
         await WritePendingRestoreMarkerAtomicallyAsync(
             PendingRestoreMarkerPath,
             marker with { SafetyBackupPath = preRestorePath },

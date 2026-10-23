@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using DeskBox.Models;
+using System.Globalization;
 
 namespace DeskBox.Services;
 
@@ -428,7 +429,7 @@ public sealed partial class DeskBoxDiagnosticsBundleService
         string destinationDirectory,
         DateTimeOffset generatedAtUtc)
     {
-        string stem = $"DeskBox-Diagnostics-{generatedAtUtc.ToLocalTime():yyyyMMdd-HHmmss}";
+        string stem = string.Create(CultureInfo.InvariantCulture, $"DeskBox-Diagnostics-{generatedAtUtc.ToLocalTime():yyyyMMdd-HHmmss}");
         string path = Path.Combine(destinationDirectory, stem + ".zip");
         for (int suffix = 2; File.Exists(path) || File.Exists(path + ".tmp"); suffix++)
         {

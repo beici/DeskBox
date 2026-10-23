@@ -3,6 +3,7 @@ using System.Net.Http;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using Windows.Storage.Streams;
+using System.Globalization;
 
 namespace DeskBox.Services;
 
@@ -249,7 +250,7 @@ public static class DeskBoxDragData
                 using IRandomAccessStreamWithContentType bitmapStream = await bitmapReference.OpenReadAsync();
                 temporaryDirectory ??= CreateTemporaryDropDirectory();
                 string extension = GetBitmapExtension(bitmapStream.ContentType);
-                string fileName = $"Dropped image {DateTime.Now:yyyyMMdd-HHmmss}{extension}";
+                string fileName = string.Create(CultureInfo.InvariantCulture, $"Dropped image {DateTime.Now:yyyyMMdd-HHmmss}{extension}");
                 string path = await SaveRandomAccessStreamAsync(bitmapStream, fileName, temporaryDirectory);
                 files.Add(new DroppedFilePath(path, fileName, ForceManagedCopy: true));
             }
@@ -520,7 +521,7 @@ public static class DeskBoxDragData
         string fileName = FileService.SanitizeFileSystemName(Path.GetFileName(storageFile.Name));
         if (string.IsNullOrWhiteSpace(fileName))
         {
-            fileName = $"Dropped file {DateTime.Now:yyyyMMdd-HHmmss}";
+            fileName = string.Create(CultureInfo.InvariantCulture, $"Dropped file {DateTime.Now:yyyyMMdd-HHmmss}");
         }
 
         try

@@ -436,7 +436,7 @@ public sealed partial class AppUpdateService : IAppUpdateService
 
         string helperDirectory = Path.Combine(
             helperRoot,
-            $"{DateTimeOffset.UtcNow:yyyyMMddHHmmss}-{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}");
+            string.Create(CultureInfo.InvariantCulture, $"{DateTimeOffset.UtcNow:yyyyMMddHHmmss}-{Environment.ProcessId}"));
         Directory.CreateDirectory(helperDirectory);
 
         foreach (var sourcePath in Directory.EnumerateFiles(appDirectory, "DeskBox.Updater.*", SearchOption.TopDirectoryOnly))

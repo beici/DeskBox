@@ -1,6 +1,7 @@
 using DeskBox.Models;
 
 using DeskBox.Contracts;
+using System.Globalization;
 
 namespace DeskBox.Services;
 
@@ -642,10 +643,10 @@ internal sealed class CloudBackupService
     /// snapshot — and cross-device ordering never depends on a local clock
     /// (legacy local-time names are still parsed on read).
     /// </summary>
-    private static string BuildRemoteSnapshotName()
+    internal static string BuildRemoteSnapshotName()
     {
         string deviceSuffix = DeviceIdentity.Id is { Length: >= 8 } id ? id[..8] : "nodevice";
-        return $"{SnapshotFilePrefix}{DateTimeOffset.UtcNow:yyyyMMdd'T'HHmmss'Z'}-{deviceSuffix}{SnapshotFileExtension}";
+        return string.Create(CultureInfo.InvariantCulture, $"{SnapshotFilePrefix}{DateTimeOffset.UtcNow:yyyyMMdd'T'HHmmss'Z'}-{deviceSuffix}{SnapshotFileExtension}");
     }
 
     internal static bool IsSnapshotName(string name) =>

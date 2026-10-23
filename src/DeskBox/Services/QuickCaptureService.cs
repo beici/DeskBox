@@ -3,6 +3,7 @@ using DeskBox.Models;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
 using Windows.Storage.Streams;
+using System.Globalization;
 
 namespace DeskBox.Services;
 
@@ -2208,7 +2209,7 @@ public sealed class QuickCaptureService
         }
 
         string extension = NormalizeImageExtension(sourceImagePath);
-        return $"{prefix} {timestamp.ToLocalTime():yyyy-MM-dd HH-mm-ss}{extension}";
+        return string.Create(CultureInfo.InvariantCulture, $"{prefix} {timestamp.ToLocalTime():yyyy-MM-dd HH-mm-ss}{extension}");
     }
 
     private static bool IsImageFile(string? path)

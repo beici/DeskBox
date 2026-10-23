@@ -1,4 +1,5 @@
 using DeskBox.Core.Persistence;
+using System.Globalization;
 
 namespace DeskBox.Services;
 
@@ -233,7 +234,7 @@ internal static class ResilientJsonStore
 
         try
         {
-            string asidePath = $"{storePath}.unreadable-{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}";
+            string asidePath = string.Create(CultureInfo.InvariantCulture, $"{storePath}.unreadable-{DateTime.UtcNow:yyyyMMdd-HHmmss-fff}");
             PersistenceFileMutations.MoveFile(storePath, asidePath);
             App.Log(
                 $"[ResilientJsonStore] An unreadable store was moved aside before " +
@@ -524,7 +525,7 @@ internal static class ResilientJsonStore
 
     private static void QuarantineCorruptFile(string storePath, string logName)
     {
-        string corruptPath = $"{storePath}.corrupt-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}";
+        string corruptPath = string.Create(CultureInfo.InvariantCulture, $"{storePath}.corrupt-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}");
         try
         {
             File.Move(storePath, corruptPath);

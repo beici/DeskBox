@@ -1,4 +1,5 @@
 using DeskBox.Models;
+using System.Globalization;
 
 namespace DeskBox.Services;
 
@@ -42,7 +43,7 @@ public static class AttachmentStorageService
         string normalizedName = FileService.SanitizeFileSystemName(Path.GetFileName(fileName));
         if (string.IsNullOrWhiteSpace(normalizedName))
         {
-            normalizedName = $"Attachment-{DateTime.Now:yyyyMMdd-HHmmss}";
+            normalizedName = string.Create(CultureInfo.InvariantCulture, $"Attachment-{DateTime.Now:yyyyMMdd-HHmmss}");
         }
 
         string destinationPath = FileService.GetAvailablePath(Path.Combine(managedDirectory, normalizedName));
