@@ -192,20 +192,21 @@ public sealed class NativeAppNotificationService : IDisposable
             return false;
         }
 
-        // Showing while the platform has notifications turned off for this
-        // app (user setting, group policy, or manifest) does not throw —
-        // the toast is silently dropped. Probe the setting so callers can
-        // fall back to their own surfaces instead of assuming the reminder
-        // was displayed.
-        AppNotificationSetting setting = AppNotificationManager.Default.Setting;
-        if (setting != AppNotificationSetting.Enabled)
-        {
-            App.Log($"[Notification] Native app notifications unavailable (setting={setting}); not shown.");
-            return false;
-        }
-
         try
         {
+            // Showing while the platform has notifications turned off for
+            // this app (user setting, group policy, or manifest) does not
+            // throw — the toast is silently dropped. Probe the setting (the
+            // read itself is a WinRT COM call and must stay inside the try,
+            // like every other platform call here) so callers can fall back
+            // to their own surfaces instead of assuming it was displayed.
+            AppNotificationSetting setting = AppNotificationManager.Default.Setting;
+            if (setting != AppNotificationSetting.Enabled)
+            {
+                App.Log($"[Notification] Native app notifications unavailable (setting={setting}); not shown.");
+                return false;
+            }
+
             var builder = new AppNotificationBuilder()
                 .AddText(title)
                 .AddText(message);
