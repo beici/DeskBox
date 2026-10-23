@@ -14,6 +14,7 @@
 | 5 | 布局：`WidgetPositioningService.EnsureVisible` 只夹位置不夹尺寸 | 格子比工作区宽时标题栏按钮与缩放握把跑到屏幕外，且重启不恢复 | P1 | 已修 | 见 §5 |
 | 6 | 待办：软删除条目仍参与提醒与"完成" | 删掉的待办照旧弹提醒；从通知点"完成"会克隆出一条新的未删除待办（删了会长回来） | P1 | 已修 | `43e7092e` |
 | 7 | 存储：读不出来的主文件在下一次保存时被轮转进 `.bak` | 一次瞬时读失败 + 两次保存，用户最新的那份字节彻底消失（没有任何副本） | P1 | 已修 | `cd4693f1` |
+| 8 | 天气：把数组下标当日期、把本机时钟当位置时钟 | 几天前的缓存被贴成"今天"，今日 UV/降水/日出日落取错天；跨时区时小时带从错误钟点开始并把过去的小时标成"现在" | P1 | 已修 | `d4da1b51` |
 
 第 1 轮结束时：P0 = 0，P1 = 0（两条 P1 候选经真机实验证伪，见 §1.3），P2 = 2（均已修）。
 第 2 轮结束时：P0 = 0，P1 = 2（均已修），P2 = 0。
@@ -22,6 +23,7 @@
 第 5 轮结束时：P0 = 0，P1 = 1（已修）；记录一条新发现的 P2（夹出来的尺寸被写回配置）作为**需要产品决策的已知代价**（见 §5.3）。
 第 6 轮结束时：P0 = 0，P1 = 1（已修）；一条 P1 候选（更新下载 20 秒超时）经真机实验证伪（见 §6.3）；weather / music / todo 另有 8 条真缺陷候选留待后续轮（见 §6.4）。
 第 7 轮结束时：P0 = 0，P1 = 1（已修）；本轮无真机证据（本机不存在"读不出来的主文件"状态），缺陷与修复全部由单测 A/B 证明（见 §7）。
+第 8 轮结束时：P0 = 0，P1 = 0（全部已修）；第 6 轮报告里的 weather / music 候选又消化掉两条（见 §8），剩余线索见 §6.4 与 §8.3。
 
 ## 第 1 轮：Show Desktop 自愈链
 
@@ -333,6 +335,34 @@ C 每次保存都留历史副本（20 分，磁盘增长）；D `.bak` 保留多
    销毁证据的动作。写数据面修复时要顺着"下一次写入"再走一步。
 2. 真机触发不了的状态（本机没有读不出来的主文件）就不要硬凑真机证据——单测 A/B 已足够，如实记录在案。
 
+## 第 8 轮：天气的时间语义
+
+### 8.1 问题 — 把数组下标当日期，把本机时钟当位置时钟（P1，已修）
+
+`src/DeskBox/ViewModels/WeatherWidgetViewModel.DataProcessing.cs`（修复前）：
+
+- 日预报 `i == 0 → "今天"`、`i == 1 → "明天"`，其余才按日期格式化；
+- "今日"指标（UV / 降水概率 / 日出 / 日落）固定取第 `0` 条；
+- 逐小时条用**本机** `DateTimeOffset.Now` 的 `"yyyy-MM-ddTHH"` 去匹配条目的本地时间，未命中就从第 0 条开始，并把第一条标成"当前小时"。
+
+后果：离线或刚启动还没刷新成功时，格子显示的是几天前的缓存，却把三天前的天气称作"今天"，今日 UV/降水/日出日落也来自那一天；查其他时区的城市时，小时带从错误的钟点开始，并把一个已经过去的小时标成"现在"。
+
+改法：`ClassifyDayLabel` 按条目自带日期判"今天/明天/星期几"；`ResolveTodayIndex` 按日期定位"今日"指标；`ResolveNowInLocation` 用 `WeatherData.Timezone`（IANA id）换算"现在"；小时带改为"当前小时或下一个小时"起算，只有真正命中的那一格 `IsCurrentHour`。
+
+证据与 A/B：新增 `tests/DeskBox.Tests/WeatherTimeLabelTests.cs`（8 用例，其中 2 条走真实生产路径 `InitializeAsync → LoadCachedWeatherAsync → ApplyWeatherData`）。把接线临时改回旧语义时，正好这 2 条失败（`Expected: Not "Today" / Actual: "Today"`；`Assert.All` 报 5 条里 1 条 `IsCurrentHour=true`），恢复后 8/8 通过。
+
+### 8.2 方法学教训
+
+- **纯函数重构的 A/B 不能靠"改回旧实现"**：旧实现里这些 helper 根本不存在，测试文件编译不过，红灯是编译错误而不是断言失败。可行做法是保留新 helper、只把**接线**改回旧语义——这恰好也证明了"用户可见行为由接线决定"，比单纯断言 helper 更有价值。
+- 断言渲染文本时要先确认它到底长什么样：`ParseDateToDayLabel` 返回的是**星期缩写**（`ddd`），不是"10月20日"，第一版断言 `Contains("20")` 直接误报。
+- `FindFirstHourAtOrAfter` 的语义是"当前小时或下一个小时"（小时粒度前缀比较），不是"严格晚于现在"——写测试期望前先想清楚粒度。
+
+### 8.3 留给后续轮的线索（本轮不主张、不定级）
+
+1. **陈旧缓存没有任何"可能已过期"提示**：本轮只修"贴错日期"，不修"该不该显示"。要真正解决需要产品决策 + 12 语言新字符串（如 `Weather.StaleDataNotice`）。
+2. `ParseDateToDayLabel` / `FormatHourLabel` / `IsDaytimeHour` / `FormatTime` 仍用 `DateTimeOffset.Parse`（环境区域性）解析 ISO 字符串：在 Um Al Qura 等非公历默认区域下可能解析失败并回退成原始字符串。P2 候选。
+3. 缓存窗口内没有"今天"时，今日 UV/降水/日出日落仍回落第 0 条：数据来自哪天没有标注（但不再被称作"今天"）。
+4. `WeatherData.Timezone` 若不是可解析的 IANA id，会静默回落本机时钟（有日志）。
 ## 环境事实（后续轮直接复用）
 
 - 构建：**必须用 `C:\Users\scrip\.dotnet\dotnet.exe`**（PATH 上的 `dotnet` 是没 SDK 的宿主，会报 `No .NET SDKs were found`）。命令 `dotnet build .\src\DeskBox\DeskBox.csproj --configuration Debug --no-restore -p:Platform=x64`；产物 `src\DeskBox\bin\x64\Debug\net10.0-windows10.0.22621.0\`。**构建成功的唯一证明是 `DeskBox.dll` 写入时间晚于构建开始**（exe 是固定桩）。构建输出不要用 `Select-Object -First` 截断（会提前关闭管道，`dotnet` 以 -1 退出且不写 DLL），改为 `*> 日志文件` 再筛。
