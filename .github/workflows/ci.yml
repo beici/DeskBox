@@ -13,6 +13,9 @@ jobs:
     runs-on: windows-latest
     env:
       RestoreLockedMode: true
+      # Keep latestPatch resolution away from newer SDKs preinstalled on the runner.
+      DOTNET_INSTALL_DIR: ${{ runner.temp }}/deskbox-dotnet
+      DOTNET_MULTILEVEL_LOOKUP: 0
 
     steps:
       - name: Checkout
@@ -30,14 +33,18 @@ jobs:
             exit 1
           }
 
-      - name: Setup .NET
+      - name: Setup pinned .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 10.0.x
+          global-json-file: global.json
 
       - name: Restore
         shell: pwsh
         run: |
+          $expectedSdk = (Get-Content global.json -Raw | ConvertFrom-Json).sdk.version
+          if ((dotnet --version).Trim() -ne $expectedSdk) {
+            throw "The isolated SDK does not match global.json ($expectedSdk)."
+          }
           dotnet restore .\DeskBox.sln --locked-mode -p:Platform=x64 -p:RuntimeIdentifier=win-x64
 
       - name: Build
