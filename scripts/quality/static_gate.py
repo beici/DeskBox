@@ -69,28 +69,42 @@ def _fallback_scan(pattern, path):
     return results
 
 
+def _repository_file_paths():
+    """Use the same file inventory with and without ripgrep, including new text formats."""
+    if os.path.exists(os.path.join(ROOT, ".git")) and shutil.which("git"):
+        result = subprocess.run(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if result.returncode != 0:
+            raise RuntimeError(f"Cannot enumerate repository files: {result.stderr.strip()}")
+        return [os.path.normpath(os.path.join(ROOT, path))
+                for path in sorted(set(result.stdout.split("\0"))) if path]
+
+    # Source archives can be checked without Git. Exclude generated directories,
+    # but do not restrict text to a suffix list that can miss native/build inputs.
+    paths = []
+    skip_dirs = {"bin", "obj", "artifacts", ".artifacts", "Output", "TestResults",
+                 "node_modules", "target", "packages", "__pycache__"}
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames
+                       if (not d.startswith(".") or d in (".github", ".githooks")) and d not in skip_dirs]
+        paths.extend(os.path.join(dirpath, fn) for fn in sorted(filenames))
+    return sorted(paths)
+
+
 def _fallback_repo_files():
-    """整仓库文本文件内容缓存（路径→内容），rg 缺失时的重放/多行搜索共用。"""
+    """Shared repository text cache for contract replay and multiline checks."""
     global _REPO_FILE_CACHE
     if _REPO_FILE_CACHE is not None:
         return _REPO_FILE_CACHE
     cache = {}
-    _fallback_exts = _FALLBACK_EXTS | {".md", ".txt", ".yml", ".yaml", ".toml",
-                                       ".csproj", ".sln", ".props", ".iss", ".iss"}
-    skip_dirs = {"bin", "obj", "artifacts", ".artifacts", "node_modules",
-                 "target", "packages"}
-    for dirpath, dirnames, filenames in os.walk(ROOT):
-        dirnames[:] = [d for d in dirnames
-                       if (not d.startswith(".") or d in (".github", ".githooks")) and d not in skip_dirs]
-        for fn in sorted(filenames):
-            if os.path.splitext(fn)[1].lower() not in _fallback_exts:
-                continue
-            file_path = os.path.join(dirpath, fn)
-            try:
-                with open(file_path, "r", encoding="utf-8", errors="replace") as fh:
-                    cache[file_path] = fh.read()
-            except OSError:
-                continue
+    for file_path in _repository_file_paths():
+        if not os.path.isfile(file_path):
+            continue  # A tracked file may have been deleted in the working tree.
+        with open(file_path, "rb") as source:
+            raw = source.read()
+        if b"\0" not in raw:
+            cache[file_path] = raw.decode("utf-8", errors="replace").replace("\r\n", "\n")
     _REPO_FILE_CACHE = cache
     return cache
 
@@ -263,21 +277,8 @@ def _contract_search_content(path, content):
 
 def _literal_repository_contents():
     """Load repository text once, excluding test assertion literals."""
-    if not _RG_AVAILABLE:
-        return [_contract_search_content(path, content)
-                for path, content in _fallback_repo_files().items()]
-    result = subprocess.run(
-        ["rg", "--files", "--hidden", "-g", "!.git", "-g", "!.git/**", ROOT],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if result.returncode not in (0, 1):
-        raise RuntimeError(f"Cannot enumerate contract search files: {result.stderr.strip()}")
-    contents = []
-    for path in result.stdout.splitlines():
-        with open(path, "rb") as source:
-            raw = source.read()
-        if b"\0" not in raw:
-            contents.append(_contract_search_content(path, raw.decode("utf-8", errors="replace")))
-    return contents
+    return [_contract_search_content(path, content)
+            for path, content in _fallback_repo_files().items()]
 
 
 def decode_csharp_literal(literal):

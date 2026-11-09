@@ -1,4 +1,7 @@
 import os
+from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -7,6 +10,63 @@ import static_gate
 
 
 class StaticGateTests(unittest.TestCase):
+    def test_source_archive_replay_includes_native_and_installer_inputs(self):
+        with tempfile.TemporaryDirectory() as root:
+            fixtures = {'native/header.h': 'typedef struct NativeRequest',
+                        'installer/language.isl': 'LanguageName=繁體中文',
+                        'installer/other.islu': 'LanguageName=한국어',
+                        'build/new.sourceformat': 'new text format target',
+                        'build/extensionless': 'extensionless target'}
+            for relative, content in fixtures.items():
+                path = Path(root, relative)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding='utf-8')
+            Path(root, 'binary.bin').write_bytes(b'\0binary-only target')
+            Path(root, 'obj').mkdir()
+            Path(root, 'obj', 'Generated.cs').write_text('generated-only target', encoding='utf-8')
+            test_path = Path(root, 'tests', 'FixtureContractTests.cs')
+            test_path.parent.mkdir()
+            test_path.write_text('\n'.join(
+                f'Assert.Contains("{content}", source, StringComparison.Ordinal);'
+                for content in fixtures.values()), encoding='utf-8')
+            outcomes = []
+            for available in (True, False):
+                with self.subTest(ripgrep=available), \
+                        mock.patch.object(static_gate, 'ROOT', root), \
+                        mock.patch.object(static_gate, 'TESTS', str(test_path.parent)), \
+                        mock.patch.object(static_gate, '_RG_AVAILABLE', available), \
+                        mock.patch.object(static_gate, '_REPO_FILE_CACHE', None), \
+                        mock.patch.object(static_gate, 'load_baseline', return_value={}):
+                    contents = '\n'.join(static_gate._literal_repository_contents())
+                    self.assertNotIn('binary-only target', contents)
+                    self.assertNotIn('generated-only target', contents)
+                    outcomes.append(static_gate.replay_contract_assertions())
+            self.assertEqual(outcomes[0], outcomes[1])
+            self.assertEqual((len(fixtures), [], [], []), outcomes[0])
+
+    @unittest.skipUnless(shutil.which('git'), 'Git file inventory requires Git')
+    def test_git_inventory_respects_ignores_and_keeps_tracked_inputs(self):
+        with tempfile.TemporaryDirectory() as root:
+            subprocess.run(['git', 'init', '-q', root], check=True, capture_output=True)
+            tracked = Path(root, 'tracked.input')
+            tracked.write_text('tracked target', encoding='utf-8')
+            subprocess.run(['git', '-C', root, 'add', 'tracked.input'], check=True, capture_output=True)
+            Path(root, '.gitignore').write_text('*.input\nprivate/\n', encoding='utf-8')
+            Path(root, 'ignored.input').write_text('ignored target', encoding='utf-8')
+            Path(root, 'private').mkdir()
+            Path(root, 'private', 'data.h').write_text('private target', encoding='utf-8')
+            Path(root, 'new.h').write_text('untracked target', encoding='utf-8')
+            for available in (True, False):
+                with self.subTest(ripgrep=available), \
+                        mock.patch.object(static_gate, 'ROOT', root), \
+                        mock.patch.object(static_gate, '_RG_AVAILABLE', available), \
+                        mock.patch.object(static_gate, '_REPO_FILE_CACHE', None):
+                    contents = '\n'.join(static_gate._literal_repository_contents())
+                    self.assertIn('tracked target', contents)
+                    self.assertIn('untracked target', contents)
+                    self.assertNotIn('ignored target', contents)
+                    self.assertNotIn('private target', contents)
+
     def test_csharp_escapes_preserve_unicode(self):
         self.assertEqual('中文\r\n"path"\\file',
                          static_gate.decode_csharp_literal(r'中文\r\n\"path\"\\file'))
