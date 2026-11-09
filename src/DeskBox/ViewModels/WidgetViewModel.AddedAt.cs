@@ -4,7 +4,9 @@ namespace DeskBox.ViewModels;
 
 public partial class WidgetViewModel
 {
-    private void ApplyPersistedAddedTimes(IReadOnlyList<WidgetItem> items)
+    private void ApplyPersistedAddedTimes(
+        IReadOnlyList<WidgetItem> items,
+        string enumeratedFolderPath)
     {
         EnsureAddedAtDictionaryComparer();
         bool isLegacySeed = !Config.FileAddedAtTrackingInitialized;
@@ -30,12 +32,23 @@ public partial class WidgetViewModel
             changed = true;
         }
 
-        foreach (string stalePath in Config.FileAddedAtByPath.Keys
-                     .Where(path => !currentPaths.Contains(path))
-                     .ToArray())
+        // D3-01: the tracked dictionary describes the mapped root. An embedded
+        // navigation enumerates one subfolder, so pruning against that snapshot
+        // deleted every root-level record and reseeded it to "now" on return —
+        // permanently rewriting the user's "added" grouping and sort. Only an
+        // enumeration of the mapped root may prune.
+        if (WidgetAddedAtPruningPolicy.ShouldPruneStaleEntries(
+                enumeratedFolderPath,
+                MappedFolderPath,
+                _mappedFolderTraversalPath))
         {
-            Config.FileAddedAtByPath.Remove(stalePath);
-            changed = true;
+            foreach (string stalePath in Config.FileAddedAtByPath.Keys
+                         .Where(path => !currentPaths.Contains(path))
+                         .ToArray())
+            {
+                Config.FileAddedAtByPath.Remove(stalePath);
+                changed = true;
+            }
         }
 
         if (!Config.FileAddedAtTrackingInitialized)
@@ -144,5 +157,30 @@ public partial class WidgetViewModel
     private void PersistAddedAtTracking()
     {
         _settingsService.UpdateWidget(Config, notifySubscribers: false);
+    }
+}
+
+/// <summary>
+/// Decides whether a persisted added-time snapshot may drop entries it did not
+/// see. Only a full enumeration of the mapped root may prune; a subfolder
+/// enumeration is a subset of the tracked set (D3-01).
+/// </summary>
+internal static class WidgetAddedAtPruningPolicy
+{
+    internal static bool ShouldPruneStaleEntries(
+        string? enumeratedFolderPath,
+        string? mappedFolderPath,
+        string? mappedTraversalPath)
+    {
+        if (string.IsNullOrWhiteSpace(enumeratedFolderPath) ||
+            string.IsNullOrWhiteSpace(mappedFolderPath))
+        {
+            return false;
+        }
+
+        // The mapped root can be a junction; the loader enumerates the resolved
+        // traversal path, so either spelling identifies the same enumeration.
+        return WidgetViewModel.PathsEqual(enumeratedFolderPath, mappedTraversalPath) ||
+               WidgetViewModel.PathsEqual(enumeratedFolderPath, mappedFolderPath);
     }
 }

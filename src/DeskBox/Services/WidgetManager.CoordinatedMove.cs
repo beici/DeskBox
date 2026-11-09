@@ -68,16 +68,94 @@ public sealed partial class WidgetManager
             entries,
             WidgetCoordinatedMoveCalculator.GetUnion(entries.Select(entry => entry.StartBounds)),
             workArea);
-        _coordinatedMoveSession = session;
-        foreach (CoordinatedMoveEntry entry in entries)
+
+        // Begin every participant BEFORE publishing the session: a Begin that
+        // throws used to leave _coordinatedMoveSession assigned with half of
+        // the group never armed, which permanently blocked all future
+        // coordinated drags (:13 guard) until process restart. On failure,
+        // unwind the already-armed participants and leave no session behind.
+        int armed = 0;
+        try
         {
-            entry.Window.BeginCoordinatedMoveParticipation(entry.IsSource);
+            foreach (CoordinatedMoveEntry entry in entries)
+            {
+                entry.Window.BeginCoordinatedMoveParticipation(entry.IsSource);
+                armed++;
+            }
         }
+        catch (Exception ex)
+        {
+            App.Log(
+                $"[CoordinatedMove] Begin failed after {armed}/{entries.Length} " +
+                $"participants (0x{sourceWindowHandle.ToInt64():X}): {ex.Message}");
+            for (int i = 0; i < armed; i++)
+            {
+                try
+                {
+                    // Mirror AbortCoordinatedMoveForRemovedWindow's survivor
+                    // handling: not-moved completion unwinds pit #4's
+                    // interaction depth for followers and ends the source's
+                    // drag cleanly.
+                    entries[i].Window.CompleteCoordinatedMoveParticipation(
+                        hasMoved: false,
+                        entries[i].IsSource);
+                }
+                catch (Exception unwindEx)
+                {
+                    App.Log($"[CoordinatedMove] Unwind {i} failed: {unwindEx.Message}");
+                }
+            }
+
+            return false;
+        }
+
+        _coordinatedMoveSession = session;
 
         App.Log(
             $"[CoordinatedMove] Begin source=0x{sourceWindowHandle.ToInt64():X} " +
             $"count={entries.Length} monitor=0x{sourceMonitor.ToInt64():X}");
         return true;
+    }
+
+    // R1-030: destroying a participating window (the source or a follower)
+    // invalidates the session — the source's drag-end can never arrive for a
+    // closed window, and a lingering session blocks every future coordinated
+    // drag. Survivors take the not-moved completion so pit #4's interaction
+    // depth unwinds; the removed window's own participation is skipped: its
+    // teardown already ran and re-entering it would act on a dead HWND.
+    internal void AbortCoordinatedMoveForRemovedWindow(IDesktopWidgetWindow removedWindow)
+    {
+        if (_coordinatedMoveSession is not { } session ||
+            !session.Entries.Any(entry => ReferenceEquals(entry.Window, removedWindow)))
+        {
+            return;
+        }
+
+        _coordinatedMoveSession = null;
+        foreach (CoordinatedMoveEntry entry in session.Entries)
+        {
+            if (ReferenceEquals(entry.Window, removedWindow))
+            {
+                continue;
+            }
+
+            try
+            {
+                entry.Window.CompleteCoordinatedMoveParticipation(
+                    hasMoved: false,
+                    entry.IsSource);
+            }
+            catch (Exception ex)
+            {
+                App.Log(
+                    "[CoordinatedMove] Abort completion failed " +
+                    $"hwnd=0x{entry.Window.WindowHandle.ToInt64():X}: {ex.Message}");
+            }
+        }
+
+        App.Log(
+            "[CoordinatedMove] Aborted by window removal " +
+            $"source=0x{session.SourceWindowHandle.ToInt64():X} count={session.Entries.Length}");
     }
 
     public bool UpdateCoordinatedMove(
@@ -215,6 +293,13 @@ public sealed partial class WidgetManager
                 flags);
             if (next == IntPtr.Zero)
             {
+                // DeferWindowPos destroys the transaction on failure.
+                // Submitting the previous, now-invalid handle to End is a
+                // use-after-free; a small leak is preferred, and the
+                // caller's per-window fallback still moves every window.
+                App.LogVerbose(
+                    "[WidgetManager] DeferWindowPos rejected a staged move; " +
+                    "abandoning the batch for the per-window fallback.");
                 return false;
             }
 

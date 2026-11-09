@@ -115,6 +115,10 @@ public partial class App
                 static () => Environment.WorkingSet);
             if (!recheck.ShouldTrim)
             {
+                // The armed episode pass must not linger: an unrelated
+                // CommitTrim would otherwise consume the next episode's
+                // eligibility.
+                _quiescenceWorkingSetTrimTracker.AbandonPendingEpisodeTrim();
                 Log(
                     $"[Memory] Quiescence working-set trim skipped " +
                     $"reason={recheck.Reason} tier={decision.Tier}");
@@ -124,6 +128,12 @@ public partial class App
             long workingSetBefore = Environment.WorkingSet;
             long started = Stopwatch.GetTimestamp();
             bool trimmed = await Task.Run(Win32Helper.TrimWorkingSet);
+            if (!trimmed)
+            {
+                // Same residue concern as the recheck veto above: an armed
+                // episode pass survives only a committed trim.
+                _quiescenceWorkingSetTrimTracker.AbandonPendingEpisodeTrim();
+            }
             long workingSetAfter = CompleteWorkingSetTrim(
                 trimmed,
                 $"quiescence:{decision.Tier}");

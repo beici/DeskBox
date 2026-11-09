@@ -189,7 +189,7 @@ public sealed partial class FileService
                     operation.DestinationPath))
                 .ToList();
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException canceledException)
         {
             // Explorer semantics: completed items stay, the in-flight item's
             // partial destination was already removed through its own open
@@ -209,14 +209,22 @@ public sealed partial class FileService
                 $"elapsedMs={reporter.ElapsedMilliseconds}");
             // The completed results ride the exception so callers (history,
             // journals, undo) learn what physically moved even though the
-            // batch stopped early.
-            throw new FileTransferCanceledException(
-                completedOperations
-                    .Select(operation => new FileTransferResult(
-                        operation.SourcePath,
-                        operation.DestinationPath))
-                    .ToList(),
-                cancellationToken);
+            // batch stopped early. An item-level cancellation that already
+            // carries its own receipts (e.g. a move cancelled after its copy
+            // completed) keeps them in the wrapper, mirroring the generic
+            // catch below; today's inner cancellation sources are bare OCEs,
+            // so this is defensive symmetry, not a known loss path.
+            var canceledSnapshot = completedOperations
+                .Select(operation => new FileTransferResult(
+                    operation.SourcePath,
+                    operation.DestinationPath))
+                .ToList();
+            if (canceledException is IFileTransferWithCompletedResults itemLevelResults)
+            {
+                canceledSnapshot.AddRange(itemLevelResults.CompletedResults);
+            }
+
+            throw new FileTransferCanceledException(canceledSnapshot, cancellationToken);
         }
         catch (Exception exception)
         {
@@ -531,12 +539,12 @@ public sealed partial class FileService
         {
             if (!destination.SafeFileHandle.IsClosed)
             {
-                var disposition = new FileDispositionInfo { Delete = true };
-                bool deleted = SetFileInformationByHandle(
+                var disposition = new FileTransferNativeMethods.FileDispositionInfo { Delete = true };
+                bool deleted = FileTransferNativeMethods.SetFileInformationByHandle(
                     destination.SafeFileHandle,
                     FileDispositionInfoClass,
                     ref disposition,
-                    Marshal.SizeOf<FileDispositionInfo>());
+                    Marshal.SizeOf<FileTransferNativeMethods.FileDispositionInfo>());
                 App.Log(
                     $"[FileTransfer] Partial cleanup disposition applied={deleted} " +
                     $"for '{destination.Name}'");
@@ -619,7 +627,7 @@ public sealed partial class FileService
         // write, rename, or delete the source mid-move, and the final
         // disposition deletes the exact object that was copied — no gap
         // remains between validation and deletion.
-        SafeFileHandle sourceHandle = CreateFileW(
+        SafeFileHandle sourceHandle = FileTransferNativeMethods.CreateFileW(
             sourceFilePath,
             GenericReadAccess | DeleteAccess | FileWriteAttributesAccess,
             ShareRead,
@@ -671,7 +679,7 @@ public sealed partial class FileService
 
             // The copy was read from this very handle; the disposition
             // therefore deletes exactly the object that was copied.
-            if (!GetFileInformationByHandle(sourceHandle, out ByHandleFileInformation sourceInformation))
+            if (!FileTransferNativeMethods.GetFileInformationByHandle(sourceHandle, out FileTransferNativeMethods.ByHandleFileInformation sourceInformation))
             {
                 throw new FileTransferSourceCleanupException(
                     sourceFilePath,
@@ -748,24 +756,6 @@ public sealed partial class FileService
             // An uncertain path identity must use the observable chunked path.
             return false;
         }
-    }
-
-    internal static bool CanUseLegacyShellMove(
-        IEnumerable<FileTransferPlan> plans)
-    {
-        ArgumentNullException.ThrowIfNull(plans);
-
-        bool hasPlan = false;
-        foreach (FileTransferPlan plan in plans)
-        {
-            hasPlan = true;
-            if (!CanUseAtomicMove(plan.SourcePath, plan.DestinationPath))
-            {
-                return false;
-            }
-        }
-
-        return hasPlan;
     }
 
     private static string? GetComparableVolumeRoot(
@@ -1176,7 +1166,7 @@ public sealed partial class FileService
     /// </summary>
     internal static FileStream CreateTransferDestinationStream(string destinationFilePath)
     {
-        SafeFileHandle destinationHandle = CreateFileW(
+        SafeFileHandle destinationHandle = FileTransferNativeMethods.CreateFileW(
             destinationFilePath,
             GenericWriteAccess | DeleteAccess,
             ShareNone,
@@ -1245,6 +1235,13 @@ public sealed partial class FileService
         {
             _completedItems = Math.Min(totalItems, _completedItems + 1);
             _currentItemName = itemName;
+            // Deliberately forced: CompletedItems is the only per-item
+            // completion signal the progress callback carries, and the
+            // transfer-plan cancellation contract is driven by it (the
+            // ExecuteTransferPlanAsync cancel tests cancel as soon as the
+            // first item completes). Throttling this report would hide
+            // completed items for up to the throttle window and break
+            // cancel-after-first-item semantics.
             Report(FileTransferPhase.Transferring, force: true);
         }
 

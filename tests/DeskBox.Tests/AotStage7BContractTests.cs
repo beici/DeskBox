@@ -65,7 +65,9 @@ public sealed class AotStage7BContractTests
                  {
                      "windows-11-vs2026-arm",
                      "workflow_dispatch",
-                     "codex/stage7b-arm64-actions",
+                     "main",
+                     "tags:",
+                     "v*",
                      "run-arm64-stage-7b-runtime.ps1",
                      "actions/upload-artifact@v4"
                  })

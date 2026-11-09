@@ -23,6 +23,35 @@ public sealed partial class TodoWidgetContent
     private async void TodoListView_KeyDown(object sender, KeyRoutedEventArgs e)
     {
         bool isCtrlPressed = Win32Helper.IsKeyPressed(VirtualKey.Control);
+
+        // Keyboard navigation: the rows are not tab stops (a long list must not become a
+        // tab chain), so arrow keys move programmatic focus and Space toggles the copy
+        // selection. Without this a keyboard-only user could not see or change which
+        // task Delete and Ctrl+C act on.
+        if (e.Key == VirtualKey.Space && GetFocusedTodoItem() is { } focusedItem)
+        {
+            if (Win32Helper.IsKeyPressed(VirtualKey.Shift))
+            {
+                SelectTodoRange(focusedItem);
+            }
+            else
+            {
+                ToggleTodoSelection(focusedItem);
+            }
+
+            e.Handled = true;
+            return;
+        }
+
+        if (!isCtrlPressed && e.Key is VirtualKey.Up or VirtualKey.Down)
+        {
+            if (MoveTodoKeyboardFocus(e.Key == VirtualKey.Up ? -1 : 1))
+            {
+                e.Handled = true;
+                return;
+            }
+        }
+
         if (isCtrlPressed && e.Key == VirtualKey.A)
         {
             SelectAllVisibleTodoItems();
@@ -190,6 +219,39 @@ public sealed partial class TodoWidgetContent
         }
     }
 
+    private void TodoListView_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        // A press that never crossed the 6px box-select threshold holds no
+        // pointer capture, so releasing it outside this element delivers no
+        // Released and no CaptureLost; without this reset the stale press
+        // flag turns the next hover into a phantom box selection. A real
+        // box selection owns capture and is finished by its own
+        // capture-lost path instead, so it is explicitly left alone here.
+        if (_selectionPointerPressed && !_isBoxSelecting &&
+            sender is ListViewBase listView)
+        {
+            FinishTodoSelectionRectangle(listView);
+            ResetTodoReorderVisualState();
+        }
+    }
+
+    /// <summary>
+    /// Ends any pending or active box selection without committing it.
+    /// Called by the adapter when the host window deactivates, where the
+    /// pointer has already left the window and no further pointer events
+    /// will arrive on this surface.
+    /// </summary>
+    internal void AbandonPendingBoxSelection()
+    {
+        if (!_selectionPointerPressed && !_isBoxSelecting)
+        {
+            return;
+        }
+
+        FinishTodoSelectionRectangle(TodoListView);
+        ResetTodoReorderVisualState();
+    }
+
     private void ResetTodoReorderVisualState()
     {
         TodoListView.CanReorderItems = false;
@@ -218,22 +280,22 @@ public sealed partial class TodoWidgetContent
             return;
         }
 
-        foreach (var visibleItem in TodoListView.Items)
+        // The sender is the item that changed, so its container can be looked up
+        // directly. Scanning TodoListView.Items for it made a bulk change
+        // ("complete all") O(n²): one full pass per item, each pass asking for
+        // the container of every entry until the match.
+        if (TodoListView.ContainerFromItem(item) is not FrameworkElement container)
         {
-            if (ReferenceEquals(visibleItem, item) &&
-                TodoListView.ContainerFromItem(visibleItem) is FrameworkElement container)
-            {
-                if (e.PropertyName == nameof(TodoItemViewModel.IsCompleted) &&
-                    FindVisualChild<CheckBox>(container, "TodoCompletionCheckBox") is { } checkBox)
-                {
-                    checkBox.IsChecked = item.IsCompleted;
-                }
-
-                ApplyTodoItemTooltips(container, item);
-                SetTodoItemHoverState(container, false);
-                break;
-            }
+            return;
         }
+
+        if (e.PropertyName == nameof(TodoItemViewModel.IsCompleted) &&
+            FindVisualChild<CheckBox>(container, "TodoCompletionCheckBox") is { } checkBox)
+        {
+            checkBox.IsChecked = item.IsCompleted;
+        }
+
+        SetTodoItemHoverState(container, false);
     }
 
     private void SynchronizeTodoCompletionCheckBox(TodoItemViewModel item)
@@ -243,92 +305,6 @@ public sealed partial class TodoWidgetContent
         {
             checkBox.IsChecked = item.IsCompleted;
         }
-    }
-
-    private static void ApplyTodoItemTooltips(DependencyObject itemRoot, TodoItemViewModel item)
-    {
-        var localization = App.Current.LocalizationService;
-
-        _ = localization;
-    }
-
-        private void TodoItemContent_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
-    {
-        // Single tap handles expand/edit; double tap just prevents default
-        e.Handled = true;
-    }
-
-        private async void TodoItemContent_Tapped(object sender, TappedRoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement element ||
-            element.DataContext is not TodoItemViewModel item)
-        {
-            return;
-        }
-
-        TodoListView.Focus(FocusState.Programmatic);
-        bool isCtrlPressed = Win32Helper.IsKeyPressed(VirtualKey.Control);
-        bool isShiftPressed = Win32Helper.IsKeyPressed(VirtualKey.Shift);
-        if (isCtrlPressed || isShiftPressed)
-        {
-            _copyTapGeneration++;
-            if (isShiftPressed)
-            {
-                SelectTodoRange(item);
-            }
-            else
-            {
-                ToggleTodoSelection(item);
-            }
-
-            e.Handled = true;
-            return;
-        }
-
-        if (HasCopySelection())
-        {
-            ClearCopySelection();
-            e.Handled = true;
-            return;
-        }
-
-        if (ViewModel is null)
-        {
-            return;
-        }
-
-        if (!item.IsExpanded)
-        {
-            ViewModel.ToggleExpanded(item.Id);
-            TodoListView.ScrollIntoView(item);
-        }
-        else if (!item.IsEditing)
-        {
-            ViewModel.BeginEdit(item.Id);
-        }
-
-        e.Handled = true;
-    }
-
-    private async void TodoItemCard_Tapped(object sender, TappedRoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement element ||
-            element.DataContext is not TodoItemViewModel item ||
-            ViewModel is null ||
-            IsInteractiveTodoSource(e.OriginalSource))
-        {
-            return;
-        }
-
-        ClearCopySelection();
-        ClearTodoListContainerSelection();
-        MarkDetailSelectionExplicit();
-        if (await OpenDetailItemAsync(item.Id) is null)
-        {
-            return;
-        }
-
-        e.Handled = true;
     }
 
     private async void TodoListView_ItemClick(object sender, ItemClickEventArgs e)
@@ -374,5 +350,53 @@ public sealed partial class TodoWidgetContent
                 container.IsSelected = false;
             }
         }
+    }
+
+    /// <summary>
+    /// Returns the todo row that currently owns keyboard focus, if any. Rows are
+    /// focusable programmatically but not tab stops, so focus has to be tracked through
+    /// the container rather than through ListView.SelectedItem (selection mode is None).
+    /// </summary>
+    private TodoItemViewModel? GetFocusedTodoItem()
+    {
+        if (TodoListView.XamlRoot is null)
+        {
+            return null;
+        }
+
+        return FocusManager.GetFocusedElement(TodoListView.XamlRoot) is ListViewItem
+        {
+            Content: TodoItemViewModel item
+        }
+            ? item
+            : null;
+    }
+
+    /// <summary>
+    /// Moves keyboard focus by <paramref name="delta"/> rows inside the visible list,
+    /// realizing and scrolling the target row first so the system focus visual can draw.
+    /// </summary>
+    private bool MoveTodoKeyboardFocus(int delta)
+    {
+        if (ViewModel is null || ViewModel.VisibleItems.Count == 0)
+        {
+            return false;
+        }
+
+        TodoItemViewModel? focused = GetFocusedTodoItem();
+        int current = focused is null ? -1 : ViewModel.VisibleItems.IndexOf(focused);
+        int next = current < 0
+            ? (delta > 0 ? 0 : ViewModel.VisibleItems.Count - 1)
+            : Math.Clamp(current + delta, 0, ViewModel.VisibleItems.Count - 1);
+        if (next == current)
+        {
+            return false;
+        }
+
+        TodoItemViewModel target = ViewModel.VisibleItems[next];
+        TodoListView.ScrollIntoView(target);
+        TodoListView.UpdateLayout();
+        return TodoListView.ContainerFromItem(target) is ListViewItem container &&
+            container.Focus(FocusState.Keyboard);
     }
 }

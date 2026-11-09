@@ -3,6 +3,7 @@ using System.Net.Http;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using Windows.Storage.Streams;
+using System.Globalization;
 
 namespace DeskBox.Services;
 
@@ -10,7 +11,6 @@ public static class DeskBoxDragData
 {
     public const string TextFormat = "DeskBox.Internal.Text.v1";
     public const string SourceFormat = "DeskBox.Internal.Source.v1";
-    public const string TodoColorMarkerFormat = "DeskBox.Todo.ColorMarker.v1";
     public const string SourceWidgetIdProperty = "DeskBoxSourceWidgetId";
     public const string SourcePathsProperty = "DeskBoxSourcePaths";
     public const string InternalFileDragTokenProperty =
@@ -45,32 +45,6 @@ public static class DeskBoxDragData
         dataPackage.SetText(normalizedText);
         dataPackage.SetData(TextFormat, normalizedText);
         dataPackage.SetData(SourceFormat, source);
-    }
-
-    public static void SetTodoColorMarker(DataPackage dataPackage, string colorMarker)
-    {
-        if (!string.IsNullOrWhiteSpace(colorMarker))
-        {
-            dataPackage.SetData(TodoColorMarkerFormat, colorMarker.Trim());
-        }
-    }
-
-    public static async Task<string?> TryGetTodoColorMarkerAsync(DataPackageView dataView)
-    {
-        if (!dataView.Contains(TodoColorMarkerFormat))
-        {
-            return null;
-        }
-
-        try
-        {
-            return await dataView.GetDataAsync(TodoColorMarkerFormat) as string;
-        }
-        catch (Exception ex)
-        {
-            App.Log($"[DragDrop] Failed to read todo color marker: {ex.Message}");
-            return null;
-        }
     }
 
     public static async Task<string?> TryGetTextAsync(DataPackageView dataView)
@@ -142,46 +116,61 @@ public static class DeskBoxDragData
     }
 
     public static DataPackageOperation GetFileAssociationOperation(
-        DataPackageView dataView)
+        DataPackageView dataView,
+        DataPackageOperation allowedOperations =
+            DataPackageOperation.Copy | DataPackageOperation.Move)
     {
-        return IsInternalFileDrag(dataView)
-            ? DataPackageOperation.Link
-            : DataPackageOperation.Copy;
+        return ResolveFileDragFeedbackOperation(
+            dataView,
+            IsInternalFileDrag(dataView)
+                ? DataPackageOperation.Link
+                : DataPackageOperation.Copy,
+            allowedOperations);
     }
 
-    public static bool ShouldShowImportOverlay(
-        IReadOnlyList<string> paths)
-    {
-        const long ThresholdBytes = 10 * 1024 * 1024;
+    // Internal metadata drags (todo/quick-capture reorder, tab moves) route
+    // through private payload formats, so the transport effect is only a
+    // glyph hint. Copy-export payloads advertise a single Copy effect —
+    // feedback must fall back to Copy when Move is not in the offer.
+    internal static DataPackageOperation ResolveInternalMetadataOperation(
+        DataPackageOperation allowedOperations) =>
+        allowedOperations.HasFlag(DataPackageOperation.Move)
+            ? DataPackageOperation.Move
+            : allowedOperations.HasFlag(DataPackageOperation.Copy)
+                ? DataPackageOperation.Copy
+                : DataPackageOperation.None;
 
-        long totalSize = 0;
-        foreach (string path in paths)
-        {
-            try
-            {
-                if (File.Exists(path))
-                {
-                    totalSize += new FileInfo(path).Length;
-                }
-                else if (Directory.Exists(path))
-                {
-                    // Avoid recursively enumerating a folder on the UI path.
-                    return true;
-                }
-            }
-            catch
-            {
-                return true;
-            }
+    // Copy is the transport acknowledgement inside the app for a DeskBox file
+    // drag. The source advertises Copy|Move to external receivers, but an
+    // in-app target resolves file-system intent through the private paths and
+    // the managed-transfer policy — OLE feedback must never authorize shell
+    // source cleanup, so every non-None internal report is normalized to Copy.
+    // A drag advertised with a single effect (Windows 10 collapses the set to
+    // Move) has no Copy to answer with: internal feedback falls back to Move
+    // there so the routed drop still fires. Completion results never flow
+    // through this fallback — ResolveSafeDropCompletionOperation stays the
+    // sole guard that never reports Move for a DeskBox drag.
+    internal static DataPackageOperation ResolveFileDragFeedbackOperation(
+        DataPackageView dataView,
+        DataPackageOperation operation,
+        DataPackageOperation allowedOperations =
+            DataPackageOperation.Copy | DataPackageOperation.Move) =>
+        operation != DataPackageOperation.None &&
+        IsInternalFileDrag(dataView)
+            ? !allowedOperations.HasFlag(DataPackageOperation.Copy) &&
+              allowedOperations.HasFlag(DataPackageOperation.Move)
+                ? DataPackageOperation.Move
+                : DataPackageOperation.Copy
+            : operation;
 
-            if (totalSize >= ThresholdBytes)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    internal static DataPackageOperation GetFileTransferOperations(
+        DataPackageView dataView,
+        DataPackageOperation allowedOperations) =>
+        IsInternalFileDrag(dataView)
+            ? DataPackageOperation.Copy | DataPackageOperation.Move | DataPackageOperation.Link
+            : allowedOperations == DataPackageOperation.None
+                ? dataView.RequestedOperation
+                : allowedOperations;
 
     public static async Task<DroppedFileBatch> TryGetDroppedFilesAsync(DataPackageView dataView)
     {
@@ -261,7 +250,7 @@ public static class DeskBoxDragData
                 using IRandomAccessStreamWithContentType bitmapStream = await bitmapReference.OpenReadAsync();
                 temporaryDirectory ??= CreateTemporaryDropDirectory();
                 string extension = GetBitmapExtension(bitmapStream.ContentType);
-                string fileName = $"Dropped image {DateTime.Now:yyyyMMdd-HHmmss}{extension}";
+                string fileName = string.Create(CultureInfo.InvariantCulture, $"Dropped image {DateTime.Now:yyyyMMdd-HHmmss}{extension}");
                 string path = await SaveRandomAccessStreamAsync(bitmapStream, fileName, temporaryDirectory);
                 files.Add(new DroppedFilePath(path, fileName, ForceManagedCopy: true));
             }
@@ -532,7 +521,7 @@ public static class DeskBoxDragData
         string fileName = FileService.SanitizeFileSystemName(Path.GetFileName(storageFile.Name));
         if (string.IsNullOrWhiteSpace(fileName))
         {
-            fileName = $"Dropped file {DateTime.Now:yyyyMMdd-HHmmss}";
+            fileName = string.Create(CultureInfo.InvariantCulture, $"Dropped file {DateTime.Now:yyyyMMdd-HHmmss}");
         }
 
         try
@@ -626,6 +615,7 @@ public sealed record DroppedFilePath(string Path, string DisplayName, bool Force
 public sealed class DroppedFileBatch : IDisposable
 {
     private readonly string? _temporaryDirectory;
+    private bool _disposed;
 
     internal DroppedFileBatch(
         IReadOnlyList<DroppedFilePath> files,
@@ -643,6 +633,16 @@ public sealed class DroppedFileBatch : IDisposable
 
     public void Dispose()
     {
+        // Two owners can race to clean the same batch (the routed XAML drop
+        // and the native fallback exchange it after a payload report). The
+        // flag makes the cleanup single-shot so a loser never deletes a
+        // temporary directory the winner just re-created a path in.
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
         if (string.IsNullOrWhiteSpace(_temporaryDirectory) ||
             !Directory.Exists(_temporaryDirectory))
         {

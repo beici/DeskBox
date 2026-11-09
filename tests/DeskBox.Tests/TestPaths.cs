@@ -1,9 +1,25 @@
+using System.Reflection;
+
 namespace DeskBox.Tests;
 
 internal static class TestPaths
 {
     public static string FromRepository(string relativePath) =>
         Path.Combine(FindRepositoryRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
+
+    public static string BuiltAppFile(string fileName)
+    {
+        string? outputDirectory = typeof(TestPaths).Assembly
+            .GetCustomAttributes<AssemblyMetadataAttribute>()
+            .Single(attribute => attribute.Key == "DeskBoxAppOutputDirectory")
+            .Value;
+        if (string.IsNullOrWhiteSpace(outputDirectory))
+        {
+            throw new DirectoryNotFoundException("The evaluated DeskBox app output directory is missing.");
+        }
+
+        return Path.Combine(outputDirectory, fileName);
+    }
 
     /// <summary>
     /// Resolves a production source file path through the central relocation map.

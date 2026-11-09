@@ -124,6 +124,29 @@ public sealed partial class TodoWidgetViewModel
         }
 
         var now = DateTimeOffset.UtcNow;
+        ApplyCompletedChange(item, isCompleted, now);
+        RefreshVisibleItems(item);
+        RefreshCountProperties();
+        await SaveAsync();
+        return true;
+    }
+
+    /// <summary>
+    /// Applies the completed/active transition to one item without refreshing or
+    /// saving. Batch callers own the refresh and the single save: going through
+    /// <see cref="SetCompletedAsync(string, bool)"/> per id rewrote the whole
+    /// document once per selected item.
+    /// </summary>
+    private bool ApplyCompletedChange(
+        TodoItemViewModel item,
+        bool isCompleted,
+        DateTimeOffset now)
+    {
+        if (item.IsCompleted == isCompleted)
+        {
+            return false;
+        }
+
         if (isCompleted)
         {
             if (item.Recurrence is not null)
@@ -161,9 +184,6 @@ public sealed partial class TodoWidgetViewModel
         }
 
         item.UpdatedAt = now;
-        RefreshVisibleItems(item);
-        RefreshCountProperties();
-        await SaveAsync();
         return true;
     }
 
@@ -248,18 +268,26 @@ public sealed partial class TodoWidgetViewModel
 
         int changedCount = 0;
         bool completed = target == TodoFilter.Completed;
-        foreach (string itemId in selectedIds)
+        var selected = selectedIds.ToHashSet(StringComparer.Ordinal);
+        var now = DateTimeOffset.UtcNow;
+        // One pass and one save. Calling SetCompletedAsync per id saved the whole
+        // document once per selected item, and each save re-projects every row.
+        // ToList() because the transition can insert or remove recurrence rows.
+        foreach (var item in Items
+            .Where(item => selected.Contains(item.Id) && item.IsCompleted != completed)
+            .ToList())
         {
-            TodoItemViewModel? item = FindItem(itemId);
-            if (item is null || item.IsCompleted == completed)
-            {
-                continue;
-            }
-
-            if (await SetCompletedAsync(itemId, completed))
+            if (ApplyCompletedChange(item, completed, now))
             {
                 changedCount++;
             }
+        }
+
+        if (changedCount > 0)
+        {
+            RefreshVisibleItems();
+            RefreshCountProperties();
+            await SaveAsync();
         }
 
         return changedCount;

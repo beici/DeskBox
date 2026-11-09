@@ -53,16 +53,6 @@ public sealed partial class DesktopOrganizationTaskView
         }
     }
 
-    private IReadOnlyList<DesktopOrganizationFileSnapshot> GetSourceExcludedItems()
-    {
-        if (_hasCompletedExecution && _lastExecutionPlan is not null)
-            return _lastExecutionPlan.ExcludedItems.Where(item =>
-                item.ExclusionReason != DesktopOrganizationExclusionReason.SourceNotSelected).ToList();
-        if (_basePlan is null || _plan is null) return [];
-        return _basePlan.SourceItems.Where(item => !item.IsEligible &&
-            (item.SourceScope == DesktopOrganizationSourceScope.Public ? _plan.IncludePublicDesktop : _plan.IncludePersonalDesktop)).ToList();
-    }
-
     private string BuildSourceResult(IReadOnlyList<OrganizationHistoryItem> completedItems, DesktopOrganizationSourceScope scope)
     {
         string name = T(scope == DesktopOrganizationSourceScope.Public
@@ -87,6 +77,10 @@ public sealed partial class DesktopOrganizationTaskView
     {
         if (_isExecuting) return;
         _isExecuting = true;
+        // Recovery is not cancellable through CancelExecutionAndCloseWhenSafe;
+        // gate the close-request flag so a click during recovery cannot arm a
+        // stale auto-close that a later execution would consume.
+        _isUndoing = true;
         RecoverButton.IsEnabled = false;
         RefreshButton.IsEnabled = false;
         SourceSelectionHost.IsEnabled = false;
@@ -103,6 +97,7 @@ public sealed partial class DesktopOrganizationTaskView
         finally
         {
             _isExecuting = false;
+            _isUndoing = false;
             RecoverButton.IsEnabled = true;
             RefreshButton.IsEnabled = true;
             SourceSelectionHost.IsEnabled = true;

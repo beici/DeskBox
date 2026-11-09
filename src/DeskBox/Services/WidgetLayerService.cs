@@ -20,6 +20,44 @@ public static class WidgetLayerService
     private static IntPtr s_cachedDesktopIconView;
     private static bool s_startupDesktopLayerAttachmentDeferred;
 
+    // Coalescing window for the backdrop-sample invalidation that follows a real
+    // move. A group restore moves twelve windows in a few milliseconds; one
+    // invalidation pass after the burst is enough, and the pass itself is one
+    // SetWindowPos per window.
+    private const long BackdropInvalidationCoalesceMilliseconds = 250;
+    private static long s_lastBackdropInvalidationTicks;
+
+    /// <summary>
+    /// Registered by <see cref="WidgetManager"/> so this layer can ask for a
+    /// backdrop refresh without reaching for the application singleton: the
+    /// layer owns the Win32 funnels that really move windows, but only the
+    /// manager knows which windows those are.
+    /// </summary>
+    internal static Action? BackdropSampleInvalidationRequested { get; set; }
+
+    /// <summary>
+    /// Invalidates the acrylic backdrop sample of every widget window after a
+    /// Z-order or owner transaction really moved them.
+    ///
+    /// DWM freezes the backdrop sample of a window that sits inside a move
+    /// transaction and keeps the frozen sample until something forces a frame,
+    /// which is why capsules come back from Show Desktop with a darker backdrop
+    /// until the first hover. Every funnel that really moves windows reports
+    /// here; a burst is coalesced into a single invalidation pass.
+    /// </summary>
+    private static void InvalidateBackdropSampleAfterMove()
+    {
+        long now = Environment.TickCount64;
+        long last = Interlocked.Read(ref s_lastBackdropInvalidationTicks);
+        if (now - last < BackdropInvalidationCoalesceMilliseconds ||
+            Interlocked.CompareExchange(ref s_lastBackdropInvalidationTicks, now, last) != last)
+        {
+            return;
+        }
+
+        BackdropSampleInvalidationRequested?.Invoke();
+    }
+
     internal static void BeginStartupDesktopLayerAttachmentDeferral()
     {
         Volatile.Write(ref s_startupDesktopLayerAttachmentDeferred, true);
@@ -145,7 +183,9 @@ public static class WidgetLayerService
         return true;
     }
 
-    public static IntPtr ClearTopMostPreservingForeground(IntPtr windowHandle)
+    internal static IntPtr ClearTopMostPreservingForeground(
+        IntPtr windowHandle,
+        out RelativeLayerRestoreDisposition disposition)
     {
         ApplyDesktopPinnedActivationStyle(windowHandle);
 
@@ -156,6 +196,7 @@ public static class WidgetLayerService
                 MoveToDynamicDesktopBottom(windowHandle);
             }
 
+            disposition = RelativeLayerRestoreDisposition.DesktopBottom;
             return Win32Helper.GetForegroundWindow();
         }
 
@@ -164,7 +205,7 @@ public static class WidgetLayerService
         bool hasForeground =
             foregroundRoot != IntPtr.Zero &&
             Win32Helper.IsWindow(foregroundRoot);
-        RelativeLayerRestoreDisposition disposition = RelativeLayerRestorePolicy.Decide(
+        disposition = RelativeLayerRestorePolicy.Decide(
             hasForeground,
             hasForeground && IsDesktopShellWindow(foregroundRoot),
             foregroundRoot == windowHandle,
@@ -307,6 +348,23 @@ public static class WidgetLayerService
         MoveToDesktopBottom(windowHandle);
     }
 
+    /// <summary>
+    /// Releases transient layer state after the HWND has been hidden. A hidden
+    /// window has no resting band to join: preserve its owner bookkeeping and
+    /// let the next prepared show select the desktop or raised layer. Reattaching
+    /// here would restack Explorer and resample visible sibling backdrops.
+    /// </summary>
+    internal static void ReleaseHiddenWindowLayer(IntPtr windowHandle)
+    {
+        // Title editing can temporarily clear NOACTIVATE in desktop-pinned
+        // mode. Restore it before the next AppWindow.Show can activate the HWND.
+        ApplyDesktopPinnedActivationStyle(windowHandle);
+        if (Win32Helper.IsWindowTopMost(windowHandle))
+        {
+            Win32Helper.ClearWindowTopMost(windowHandle);
+        }
+    }
+
     public static void HoldTemporaryTopMost(
         IntPtr windowHandle,
         bool showWindow = true)
@@ -326,7 +384,38 @@ public static class WidgetLayerService
         }
 
         DetachFromDesktopIconLayerIfNeeded(windowHandle);
-        Win32Helper.BringWindowTemporarilyToFront(windowHandle, showWindow);
+        RaiseWindowToNormalBandFront(windowHandle, showWindow);
+    }
+
+    /// <summary>
+    /// Raises one dynamically layered widget to the top of the normal band in
+    /// a single transaction. The historical implementation pulsed
+    /// HWND_TOPMOST followed by HWND_NOTOPMOST: every pulse visited the
+    /// topmost band and contested its tail with resident topmost floaters
+    /// (IME candidate windows, magnifiers), which both sides read as
+    /// flicker (#375). HWND_TOP on a non-topmost window already places it
+    /// above every normal application window with the same end state.
+    /// </summary>
+    private static void RaiseWindowToNormalBandFront(
+        IntPtr windowHandle,
+        bool showWindow)
+    {
+        uint flags = Win32Helper.SWP_NOMOVE |
+            Win32Helper.SWP_NOSIZE |
+            Win32Helper.SWP_NOACTIVATE;
+        if (showWindow)
+        {
+            flags |= Win32Helper.SWP_SHOWWINDOW;
+        }
+
+        _ = Win32Helper.SetWindowPos(
+            windowHandle,
+            Win32Helper.HWND_TOP,
+            0,
+            0,
+            0,
+            0,
+            flags);
     }
 
     /// <summary>
@@ -372,6 +461,69 @@ public static class WidgetLayerService
 
         DetachFromDesktopIconLayerIfNeeded(windowHandle);
         Win32Helper.BringWindowToFront(windowHandle);
+    }
+
+    /// <summary>
+    /// Lifts a resting widget above the raised desktop layer so it stays
+    /// visible while Show Desktop is active.
+    ///
+    /// This deliberately does not go through <see cref="BringToFront"/>: that
+    /// path drops the desktop-layer owner first, and the owner is what keeps the
+    /// widget out of the shell's minimize storm in the first place — trading one
+    /// Show Desktop failure for the next one. The raise is verified rather than
+    /// assumed, because a widget that stayed under the desktop after a
+    /// successful-looking SetWindowPos is exactly the symptom being fixed.
+    /// </summary>
+    internal static bool RaiseAboveDesktopLayer(IntPtr windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero || !Win32Helper.IsWindow(windowHandle))
+        {
+            return false;
+        }
+
+        if (Win32Helper.IsWindowTopMost(windowHandle))
+        {
+            // The raised band is the top of the NORMAL band. A topmost widget
+            // would stay above every application after Show Desktop ends.
+            Win32Helper.ClearWindowTopMost(windowHandle);
+        }
+
+        Win32Helper.BringWindowToFront(windowHandle);
+        if (!IsDesktopLayerAboveWindow(windowHandle))
+        {
+            return true;
+        }
+
+        // HWND_TOP only re-orders the window inside its own owner band. A
+        // DeskBox content window shares that band with the rest of the app's
+        // windows, so the raise stops just above them and the raised desktop
+        // root is still above the widget — measured on the reporting machine:
+        // SetWindowPos(HWND_TOP) moved the widget from Z 586 to 575 while
+        // Progman sat at 590, and the call reported success. A topmost
+        // round-trip is the only transaction that crosses the band: the window
+        // is parked in the topmost band and HWND_NOTOPMOST then drops it back
+        // into the normal band at the top (Z 46 in the same measurement), which
+        // is above the raised desktop. Both calls are issued back to back with
+        // nothing in between, and the NOTOPMOST half runs even on a throw so a
+        // widget is never left topmost.
+        Win32Helper.SetWindowTopMost(windowHandle);
+        try
+        {
+            // Parked in the topmost band; the pair must stay back to back, so
+            // nothing runs here. The NOTOPMOST half in the finally is what
+            // drops the widget back into the normal band at its top.
+        }
+        finally
+        {
+            Win32Helper.ClearWindowTopMost(windowHandle);
+        }
+
+        // The round trip is reported as the verification, not the two
+        // SetWindowPos return values: a widget that ended up under the desktop
+        // root anyway is exactly the symptom being fixed, and HWND_NOTOPMOST
+        // landing in the normal band is not proof of where it landed relative
+        // to the raised root.
+        return !IsDesktopLayerAboveWindow(windowHandle);
     }
 
     /// <summary>
@@ -444,9 +596,12 @@ public static class WidgetLayerService
     /// </summary>
     public static bool TryBringAbovePeerWidgetsAtDesktopLayer(IntPtr windowHandle)
     {
-        // Desktop-pinned widgets are owner-attached to Explorer's desktop icon
-        // layer, so HWND_TOP lifts them above sibling widgets only; the band
-        // itself stays beneath every application window and Win+D.
+        // Ownership of SHELLDLL_DefView only enforces a minimum position
+        // (above the owner); it never confines the window to the owner band.
+        // HWND_TOP therefore reaches the top of the whole normal band — above
+        // every application — so the expanded capsule is instead inserted
+        // directly below the nearest visible foreign window above the group:
+        // above sibling widgets, beneath every application (#574).
         if (!ShouldAttachRestingWindowToDesktop() ||
             !TryAttachToDesktopIconLayer(windowHandle, placeAtBottom: false))
         {
@@ -455,7 +610,7 @@ public static class WidgetLayerService
 
         return Win32Helper.SetWindowPos(
             windowHandle,
-            Win32Helper.HWND_TOP,
+            FindInsertBelowAnchorForDesktopLayerRaise(windowHandle),
             0,
             0,
             0,
@@ -465,6 +620,36 @@ public static class WidgetLayerService
                 Win32Helper.SWP_NOACTIVATE |
                 Win32Helper.SWP_NOOWNERZORDER |
                 Win32Helper.SWP_SHOWWINDOW);
+    }
+
+    /// <summary>
+    /// Resolves the z-order ceiling for a desktop-layer peer raise: the
+    /// nearest visible foreign window above the widget's group. The returned
+    /// handle is used as the SetWindowPos insert-after anchor, so the raised
+    /// widget lands directly below it. When no foreign window sits above the
+    /// group, HWND_TOP is equivalent because nothing can be jumped over.
+    /// DeskBox-owned surfaces, shell desktop windows, and invisible windows
+    /// do not constrain the ceiling.
+    /// </summary>
+    private static IntPtr FindInsertBelowAnchorForDesktopLayerRaise(
+        IntPtr windowHandle)
+    {
+        const int wsMinimizeStyle = 0x20000000;
+        IntPtr current = Win32Helper.GetWindow(windowHandle, Win32Helper.GW_HWNDPREV);
+        int visited = 0;
+        while (current != IntPtr.Zero && visited++ < MaxBeddingWalkWindows)
+        {
+            if (ClassifyWindowForBedding(current, wsMinimizeStyle) ==
+                    DesktopLayerBeddingWindowKind.ForeignAppWindow &&
+                !WidgetManager.IsTaskbarWindow(current))
+            {
+                return Win32Helper.ResolvePeerZOrderAnchor(windowHandle, current);
+            }
+
+            current = Win32Helper.GetWindow(current, Win32Helper.GW_HWNDPREV);
+        }
+
+        return Win32Helper.HWND_TOP;
     }
 
     /// <summary>
@@ -699,34 +884,61 @@ public static class WidgetLayerService
         foreach (IntPtr handle in handles)
         {
             DetachFromDesktopIconLayerIfNeeded(handle);
-            Win32Helper.SetWindowTopMost(handle);
         }
 
-        foreach (IntPtr handle in handles.Where(handle => handle != activeWindowHandle))
-        {
-            Win32Helper.ClearWindowTopMost(handle);
-        }
-
+        // The whole group takes the top of the normal band in one atomic
+        // relative ordering. The historical implementation pulsed every
+        // window through HWND_TOPMOST and back (2N+2 transactions), which
+        // visited the topmost band on every raise and contested its tail
+        // with resident topmost floaters — IME candidate bars especially —
+        // producing continuous flicker for both sides (#375). The end state
+        // is unchanged: the group sits above all normal application windows
+        // with the active window highest.
         IntPtr activeHandle = handles.Contains(activeWindowHandle)
             ? activeWindowHandle
             : handles[^1];
-        Win32Helper.ClearWindowTopMost(activeHandle);
+        List<IntPtr> orderedHandles = handles
+            .Where(handle => handle != activeHandle)
+            .Prepend(activeHandle)
+            .ToList();
+        ApplyWindowOrderHighestToLowest(
+            orderedHandles,
+            Win32Helper.HWND_TOP,
+            "group-raise-normal-band");
         Win32Helper.BringWindowToFront(activeHandle);
+        // #553: the trailing activation is redundant on every hot path — the
+        // title click or tray activation already moved the foreground onto a
+        // raised window by the time this runs — and this synchronous kernel
+        // call deadlocked the UI thread when the input queue was still
+        // draining after a long shell operation (drag/import). Skip it once
+        // the raised band already owns the foreground; the skipped call was
+        // only trying to establish exactly that state.
+        IntPtr foregroundAtRaise = Win32Helper.GetForegroundWindow();
+        if (foregroundAtRaise != IntPtr.Zero &&
+            (handles.Contains(foregroundAtRaise) ||
+                handles.Contains(GetForegroundRoot(foregroundAtRaise))))
+        {
+            return;
+        }
+
+        // (Literal call kept: pinned by WidgetZOrderRestoreContractTests
+        // GroupRaise_TrailingActivationSkipsWhenBandOwnsForeground, which also
+        // requires this to stay behind the foreground-ownership skip above.)
         Win32Helper.SetForegroundWindow(activeHandle);
     }
 
     /// <summary>
-    /// Raises the widget group when a title bar is clicked: only the clicked
-    /// widget performs the transient topmost round-trip, and every peer is
-    /// inserted behind it with one DeferWindowPos batch.
+    /// Raises the widget group when a title bar is clicked: the clicked
+    /// widget is brought to the front and every peer is inserted behind it
+    /// with one DeferWindowPos batch (a single same-band relative ordering —
+    /// no widget crosses z-order bands on this path).
     ///
-    /// <see cref="BringGroupTemporarilyToFront"/> instead flips every widget
-    /// through HWND_TOPMOST and back, which migrates each peer across DWM
-    /// z-order bands twice per title click. Those band migrations force DWM
-    /// to recomposite untouched widgets, and users see them flicker. Peers
-    /// never need the band migration: inserting them into the normal band
-    /// directly behind the just-raised active widget produces the same group
-    /// ordering with a single same-band move.
+    /// History: before #375 this path flipped every widget through
+    /// HWND_TOPMOST and back, which migrated each peer across DWM z-order
+    /// bands twice per title click and recomposited untouched widgets
+    /// (visible flicker). #375 replaced the pulse with the same-band
+    /// insertion below, and the z-order contract (§2) now forbids moving
+    /// peers through the topmost band — do not reintroduce it.
     /// </summary>
     public static void BringTitleActivatedGroupToFront(
         IReadOnlyList<IntPtr> windowHandles,
@@ -757,7 +969,20 @@ public static class WidgetLayerService
         Win32Helper.SetWindowTopMost(activeHandle);
         Win32Helper.ClearWindowTopMost(activeHandle);
         Win32Helper.BringWindowToFront(activeHandle);
-        Win32Helper.SetForegroundWindow(activeHandle);
+        // #553 (R22-S7-01): the title click already moved the foreground onto
+        // the clicked widget, so this trailing activation is redundant in the
+        // common path — and it is the same synchronous kernel call that
+        // deadlocked the UI thread while the input queue drained after a long
+        // shell operation. Skip it only when the clicked window itself owns the
+        // foreground; a peer or a foreign window still gets the activation.
+        IntPtr foregroundBeforeActivation = Win32Helper.GetForegroundWindow();
+        bool activeOwnsForeground = foregroundBeforeActivation != IntPtr.Zero &&
+            (foregroundBeforeActivation == activeHandle ||
+                GetForegroundRoot(foregroundBeforeActivation) == activeHandle);
+        if (!activeOwnsForeground)
+        {
+            Win32Helper.TrySetForegroundWindow(activeHandle, "title-activated-group");
+        }
 
         List<IntPtr> peers = handles
             .Where(handle => handle != activeHandle)
@@ -874,19 +1099,56 @@ public static class WidgetLayerService
             : Win32Helper.GetWindow(currentHighest, Win32Helper.GW_HWNDPREV);
         return ApplyWindowOrderHighestToLowest(
             handles,
-            boundary == IntPtr.Zero ? Win32Helper.HWND_TOP : boundary,
+            Win32Helper.ResolvePeerZOrderAnchor(currentHighest, boundary),
             "idle-peer-order");
     }
 
-    /// <summary>
-    /// True when the HWND chain already equals the target order: each handle
-    /// sits directly below its predecessor and the first handle sits directly
-    /// below the boundary window. Re-applying an unchanged order is not free
-    /// for acrylic-backed widgets - DWM re-samples the backdrop whenever a
-    /// window changes position in the z-order even when nothing visibly
-    /// moves, which users see as an edge flash on every expand, collapse,
-    /// and title click.
-    /// </summary>
+    internal static bool ApplyPeerOrderWithinCurrentBands(IReadOnlyList<IntPtr> windowHandles)
+    {
+        List<IntPtr> handles = windowHandles
+            .Where(handle => handle != IntPtr.Zero && Win32Helper.IsWindow(handle))
+            .Distinct().ToList();
+        if (handles.Count < 2)
+        {
+            return true;
+        }
+
+        var peers = handles.ToHashSet();
+        var seen = new HashSet<IntPtr>();
+        var observed = new List<WidgetPeerOrderWindow>();
+        IntPtr cursor = FindHighestPeer(handles);
+        while (cursor != IntPtr.Zero && observed.Count < MaxBeddingWalkWindows)
+        {
+            bool visible = Win32Helper.IsWindowVisible(cursor) &&
+                !Win32Helper.IsWindowCloaked(cursor) &&
+                !Win32Helper.IsIconic(cursor);
+            observed.Add(new WidgetPeerOrderWindow(
+                cursor, visible, Win32Helper.IsWindowTopMost(cursor)));
+            if (peers.Contains(cursor) && seen.Add(cursor) && seen.Count == peers.Count)
+            {
+                break;
+            }
+
+            cursor = Win32Helper.GetWindow(cursor, Win32Helper.GW_HWNDNEXT);
+        }
+
+        IReadOnlyList<IReadOnlyList<IntPtr>>? bands =
+            WidgetPeerOrderBandPolicy.Plan(handles, observed);
+        if (bands is null)
+        {
+            App.LogVerbose("[ZOrder] Capsule peer repair deferred; native band snapshot incomplete");
+            return false;
+        }
+
+        bool applied = true;
+        foreach (IReadOnlyList<IntPtr> band in bands)
+        {
+            applied &= ApplyPeerOrderHighestToLowest(band);
+        }
+
+        return applied;
+    }
+
     private static bool IsWindowChainAlreadyHighestToLowest(
         IReadOnlyList<IntPtr> handles,
         IntPtr boundary)
@@ -993,11 +1255,95 @@ public static class WidgetLayerService
                 $"total={handles.Count} moved={movers.Count} " +
                 $"kept={handles.Count - movers.Count} " +
                 $"boundary=0x{boundary.ToInt64():X} highest=0x{handles[0].ToInt64():X}");
+            // SetWindowPos retains native invalidation. Recalculating every
+            // widget's nonclient frame here would restart unrelated material
+            // composition after a single peer changed order.
             return true;
         }
 
         return false;
     }
+
+    /// <summary>
+    /// Reasserts the raised band after one of its windows takes activation.
+    /// A tray raise lifts the group while DeskBox may still be a background
+    /// process, and Windows pins such windows below the foreground
+    /// application — only the activating widget crosses that line. When the
+    /// walk below the active widget still finds a foreign window before the
+    /// remaining peers, the band is split and only the full group lift
+    /// (which now runs from the foreground process) can repair it; an intact
+    /// band keeps the repaint-free peer reorder.
+    /// </summary>
+    public static bool ApplyRaisedGroupReassertOrder(
+        IReadOnlyList<IntPtr> orderedHandles,
+        IntPtr activeWindowHandle)
+    {
+        if (UsesDesktopPinnedMode())
+        {
+            return false;
+        }
+
+        if (RaisedGroupReassertPolicy.Resolve(
+                IsForeignWindowAboveRaisedPeers(orderedHandles)) ==
+            RaisedGroupReassertPolicy.ReassertAction.LiftGroupAboveForeignWindows)
+        {
+            App.LogVerbose(
+                "[ZOrder] Raised band split by foreign window; lifting group " +
+                $"active=0x{activeWindowHandle.ToInt64():X} count={orderedHandles.Count}");
+            BringGroupTemporarilyToFront(orderedHandles, activeWindowHandle);
+            return true;
+        }
+
+        return ApplyPeerOrderHighestToLowest(orderedHandles);
+    }
+
+    /// <summary>
+    /// Reports whether any window that DeskBox does not own sits between the
+    /// active raised widget and its remaining peers — the raised band's
+    /// integrity check. Invisible, cloaked, and minimized windows never split
+    /// the band, and neither do DeskBox's own auxiliary surfaces.
+    /// </summary>
+    internal static bool IsForeignWindowAboveRaisedPeers(
+        IReadOnlyList<IntPtr> orderedHandles,
+        bool exemptShellDesktopWindows = false)
+    {
+        if (orderedHandles.Count < 2 ||
+            orderedHandles[0] == IntPtr.Zero ||
+            !Win32Helper.IsWindow(orderedHandles[0]))
+        {
+            return false;
+        }
+
+        const int WS_MINIMIZE = 0x20000000;
+        var peers = new HashSet<IntPtr>(orderedHandles);
+        int remainingPeers = orderedHandles.Count - 1;
+        IntPtr current = Win32Helper.GetWindow(orderedHandles[0], Win32Helper.GW_HWNDNEXT);
+        int visited = 0;
+        while (current != IntPtr.Zero && visited++ < MaxBeddingWalkWindows)
+        {
+            if (!peers.Contains(current))
+            {
+                DesktopLayerBeddingWindowKind kind =
+                    ClassifyWindowForBedding(current, WS_MINIMIZE);
+                if (kind != DesktopLayerBeddingWindowKind.IgnoredWindow &&
+                    kind != DesktopLayerBeddingWindowKind.DeskBoxWindow &&
+                    !(exemptShellDesktopWindows &&
+                        kind == DesktopLayerBeddingWindowKind.ShellDesktopWindow))
+                {
+                    return true;
+                }
+            }
+            else if (--remainingPeers == 0)
+            {
+                return false;
+            }
+
+            current = Win32Helper.GetWindow(current, Win32Helper.GW_HWNDNEXT);
+        }
+
+        return false;
+    }
+
 
     private static bool ApplyWindowOrderHighestToLowest(
         IReadOnlyList<IntPtr> handles,
@@ -1133,7 +1479,11 @@ public static class WidgetLayerService
     /// Determines whether a pointer press must leave the current foreground
     /// application active. Desktop-pinned widgets behave like desktop content:
     /// an exposed part can still receive the mouse message, but it must not
-    /// activate and jump above another application. Dynamic mode keeps the
+    /// activate and jump above another application. Suppression applies both
+    /// when a foreign application owns the foreground and when the widget is
+    /// geometrically covered by a foreign window — activating a DefView-owned
+    /// HWND promotes the whole owner band above such windows even while the
+    /// desktop shell owns the foreground (#574). Dynamic mode keeps the
     /// existing interactive raise behavior.
     /// </summary>
     public static bool ShouldSuppressPointerActivation(IntPtr windowHandle)
@@ -1150,7 +1500,8 @@ public static class WidgetLayerService
             UsesDesktopPinnedMode(),
             hasForeground,
             hasForeground && IsDesktopShellWindow(foregroundRoot),
-            foregroundIsWidget);
+            foregroundIsWidget,
+            IsWindowCoveredByForeignWindow(windowHandle));
     }
 
     /// <summary>
@@ -1297,21 +1648,41 @@ public static class WidgetLayerService
             return false;
         }
 
-        IntPtr desktopIconView = FindDesktopIconView();
+        IntPtr desktopIconView = FindDesktopLayerOwner();
         if (desktopIconView == IntPtr.Zero)
         {
-            App.Log("[WidgetLayer] DesktopPinned attach skipped: desktop icon view not found");
+            App.Log("[WidgetLayer] DesktopPinned attach skipped: desktop layer owner not found");
             return false;
         }
 
         lock (s_desktopLayerLock)
         {
+            bool ownerWasAlreadyAttached =
+                s_desktopLayerAttachments.ContainsKey(windowHandle) &&
+                Win32Helper.GetWindowLongPtr(windowHandle, Win32Helper.GWLP_HWNDPARENT) == desktopIconView;
             if (!s_desktopLayerAttachments.ContainsKey(windowHandle))
             {
                 s_desktopLayerAttachments[windowHandle] = new DesktopLayerAttachment(
                     Win32Helper.GetWindowLongPtr(windowHandle, Win32Helper.GWLP_HWNDPARENT));
             }
+            else
+            {
+                // R8 B15 (round-2 P3-08): the recorded original owner goes
+                // stale when the owner was re-bound externally between
+                // attaches (for example a failed raise). Re-capture the live
+                // owner — unless it is already the desktop layer, in which
+                // case the first capture still holds the true original.
+                IntPtr reboundOwner = Win32Helper.GetWindowLongPtr(
+                    windowHandle,
+                    Win32Helper.GWLP_HWNDPARENT);
+                if (reboundOwner != desktopIconView)
+                {
+                    s_desktopLayerAttachments[windowHandle] =
+                        new DesktopLayerAttachment(reboundOwner);
+                }
+            }
 
+            int attachError = 0;
             if (Win32Helper.GetWindowLongPtr(windowHandle, Win32Helper.GWLP_HWNDPARENT) != desktopIconView)
             {
                 Win32Helper.SetLastError(0);
@@ -1319,19 +1690,46 @@ public static class WidgetLayerService
                     windowHandle,
                     Win32Helper.GWLP_HWNDPARENT,
                     desktopIconView);
+                // Captured immediately: the read-back below is itself a
+                // SetLastError P/Invoke, so reading the error after it returned
+                // whatever that call left behind - which is why every field
+                // report of the failure line below read "error=0" and could not
+                // tell an access-denied attach from an invalid handle.
+                attachError = Marshal.GetLastWin32Error();
             }
 
             IntPtr actualOwner = Win32Helper.GetWindowLongPtr(windowHandle, Win32Helper.GWLP_HWNDPARENT);
             if (actualOwner != desktopIconView)
             {
-                int error = Marshal.GetLastWin32Error();
-                App.Log($"[WidgetLayer] DesktopPinned owner attach failed hwnd=0x{windowHandle.ToInt64():X} defView=0x{desktopIconView.ToInt64():X} actual=0x{actualOwner.ToInt64():X} error={error}");
+                App.Log($"[WidgetLayer] DesktopPinned owner attach failed hwnd=0x{windowHandle.ToInt64():X} desktopLayerOwner=0x{desktopIconView.ToInt64():X} actual=0x{actualOwner.ToInt64():X} error={attachError}");
                 RestoreOriginalOwner(windowHandle);
                 s_cachedDesktopIconView = IntPtr.Zero;
                 return false;
             }
 
-            Win32Helper.ClearWindowTopMost(windowHandle);
+            // A suppressed desktop-pinned click funnels through here on every
+            // message (WM_MOUSEACTIVATE plus the XAML routed event). When the
+            // owner is unchanged and the window already rests in the desktop
+            // band, re-issuing HWND_BOTTOM / HWND_NOTOPMOST transactions only
+            // repaints the DefView owner band and reads as flicker under a
+            // covering application (#241/#249/#449). HWND_NOTOPMOST on an
+            // already non-topmost window is documented as a no-op, so both
+            // transactions are skipped for an already-bedded window.
+            if (ownerWasAlreadyAttached &&
+                !Win32Helper.IsWindowTopMost(windowHandle) &&
+                (!placeAtBottom || IsWindowBeddedAtDesktopLayer(windowHandle)))
+            {
+                // Peer-only expansion asks for the existing owner without a
+                // placement change. It must also skip the backdrop refresh
+                // below: no native transaction happened to invalidate it.
+                return true;
+            }
+
+            if (Win32Helper.IsWindowTopMost(windowHandle))
+            {
+                Win32Helper.ClearWindowTopMost(windowHandle);
+            }
+
             if (placeAtBottom)
             {
                 // No SWP_NOOWNERZORDER here. Sinking an owned window to the
@@ -1360,8 +1758,298 @@ public static class WidgetLayerService
             App.LogVerbose(
                 $"[WidgetLayer] Desktop owner attached hwnd=0x{windowHandle.ToInt64():X} " +
                 $"defView=0x{desktopIconView.ToInt64():X} bottom={placeAtBottom}");
+            // Re-owning a window re-stacks it and, when it sinks, moves the
+            // shared Explorer owner with it - both are move transactions that
+            // freeze the acrylic backdrop sample of every widget in the band.
+            InvalidateBackdropSampleAfterMove();
             return true;
         }
+    }
+
+    /// <summary>
+    /// Walks the Z order below a desktop-pinned widget and reports whether it
+    /// already rests in the Explorer desktop band: only DeskBox-owned windows,
+    /// shell desktop windows (Progman/WorkerW/SHELLDLL_DefView), and visually
+    /// meaningless windows (hidden, minimized, cloaked) may sit between the
+    /// widget and the band bottom. A visible foreign application window below
+    /// the widget means the group is floating above that application.
+    /// </summary>
+    internal static bool IsWindowBeddedAtDesktopLayer(IntPtr windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero || !Win32Helper.IsWindow(windowHandle))
+        {
+            return false;
+        }
+
+        const int WS_MINIMIZE = 0x20000000;
+        var observations = new List<DesktopLayerBeddingWindowKind>();
+        IntPtr current = Win32Helper.GetWindow(windowHandle, Win32Helper.GW_HWNDNEXT);
+        while (current != IntPtr.Zero && observations.Count < MaxBeddingWalkWindows)
+        {
+            observations.Add(ClassifyWindowForBedding(current, WS_MINIMIZE));
+            current = Win32Helper.GetWindow(current, Win32Helper.GW_HWNDNEXT);
+        }
+
+        return DesktopLayerBeddingPolicy.IsBeddedAtDesktopLayer(observations);
+    }
+
+    /// <summary>
+    /// Resolves the first foreign window found below a desktop-pinned widget,
+    /// or <see cref="IntPtr.Zero"/> when the widget is safely bedded. The
+    /// returned handle identifies the leak witness for conservative
+    /// confirmations across repeated observations.
+    /// </summary>
+    internal static IntPtr FindForeignWindowBelow(IntPtr windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero || !Win32Helper.IsWindow(windowHandle))
+        {
+            return IntPtr.Zero;
+        }
+
+        const int WS_MINIMIZE = 0x20000000;
+        IntPtr current = Win32Helper.GetWindow(windowHandle, Win32Helper.GW_HWNDNEXT);
+        int visited = 0;
+        while (current != IntPtr.Zero && visited++ < MaxBeddingWalkWindows)
+        {
+            if (ClassifyWindowForBedding(current, WS_MINIMIZE) ==
+                DesktopLayerBeddingWindowKind.ForeignAppWindow)
+            {
+                return current;
+            }
+
+            current = Win32Helper.GetWindow(current, Win32Helper.GW_HWNDNEXT);
+        }
+
+        return IntPtr.Zero;
+    }
+
+    /// <summary>
+    /// True when this window can be what hides another window: on screen, in the
+    /// normal band, and not one of this application's own surfaces.
+    ///
+    /// Every clause is load-bearing, and each one was a live defect:
+    /// <list type="bullet">
+    /// <item>Minimized windows are not drawn, so they hide nothing — and Show
+    /// Desktop leaves the whole normal band in exactly that state.</item>
+    /// <item>DWM-cloaked windows are composed away (Explorer cloaks whole
+    /// virtual-desktop groups that way), so they are invisible even while
+    /// <c>IsWindowVisible</c> reports true.</item>
+    /// <item>Topmost windows sit <em>above</em> the desktop layer, so they can
+    /// never be what the desktop covers something with. The taskbar and any
+    /// always-on-top overlay (a security suite's shield, a GPU overlay) are
+    /// permanently above Progman; counting them made "is anything visible above
+    /// the desktop root" answer yes forever, so the desktop never read as
+    /// raised and the heal undid its own raise on the next watchdog tick.</item>
+    /// <item>This application's own widgets are skipped because the Show Desktop
+    /// heal deliberately raises them above the desktop layer; counting them
+    /// would make that raise look like "an application came back".</item>
+    /// </list>
+    /// </summary>
+    private static bool IsNormalBandBlocker(IntPtr windowHandle)
+    {
+        return Win32Helper.IsWindowVisible(windowHandle) &&
+            !Win32Helper.IsIconic(windowHandle) &&
+            !Win32Helper.IsWindowTopMost(windowHandle) &&
+            !Win32Helper.IsWindowCloaked(windowHandle) &&
+            !BelongsToCurrentProcess(windowHandle);
+    }
+
+    /// <summary>
+    /// Reports whether the desktop layer is currently on TOP of the normal band
+    /// — the state Show Desktop / Win+D produces. True when no normal-band
+    /// window sits above the desktop root in Z order; see
+    /// <see cref="IsNormalBandBlocker"/> for what does and does not count.
+    ///
+    /// This is deliberately independent of the widgets: the caller uses it to
+    /// decide when to stop treating the desktop as raised, and a widget-based
+    /// test would flip as soon as the heal raised the widget itself.
+    /// </summary>
+    internal static bool IsDesktopLayerRaised()
+    {
+        IntPtr iconView = GetDesktopIconViewHandle();
+        if (iconView == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        IntPtr desktopRoot = Win32Helper.GetAncestor(iconView, Win32Helper.GA_ROOT);
+        if (desktopRoot == IntPtr.Zero)
+        {
+            desktopRoot = iconView;
+        }
+
+        IntPtr current = Win32Helper.GetWindow(desktopRoot, Win32Helper.GW_HWNDPREV);
+        int visited = 0;
+        while (current != IntPtr.Zero && visited++ < MaxBeddingWalkWindows)
+        {
+            if (IsNormalBandBlocker(current))
+            {
+                return false;
+            }
+
+            current = Win32Helper.GetWindow(current, Win32Helper.GW_HWNDPREV);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Reports whether the shell desktop layer is what hides this window right
+    /// now — that is, whether the desktop root sits above it in Z order.
+    ///
+    /// This is the Show Desktop detector that does not rely on the foreground
+    /// window. Show Desktop (and Win+D) raises Progman/WorkerW above the whole
+    /// normal band WITHOUT taking the foreground, so a foreground comparison
+    /// sees the previously active application and concludes nothing happened.
+    ///
+    /// Comparing Z-order positions is the only test that survives a real
+    /// desktop. Asking instead for "the first visible window above the widget,
+    /// is it the desktop root?" cannot work: the taskbar, a security suite's
+    /// always-on-top helper, and any other normal-band overlay sit between the
+    /// widget and the desktop root, so that walk reports "not covered" while the
+    /// desktop is in fact above the widget. Measured on the reporting machine:
+    /// at rest Progman is Z index 589 with the widgets at 572-586 (desktop below
+    /// them, nothing to heal), and under Show Desktop Progman is index 44 with
+    /// the same widgets still at 572-586 (desktop above them, every widget
+    /// hidden). Only the comparison tells those two states apart.
+    /// </summary>
+    internal static bool IsDesktopLayerAboveWindow(IntPtr windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero || !Win32Helper.IsWindow(windowHandle))
+        {
+            return false;
+        }
+
+        IntPtr iconView = GetDesktopIconViewHandle();
+        if (iconView == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        IntPtr desktopRoot = Win32Helper.GetAncestor(iconView, Win32Helper.GA_ROOT);
+        if (desktopRoot == IntPtr.Zero)
+        {
+            desktopRoot = iconView;
+        }
+
+        // Whichever of the two the walk from the top reaches first is the higher
+        // window. It stops at the first hit, so the cost is the smaller of the
+        // two Z indices: a few dozen windows while the desktop is raised, and
+        // bounded by the widget's own index otherwise.
+        IntPtr current = Win32Helper.GetTopWindow(IntPtr.Zero);
+        int visited = 0;
+        while (current != IntPtr.Zero && visited++ < MaxZOrderWalkWindows)
+        {
+            if (current == windowHandle)
+            {
+                return false;
+            }
+
+            if (current == desktopRoot)
+            {
+                return true;
+            }
+
+            current = Win32Helper.GetWindow(current, Win32Helper.GW_HWNDNEXT);
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Reports whether a visible foreign application window both sits above
+    /// the widget in Z order and geometrically overlaps it. Activating a
+    /// DefView-owned HWND promotes the whole owner band above every such
+    /// window (#454/#574), so pointer clicks on an overlapped pinned widget
+    /// must not activate even when the desktop shell owns the foreground; a
+    /// fully exposed widget may still activate so keyboard flows (rename,
+    /// text entry, file shortcuts) keep working. Promotion over a
+    /// non-overlapping window is visually invisible, so only intersecting
+    /// windows count. The taskbar is neutral: an auto-hide taskbar overlaps
+    /// widgets without an activation being able to disturb it.
+    /// </summary>
+    public static bool IsWindowCoveredByForeignWindow(IntPtr windowHandle)
+    {
+        if (windowHandle == IntPtr.Zero || !Win32Helper.IsWindow(windowHandle))
+        {
+            return false;
+        }
+
+        if (!Win32Helper.GetWindowRect(windowHandle, out Win32Helper.RECT widgetRect))
+        {
+            return false;
+        }
+
+        const int wsMinimizeStyle = 0x20000000;
+        IntPtr current = Win32Helper.GetWindow(windowHandle, Win32Helper.GW_HWNDPREV);
+        int visited = 0;
+        while (current != IntPtr.Zero && visited++ < MaxBeddingWalkWindows)
+        {
+            if (ClassifyWindowForBedding(current, wsMinimizeStyle) ==
+                    DesktopLayerBeddingWindowKind.ForeignAppWindow &&
+                !WidgetManager.IsTaskbarWindow(current) &&
+                Win32Helper.GetWindowRect(current, out Win32Helper.RECT coverRect) &&
+                RectsIntersect(widgetRect, coverRect))
+            {
+                return true;
+            }
+
+            current = Win32Helper.GetWindow(current, Win32Helper.GW_HWNDPREV);
+        }
+
+        return false;
+    }
+
+    private static bool RectsIntersect(Win32Helper.RECT first, Win32Helper.RECT second)
+    {
+        return first.Left < second.Right &&
+            second.Left < first.Right &&
+            first.Top < second.Bottom &&
+            second.Top < first.Bottom;
+    }
+
+    // The walk terminates at Progman after a handful of windows in a healthy
+    // session; the cap only guards against a pathological cycle.
+    private const int MaxBeddingWalkWindows = 256;
+
+    // A top-down Z-order walk has to pass every window above the target, and a
+    // busy desktop keeps 600+ top-level windows around, so this cap is far
+    // larger than the bedding walk's. It exists only to bound the loop if the
+    // Z-order chain ever cycles.
+    private const int MaxZOrderWalkWindows = 8192;
+
+    /// <summary>
+    /// DeskBox surfaces are classified by process, not by the registered
+    /// window set: every widget, owned flyout, and auxiliary surface of this
+    /// application lives in the current process, and none of them may ever
+    /// witness a desktop-band leak. This also keeps the module-boundary
+    /// budget of this file free of new App-level global accesses.
+    /// </summary>
+    private static DesktopLayerBeddingWindowKind ClassifyWindowForBedding(
+        IntPtr windowHandle,
+        int wsMinimizeStyle)
+    {
+        if (!Win32Helper.IsWindowVisible(windowHandle) ||
+            Win32Helper.IsWindowCloaked(windowHandle) ||
+            (Win32Helper.GetWindowLong(windowHandle, Win32Helper.GWL_STYLE) & wsMinimizeStyle) != 0)
+        {
+            return DesktopLayerBeddingWindowKind.IgnoredWindow;
+        }
+
+        if (BelongsToCurrentProcess(windowHandle))
+        {
+            return DesktopLayerBeddingWindowKind.DeskBoxWindow;
+        }
+
+        return IsDesktopShellWindow(windowHandle)
+            ? DesktopLayerBeddingWindowKind.ShellDesktopWindow
+            : DesktopLayerBeddingWindowKind.ForeignAppWindow;
+    }
+
+    private static bool BelongsToCurrentProcess(IntPtr windowHandle)
+    {
+        _ = Win32Helper.GetWindowThreadProcessId(windowHandle, out uint processId);
+        return processId == (uint)Environment.ProcessId;
     }
 
     private static void DetachFromDesktopIconLayerIfNeeded(IntPtr windowHandle)
@@ -1403,29 +2091,55 @@ public static class WidgetLayerService
             return;
         }
 
-        Win32Helper.SetLastError(0);
-        _ = Win32Helper.SetWindowLongPtr(
+        // R8 B15 (round-2 P3-08): validate before writing GWLP_HWNDPARENT.
+        // A dead or reused recorded owner would rebind the window to a
+        // random handle, and a current owner that is neither the recorded
+        // original nor the desktop layer means someone else re-owned the
+        // window since — restoring then would clobber that binding.
+        IntPtr currentOwner = Win32Helper.GetWindowLongPtr(
             windowHandle,
-            Win32Helper.GWLP_HWNDPARENT,
-            attachment.OriginalOwner);
-        Win32Helper.SetWindowPos(
-            windowHandle,
-            Win32Helper.HWND_NOTOPMOST,
-            0,
-            0,
-            0,
-            0,
-            Win32Helper.SWP_NOMOVE |
-                Win32Helper.SWP_NOSIZE |
-                Win32Helper.SWP_NOACTIVATE |
-                Win32Helper.SWP_NOOWNERZORDER);
+            Win32Helper.GWLP_HWNDPARENT);
+        bool originalIsLive = attachment.OriginalOwner == IntPtr.Zero ||
+            Win32Helper.IsWindow(attachment.OriginalOwner);
+        bool ownerStillControlled = currentOwner == attachment.OriginalOwner ||
+            Win32Helper.IsShellDefViewWindow(currentOwner);
+        if (originalIsLive && ownerStillControlled)
+        {
+            Win32Helper.SetLastError(0);
+            _ = Win32Helper.SetWindowLongPtr(
+                windowHandle,
+                Win32Helper.GWLP_HWNDPARENT,
+                attachment.OriginalOwner);
+            Win32Helper.SetWindowPos(
+                windowHandle,
+                Win32Helper.HWND_NOTOPMOST,
+                0,
+                0,
+                0,
+                0,
+                Win32Helper.SWP_NOMOVE |
+                    Win32Helper.SWP_NOSIZE |
+                    Win32Helper.SWP_NOACTIVATE |
+                    Win32Helper.SWP_NOOWNERZORDER);
+            App.LogVerbose($"[WidgetLayer] DesktopPinned owner detached hwnd=0x{windowHandle.ToInt64():X}");
+        }
+        else
+        {
+            App.Log(
+                $"[WidgetLayer] DesktopPinned owner restore skipped hwnd=0x{windowHandle.ToInt64():X} " +
+                $"originalLive={originalIsLive} currentOwner=0x{currentOwner.ToInt64():X}");
+        }
+
         s_desktopLayerAttachments.Remove(windowHandle);
-        App.LogVerbose($"[WidgetLayer] DesktopPinned owner detached hwnd=0x{windowHandle.ToInt64():X}");
     }
 
     private static IntPtr FindDesktopIconView()
     {
-        if (s_cachedDesktopIconView != IntPtr.Zero && Win32Helper.IsWindow(s_cachedDesktopIconView))
+        // R8 B15 (round-2 P3-07): the cached handle is only trusted after a
+        // class-name check — IsWindow passes for a reused HWND that now
+        // belongs to an unrelated window.
+        if (s_cachedDesktopIconView != IntPtr.Zero &&
+            Win32Helper.IsShellDefViewWindow(s_cachedDesktopIconView))
         {
             return s_cachedDesktopIconView;
         }
@@ -1465,9 +2179,74 @@ public static class WidgetLayerService
     /// deliberately never forces WorkerW creation, which during login can race
     /// Explorer's icon-layout restoration.
     /// </summary>
+    /// <summary>
+    /// Reports whether the shell desktop currently owns the foreground, which
+    /// is what "Show Desktop" (Win+D, the taskbar's far-right button) leaves
+    /// behind. The desktop is not a normal window: it is Progman (or a WorkerW
+    /// sibling) hosting the SHELLDLL_DefView icon view, and raising it puts it
+    /// above every window in the normal band — including resting widgets that
+    /// could not be owner-attached to the desktop layer. Comparing roots rather
+    /// than class names keeps this correct across Explorer's window shuffles.
+    /// </summary>
+    internal static bool IsShellDesktopForeground()
+    {
+        IntPtr foreground = Win32Helper.GetForegroundWindow();
+        if (foreground == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        IntPtr iconView = GetDesktopIconViewHandle();
+        if (iconView == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        if (foreground == iconView)
+        {
+            return true;
+        }
+
+        IntPtr desktopRoot = Win32Helper.GetAncestor(iconView, Win32Helper.GA_ROOT);
+        if (desktopRoot == IntPtr.Zero)
+        {
+            desktopRoot = iconView;
+        }
+
+        if (foreground == desktopRoot)
+        {
+            return true;
+        }
+
+        IntPtr foregroundRoot = Win32Helper.GetAncestor(foreground, Win32Helper.GA_ROOT);
+        return foregroundRoot != IntPtr.Zero && foregroundRoot == desktopRoot;
+    }
+
     internal static IntPtr GetDesktopIconViewHandle()
     {
         return FindDesktopIconView();
+    }
+
+    /// <summary>
+    /// The window a resting widget takes as its owner so it rides the desktop
+    /// layer. SetWindowLongPtr(GWLP_HWNDPARENT) only honours a <em>top-level</em>
+    /// window, and the icon view itself is a child of Progman or WorkerW: owning
+    /// a widget to it is accepted without an error and then silently dropped, so
+    /// the read-back stays zero and every attach "failed" (#ShowDesktop). The
+    /// root ancestor is the real desktop-layer window, so it is what the owner
+    /// has to be. Icon geometry still reads the child through
+    /// <see cref="GetDesktopIconViewHandle"/>.
+    /// </summary>
+    private static IntPtr FindDesktopLayerOwner()
+    {
+        IntPtr iconView = FindDesktopIconView();
+        if (iconView == IntPtr.Zero)
+        {
+            return IntPtr.Zero;
+        }
+
+        IntPtr root = Win32Helper.GetAncestor(iconView, Win32Helper.GA_ROOT);
+        return root != IntPtr.Zero ? root : iconView;
     }
 
     private static IntPtr FindHighestPeer(IReadOnlyCollection<IntPtr> handles)
@@ -1559,12 +2338,14 @@ internal static class WidgetLayerPointerActivationPolicy
         bool usesDesktopPinnedMode,
         bool hasForegroundWindow,
         bool foregroundIsDesktopShell,
-        bool foregroundIsWidget)
+        bool foregroundIsWidget,
+        bool coveredByForeignWindow)
     {
         return usesDesktopPinnedMode &&
-            hasForegroundWindow &&
-            !foregroundIsDesktopShell &&
-            !foregroundIsWidget;
+            (coveredByForeignWindow ||
+                (hasForegroundWindow &&
+                    !foregroundIsDesktopShell &&
+                    !foregroundIsWidget));
     }
 
     public static bool ShouldPreserveActivatingClick(

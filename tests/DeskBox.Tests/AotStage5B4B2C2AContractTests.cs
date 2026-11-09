@@ -26,8 +26,12 @@ public sealed class AotStage5B4B2C2AContractTests
     public void GlobalMutation_ReusesLocalWeatherSettingsProductPolicy()
     {
         string policy = ReadRepositoryFile("src/DeskBox/Services/WeatherSettingsPolicy.cs");
+        // Batch 38 moved the settings page's weather writes into
+        // FeatureWidgetsSettingsCoordinator; the coordinator is now the
+        // product writer whose normalization the AOT global mutation must
+        // reuse, so the pin follows the owner.
         string settings = ReadRepositoryFile(
-            "src/DeskBox/ViewModels/SettingsViewModel.WeatherOptions.cs");
+            "src/DeskBox/Services/FeatureWidgetsSettingsCoordinator.cs");
         string scenario = ReadRepositoryFile(
             "src/DeskBox/App.AotWeatherSettingsPersistenceSmoke.cs");
 
@@ -201,10 +205,10 @@ public sealed class AotStage5B4B2C2AContractTests
         string launcher = ReadRepositoryFile("scripts/start-aot-preview.ps1");
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
 
-        Assert.Contains("$auditProfileVersion = 63", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 65", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B2C2A", audit, StringComparison.Ordinal);
-        Assert.Contains("$RequiredAuditProfileVersion = 63", launcher, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 65", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("Weather local settings/view-mode/reload/restore/postflight", project, StringComparison.Ordinal);

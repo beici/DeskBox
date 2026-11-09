@@ -21,6 +21,32 @@ public sealed partial class AppUpdateService : IAppUpdateService
     private readonly string _githubLatestReleaseApiUrl;
     private readonly string _updateRootPath;
 
+    // Display-only manifest fetches are static calls (no service instance on
+    // surfaces like the release-notes window), so they share one client
+    // instead of allocating per call.
+    private static readonly HttpClient s_contentHttpClient = CreateContentHttpClient();
+
+    // Bounds a single update download. HttpClient.Timeout (20s) only covers
+    // request/header arrival once the body is streamed under
+    // ResponseHeadersRead, and the background auto-download passes no
+    // CancellationToken — without these bounds a stalled body stream would
+    // park ReadAsync forever, the finally that releases _downloadInProgress
+    // would never run, and every later download would silently no-op as
+    // "cancelled". The per-read bound catches a dead connection mid-body;
+    // the overall bound catches a drip-feed that never triggers it.
+    private static readonly TimeSpan OverallDownloadTimeout = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan ReadChunkTimeout = TimeSpan.FromSeconds(30);
+
+    private static HttpClient CreateContentHttpClient()
+    {
+        var client = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(10)
+        };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd($"DeskBox/{GetCurrentAppVersion()}");
+        return client;
+    }
+
     public AppUpdateService(
         HttpClient? httpClient = null,
         string? manifestUrl = null,
@@ -46,6 +72,129 @@ public sealed partial class AppUpdateService : IAppUpdateService
     public AppUpdateCheckResult? LastCheckResult { get; private set; }
     public DateTime? LastCheckTimeUtc { get; private set; }
     public event Action<AppUpdateCheckResult>? CheckCompleted;
+    public event Action<AppUpdateDownloadProgress>? DownloadProgressChanged;
+    public event Action<AppUpdateDownloadResult>? DownloadCompleted;
+
+    private string? _lastDownloadedInstallerPath;
+    private string? _lastDownloadedVersion;
+    private string? _lastDownloadedSha256;
+    private int _downloadInProgress;
+    // R1-060: set the moment an installer helper launch succeeded. The
+    // retire branches in SetLastCheckResult must not delete a directory the
+    // just-started updater is about to run an installer from — the check
+    // loop can land inside that window because installation is a user click
+    // while checks run on a timer. Instance field without reset: the worst
+    // a stale true does is delay retirement to the next process.
+    private bool _installerLaunchInProgress;
+
+    public string? LastDownloadedInstallerPath => _lastDownloadedInstallerPath;
+    public bool IsDownloadInProgress => Volatile.Read(ref _downloadInProgress) != 0;
+
+    public void ClearLastDownloadedInstaller()
+    {
+        _lastDownloadedInstallerPath = null;
+        _lastDownloadedVersion = null;
+        _lastDownloadedSha256 = null;
+    }
+
+    // Test seam for R1-060: production code sets the flag only after a
+    // helper launch succeeded, which a unit test cannot drive end-to-end.
+    internal void MarkInstallerLaunchInProgressForTests() =>
+        _installerLaunchInProgress = true;
+
+    // B1: TryDeleteRetiredInstallerDirectory only runs in the process that
+    // downloaded the installer — after an update-installed restart the
+    // in-memory fields are null and the previous updates\<version>\ folders
+    // accumulate (~one full installer per release). This startup sweep
+    // reclaims them. Call once after the startup lifeline is established,
+    // fire-and-forget (never a startup step): it keeps the current
+    // version's folder, the helper staging folder, and any download this
+    // process still holds, and it is a no-op while a launched updater may
+    // still be running an installer (R1-060 gate).
+    internal void SweepStaleInstallerDirectories(string currentVersion)
+    {
+        if (_installerLaunchInProgress)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!Directory.Exists(_updateRootPath))
+            {
+                return;
+            }
+
+            string keepCurrent = SanitizePathSegment(currentVersion);
+            string? keepDownloaded = _lastDownloadedInstallerPath is null
+                ? null
+                : Path.GetDirectoryName(_lastDownloadedInstallerPath);
+            foreach (string directory in Directory.EnumerateDirectories(_updateRootPath))
+            {
+                string name = Path.GetFileName(directory);
+                if (string.Equals(name, keepCurrent, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(name, "helper", StringComparison.OrdinalIgnoreCase) ||
+                    (keepDownloaded is not null && string.Equals(
+                        directory, keepDownloaded, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                // Only version-shaped directories are ours to reclaim; a
+                // foreign folder someone placed under the updates root is
+                // left alone.
+                if (!TryParseVersion(name, out _))
+                {
+                    continue;
+                }
+
+                Directory.Delete(directory, recursive: true);
+                App.Log($"[Update] Swept stale installer directory '{directory}'");
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[Update] Stale installer sweep failed: {ex.Message}");
+        }
+    }
+
+    // Retiring a downloaded installer must also reclaim its files: each
+    // download lives in a version-scoped folder under the updates root, and
+    // without this the folder grows by one installer with every release.
+    // The expected-path guard pins the delete to that layout even if the
+    // fields ever drift; the helper folder is never touched.
+    private void TryDeleteRetiredInstallerDirectory()
+    {
+        string? retiredPath = _lastDownloadedInstallerPath;
+        string? retiredVersion = _lastDownloadedVersion;
+        if (string.IsNullOrWhiteSpace(retiredPath) ||
+            string.IsNullOrWhiteSpace(retiredVersion))
+        {
+            return;
+        }
+
+        try
+        {
+            string expectedDirectory = Path.Combine(
+                _updateRootPath,
+                SanitizePathSegment(retiredVersion));
+            if (!string.Equals(
+                    Path.GetDirectoryName(retiredPath),
+                    expectedDirectory,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !Directory.Exists(expectedDirectory))
+            {
+                return;
+            }
+
+            Directory.Delete(expectedDirectory, recursive: true);
+            App.Log($"[Update] Deleted retired installer directory '{expectedDirectory}'");
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[Update] Failed to delete retired installer directory: {ex.Message}");
+        }
+    }
 
     public string ManifestUrl => _manifestUrl;
     public AppUpdateDeliveryKind DeliveryKind => AppUpdateDeliveryKind.DirectInstaller;
@@ -158,6 +307,68 @@ public sealed partial class AppUpdateService : IAppUpdateService
         IProgress<AppUpdateDownloadProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
+        // One download at a time across all initiators (settings one-click
+        // and the background auto-download); the loser gets a cancelled-kind
+        // result, which every caller already treats as a quiet no-op.
+        if (Interlocked.Exchange(ref _downloadInProgress, 1) == 1)
+        {
+            return AppUpdateDownloadResult.Failed(
+                AppUpdateDownloadFailureKind.Cancelled,
+                "Another update download is already in progress.");
+        }
+
+        AppUpdateDownloadResult result;
+        try
+        {
+            var reportingProgress = new Progress<AppUpdateDownloadProgress>(p =>
+            {
+                progress?.Report(p);
+                DownloadProgressChanged?.Invoke(p);
+            });
+            result = await DownloadUpdateCoreAsync(manifest, reportingProgress, cancellationToken);
+        }
+        finally
+        {
+            Volatile.Write(ref _downloadInProgress, 0);
+        }
+
+        if (result.Success && !string.IsNullOrWhiteSpace(result.FilePath))
+        {
+            _lastDownloadedInstallerPath = result.FilePath;
+            _lastDownloadedVersion = manifest.Version;
+            // R1-059: remember what the bytes hashed to at download time so
+            // StartInstallerHelperAsync can prove the on-disk file still
+            // matches before it is ever launched (and hand the hash to the
+            // updater for a second verification right before it runs).
+            //
+            // R18-S1-002: the recorded hash MUST be the one the download core
+            // actually verified against. DownloadUpdateCoreAsync re-selects the
+            // installer for this architecture (:357-365) and verifies the bytes
+            // against that clone's Sha256 (:444); taking the caller's manifest
+            // hash here instead records the x64 hash for an arm64 payload, so
+            // the pre-launch re-verification below would reject (and delete) a
+            // perfectly good installer. Keep both sides on the same selection.
+            _lastDownloadedSha256 = NormalizeSha256(
+                SelectInstallerForArchitecture(manifest, CurrentInstallerArchitectureSuffix)?.Sha256
+                ?? manifest.Sha256);
+
+            // R20-S10-02: the digest above lives only in memory, so a restart
+            // between "download" and "install" used to erase it — and the
+            // updater treats a missing --installer-sha256 as "nothing to
+            // verify". Persist it beside the installer and let InstallAsync
+            // refuse to launch without one.
+            WriteInstallerSidecarHash(result.FilePath, _lastDownloadedSha256);
+        }
+
+        DownloadCompleted?.Invoke(result);
+        return result;
+    }
+
+    private async Task<AppUpdateDownloadResult> DownloadUpdateCoreAsync(
+        AppUpdateManifest manifest,
+        IProgress<AppUpdateDownloadProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
         // FARC-05: the substitution lands on a clone; the caller's manifest
         // (typically the cached LastCheckResult payload) stays untouched.
         AppUpdateManifest? selected = SelectInstallerForArchitecture(
@@ -202,10 +413,14 @@ public sealed partial class AppUpdateService : IAppUpdateService
                 File.Delete(tempPath);
             }
 
+            using var overallCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            overallCts.CancelAfter(OverallDownloadTimeout);
+            CancellationToken linkedToken = overallCts.Token;
+
             using var response = await _httpClient.GetAsync(
                 downloadUri,
                 HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken);
+                linkedToken);
             response.EnsureSuccessStatusCode();
 
             long? totalBytes = response.Content.Headers.ContentLength;
@@ -216,7 +431,7 @@ public sealed partial class AppUpdateService : IAppUpdateService
 
             long bytesReceived = 0;
             string actualSha256;
-            await using (var remoteStream = await response.Content.ReadAsStreamAsync(cancellationToken))
+            await using (var remoteStream = await response.Content.ReadAsStreamAsync(linkedToken))
             await using (var fileStream = new FileStream(
                 tempPath,
                 FileMode.Create,
@@ -228,15 +443,18 @@ public sealed partial class AppUpdateService : IAppUpdateService
             {
                 byte[] buffer = new byte[1024 * 128];
                 int bytesRead;
-                while ((bytesRead = await remoteStream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)) > 0)
+                while ((bytesRead = await remoteStream
+                           .ReadAsync(buffer.AsMemory(0, buffer.Length), linkedToken)
+                           .AsTask()
+                           .WaitAsync(ReadChunkTimeout)) > 0)
                 {
-                    await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+                    await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead), linkedToken);
                     hash.AppendData(buffer, 0, bytesRead);
                     bytesReceived += bytesRead;
                     progress?.Report(new AppUpdateDownloadProgress(bytesReceived, totalBytes));
                 }
 
-                await fileStream.FlushAsync(cancellationToken);
+                await fileStream.FlushAsync(linkedToken);
                 actualSha256 = Convert.ToHexString(hash.GetHashAndReset());
             }
 
@@ -255,10 +473,31 @@ public sealed partial class AppUpdateService : IAppUpdateService
             TryDelete(tempPath);
             return AppUpdateDownloadResult.Failed(AppUpdateDownloadFailureKind.Cancelled);
         }
+        catch (TimeoutException)
+        {
+            // A single read exceeded ReadChunkTimeout: the connection went
+            // silent mid-body. Classified with the other network failures so
+            // the caller's retry paths treat it like any dropped transfer.
+            TryDelete(tempPath);
+            return AppUpdateDownloadResult.Failed(
+                AppUpdateDownloadFailureKind.Network,
+                "The download stalled and was aborted.");
+        }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
             TryDelete(tempPath);
             return AppUpdateDownloadResult.Failed(AppUpdateDownloadFailureKind.Network, ex.Message);
+        }
+        catch (OperationCanceledException)
+        {
+            // R20-S1-01: the overall download deadline cancels the linked token,
+            // not the caller's, and stream writes surface that as a bare
+            // OperationCanceledException - which matched none of the filters
+            // above and escaped the method entirely (no result, no temp cleanup).
+            TryDelete(tempPath);
+            return AppUpdateDownloadResult.Failed(
+                AppUpdateDownloadFailureKind.Network,
+                "The download timed out and was aborted.");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -267,11 +506,43 @@ public sealed partial class AppUpdateService : IAppUpdateService
         }
     }
 
-    public AppUpdateInstallResult StartInstallerHelper(string installerPath, bool silent = true)
+    public async Task<AppUpdateInstallResult> StartInstallerHelperAsync(
+        string installerPath,
+        bool silent = true,
+        string? appCultureName = null)
     {
         if (string.IsNullOrWhiteSpace(installerPath) || !File.Exists(installerPath))
         {
             return AppUpdateInstallResult.Failed("The downloaded installer no longer exists.");
+        }
+
+        // R1-059: the download-time hash only proves the bytes as they left
+        // the network. The file sits in a user-writable directory, so the
+        // hash is recomputed before launch; a mismatch deletes the installer
+        // (reusing the counted TryDelete helper) and refuses to start it
+        // rather than running replaced code through the updater.
+        // R20-S10-02: fail closed. This used to verify only when the digest was
+        // still in memory AND the path matched the last download, so installing
+        // after a restart skipped verification entirely and the updater's
+        // second stage skipped it too. Resolve the digest from the sidecar the
+        // download wrote and refuse to run an installer nobody can vouch for.
+        string expectedSha256 = !string.IsNullOrWhiteSpace(_lastDownloadedSha256)
+            ? _lastDownloadedSha256!
+            : ReadInstallerSidecarHash(installerPath);
+        if (string.IsNullOrWhiteSpace(expectedSha256))
+        {
+            App.Log($"[Update] Refusing to install '{installerPath}': no digest is known for it.");
+            return AppUpdateInstallResult.Failed(
+                "The update package could not be verified. Please download the update again.");
+        }
+
+        if (!await TryVerifyInstallerHashAsync(installerPath, expectedSha256))
+        {
+            App.Log($"[Update] Installer hash changed on disk; deleting '{installerPath}'.");
+            TryDelete(installerPath);
+            ClearLastDownloadedInstaller();
+            return AppUpdateInstallResult.Failed(
+                "The downloaded installer changed on disk after the download and was removed. Please download the update again.");
         }
 
         string? appPath = Environment.ProcessPath;
@@ -305,6 +576,14 @@ public sealed partial class AppUpdateService : IAppUpdateService
             startInfo.ArgumentList.Add(Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
             startInfo.ArgumentList.Add("--installer");
             startInfo.ArgumentList.Add(installerPath);
+            // R1-059 second stage: the updater re-verifies the hash right
+            // before it launches the installer, closing the residual window
+            // between the app-side verification above and the parent exiting.
+            if (!string.IsNullOrWhiteSpace(expectedSha256))
+            {
+                startInfo.ArgumentList.Add("--installer-sha256");
+                startInfo.ArgumentList.Add(expectedSha256);
+            }
             startInfo.ArgumentList.Add("--app");
             startInfo.ArgumentList.Add(appPath);
             startInfo.ArgumentList.Add("--install-dir");
@@ -312,15 +591,61 @@ public sealed partial class AppUpdateService : IAppUpdateService
             if (silent)
             {
                 startInfo.ArgumentList.Add("--silent");
+                // The silent update's installer language follows the language
+                // the app is currently showing, so a user running DeskBox in
+                // English never gets the Chinese progress page replayed from
+                // a stale "Inno Setup: Language" value left by an old
+                // install. Never sent for interactive runs: a /LANG match
+                // suppresses Inno's Select Language dialog, which a manual
+                // Setup run must keep.
+                if (MapAppCultureToInstallerLanguage(appCultureName) is { } installerLanguage)
+                {
+                    startInfo.ArgumentList.Add("--installer-lang");
+                    startInfo.ArgumentList.Add(installerLanguage);
+                }
             }
 
             Process.Start(startInfo);
+            // R1-060: only after a successful helper start — the updater now
+            // owns this installer directory, so check-loop retirement below
+            // must stand down for the rest of this process's life.
+            _installerLaunchInProgress = true;
             return AppUpdateInstallResult.Started();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
             return AppUpdateInstallResult.Failed(ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Maps the app's effective UI culture (LocalizationService.CurrentCultureName)
+    /// to the installer language names declared in installer/DeskBox.iss — the
+    /// exact reverse of InstallLanguageCode in that script, which writes
+    /// HKCU\Software\DeskBox\InstallLanguage after each install. Both sides
+    /// and the [Languages] sections must be extended together when a language
+    /// is added; DeskBox.Updater.KnownInstallerLanguages whitelists the same
+    /// names before they reach the installer command line.
+    /// </summary>
+    internal static string? MapAppCultureToInstallerLanguage(string? appCultureName)
+    {
+        return appCultureName switch
+        {
+            LocalizationService.LanguageChinese => "chinesesimplified",
+            LocalizationService.LanguageChineseTraditional => "chinesetraditional",
+            LocalizationService.LanguageEnglish => "english",
+            LocalizationService.LanguageJapanese => "japanese",
+            LocalizationService.LanguageGerman => "german",
+            LocalizationService.LanguagePortuguese => "brazilianportuguese",
+            LocalizationService.LanguageHindi => "hindi",
+            LocalizationService.LanguageSpanish => "spanish",
+            LocalizationService.LanguageFrench => "french",
+            LocalizationService.LanguageArabic => "arabic",
+            LocalizationService.LanguageBengali => "bengali",
+            LocalizationService.LanguageRussian => "russian",
+            LocalizationService.LanguageKorean => "korean",
+            _ => null,
+        };
     }
 
     internal static bool TryGetInstallDirectory(string? appPath, out string installDirectory)
@@ -392,7 +717,7 @@ public sealed partial class AppUpdateService : IAppUpdateService
 
         string helperDirectory = Path.Combine(
             helperRoot,
-            $"{DateTimeOffset.UtcNow:yyyyMMddHHmmss}-{Environment.ProcessId.ToString(CultureInfo.InvariantCulture)}");
+            string.Create(CultureInfo.InvariantCulture, $"{DateTimeOffset.UtcNow:yyyyMMddHHmmss}-{Environment.ProcessId}"));
         Directory.CreateDirectory(helperDirectory);
 
         foreach (var sourcePath in Directory.EnumerateFiles(appDirectory, "DeskBox.Updater.*", SearchOption.TopDirectoryOnly))
@@ -458,6 +783,71 @@ public sealed partial class AppUpdateService : IAppUpdateService
             (string.IsNullOrWhiteSpace(manifest.Arm64DownloadUrl) ||
                 (Uri.TryCreate(manifest.Arm64DownloadUrl, UriKind.Absolute, out Uri? arm64Uri) &&
                     IsTrustedInstallerDownloadUri(arm64Uri)));
+    }
+
+    /// <summary>
+    /// Fetches the published manifest purely for display surfaces (release
+    /// notes, update summary). Unlike <see cref="IsManifestUsable"/>, this
+    /// validation only requires the content fields: the installer-pinning
+    /// rules exist to protect the download/install path and must not gate
+    /// plain text display — that gate is what left Store builds (whose
+    /// synthesized manifest carries a ms-windowsstore:// download target)
+    /// with an eternally empty release-notes window.
+    /// </summary>
+    public static async Task<AppUpdateManifest?> FetchContentManifestAsync(
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await FetchContentManifestAsync(DefaultManifestUrl, s_contentHttpClient, cancellationToken);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException or IOException)
+        {
+            return null;
+        }
+    }
+
+    internal static async Task<AppUpdateManifest?> FetchContentManifestAsync(
+        string manifestUrl,
+        HttpClient httpClient,
+        CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.GetAsync(manifestUrl, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        var manifest = await JsonSerializer.DeserializeAsync(
+            stream,
+            AppUpdateJsonContext.Default.UpdateManifest,
+            cancellationToken);
+        return IsContentManifestUsable(manifest) ? manifest : null;
+    }
+
+    internal static bool IsContentManifestUsable(AppUpdateManifest? manifest)
+    {
+        return manifest is not null &&
+            manifest.SchemaVersion == 1 &&
+            !string.IsNullOrWhiteSpace(manifest.Version) &&
+            manifest.HasReleaseNotesOrUrl;
+    }
+
+    /// <summary>
+    /// Builds a display-only manifest that resolves notes for an exact
+    /// version through the project's GitHub release tag; the release-notes
+    /// loader converts github.com tag pages to the API endpoint and caches
+    /// the body locally for offline viewing. Used when no full manifest is
+    /// reachable or when the published manifest already moved on to a newer
+    /// version than the one that needs showing.
+    /// </summary>
+    public static AppUpdateManifest CreateReleaseNotesOnlyManifest(string version)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(version);
+        return new AppUpdateManifest
+        {
+            Channel = "direct",
+            Version = version.Trim(),
+            ReleaseNotesUrl = $"https://github.com/Tianyu199509/DeskBox/releases/tag/v{version.Trim()}",
+        };
     }
 
     /// <summary>
@@ -533,6 +923,19 @@ public sealed partial class AppUpdateService : IAppUpdateService
                 : null;
         }
 
+        // R18-S1-001: a manifest that advertises an arm64 installer but omits
+        // its hash cannot be used by this architecture at all — the caller
+        // rejects the empty Sha256 and falls back to the GitHub release check.
+        // Say so explicitly, otherwise a support ticket only ever sees
+        // "could not check for updates" with no actionable cause.
+        if (string.IsNullOrWhiteSpace(manifest.Arm64Sha256))
+        {
+            App.Log(
+                "[AppUpdate] The update manifest carries arm64DownloadUrl but no arm64Sha256; " +
+                "this arm64 process rejects it as InvalidManifest and falls back to the GitHub " +
+                "release check. Publish arm64Sha256 (and arm64Size) together with arm64DownloadUrl.");
+        }
+
         var selected = new AppUpdateManifest
         {
             SchemaVersion = manifest.SchemaVersion,
@@ -606,21 +1009,7 @@ public sealed partial class AppUpdateService : IAppUpdateService
                 {
                     ["en-US"] = release.Body
                 },
-            Summary =
-            {
-                ["zh-CN"] = $"DeskBox {version} 已发布，可从 GitHub Releases 下载更新。",
-                ["zh-TW"] = $"DeskBox {version} 已發布，可從 GitHub Releases 下載更新。",
-                ["en-US"] = $"DeskBox {version} is available from GitHub Releases.",
-                ["ja-JP"] = $"DeskBox {version} は GitHub Releases から入手できます。",
-                ["de-DE"] = $"DeskBox {version} ist über GitHub Releases verfügbar.",
-                ["pt-BR"] = $"O DeskBox {version} está disponível no GitHub Releases.",
-                ["hi-IN"] = $"DeskBox {version} GitHub Releases से उपलब्ध है।",
-                ["es-ES"] = $"DeskBox {version} está disponible en GitHub Releases.",
-                ["fr-FR"] = $"DeskBox {version} est disponible sur GitHub Releases.",
-                ["ar-SA"] = $"يتوفر DeskBox {version} في إصدارات GitHub.",
-                ["bn-BD"] = $"DeskBox {version} GitHub Releases-এ পাওয়া যাচ্ছে।",
-                ["ru-RU"] = $"DeskBox {version} доступен в GitHub Releases."
-            }
+            Summary = []
         };
     }
 
@@ -641,6 +1030,42 @@ public sealed partial class AppUpdateService : IAppUpdateService
     {
         LastCheckResult = result;
         LastCheckTimeUtc = DateTime.UtcNow;
+
+        // A downloaded installer only stays valid for the version it was
+        // downloaded for: a check offering a different version retires it,
+        // and so does an up-to-date answer (the running build IS the
+        // downloaded one). A periodic re-check offering the SAME version
+        // must keep it — that is exactly the downloaded-but-not-yet-
+        // installed state the 24h loop would otherwise strand.
+        // R1-060: the whole retire branch (delete + bookkeeping clear) is
+        // gated on no installer launch being in flight — deleting the
+        // directory out from under a started updater races the installer
+        // run itself, and clearing only the fields would strand the files.
+        if (_installerLaunchInProgress)
+        {
+            // Refuse to retire while a launched updater may still be
+            // preparing to run this installer; the next launch retires it.
+        }
+        else if (result.IsUpdateAvailable && result.Manifest is { } offered &&
+            !string.Equals(offered.Version, _lastDownloadedVersion, StringComparison.Ordinal))
+        {
+            TryDeleteRetiredInstallerDirectory();
+            ClearLastDownloadedInstaller();
+        }
+        else if (result.Status == AppUpdateCheckStatus.UpToDate && _lastDownloadedInstallerPath is not null)
+        {
+            // B3: an up-to-date answer normally means the running build IS
+            // the downloaded one, so retiring is right. But a degraded or
+            // channel-switched check can call the RUNNING build up-to-date
+            // while a genuinely newer download is still pending install —
+            // keep the download in that case.
+            if (!IsRemoteVersionNewer(result.CurrentVersion, _lastDownloadedVersion!))
+            {
+                TryDeleteRetiredInstallerDirectory();
+                ClearLastDownloadedInstaller();
+            }
+        }
+
         CheckCompleted?.Invoke(result);
         return result;
     }
@@ -667,7 +1092,15 @@ public sealed partial class AppUpdateService : IAppUpdateService
     private static string SanitizePathSegment(string value)
     {
         string sanitized = SanitizeFileName(value);
-        return string.IsNullOrWhiteSpace(sanitized) ? "latest" : sanitized;
+        if (string.IsNullOrWhiteSpace(sanitized))
+        {
+            return "latest";
+        }
+
+        // "." and ".." survive the filename sanitizer (dots are legal name
+        // chars) but combine into path traversal; a remote version string
+        // must never resolve outside the update root.
+        return sanitized is "." or ".." ? "_" : sanitized;
     }
 
     private static string SanitizeFileName(string value)
@@ -754,9 +1187,88 @@ public sealed partial class AppUpdateService : IAppUpdateService
         return string.Empty;
     }
 
+    /// <summary>
+    /// R1-059: streams the file and compares its SHA256 against the expected
+    /// hex digest. False means "do not launch this" — either the content
+    /// changed or the file could not be read.
+    /// </summary>
+    internal static async Task<bool> TryVerifyInstallerHashAsync(
+        string installerPath,
+        string expectedSha256)
+    {
+        try
+        {
+            await using var stream = new FileStream(
+                installerPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 1024 * 128,
+                useAsync: true);
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            byte[] buffer = new byte[1024 * 128];
+            int bytesRead;
+            while ((bytesRead = await stream.ReadAsync(buffer)) > 0)
+            {
+                hash.AppendData(buffer, 0, bytesRead);
+            }
+
+            return string.Equals(
+                Convert.ToHexString(hash.GetHashAndReset()),
+                NormalizeSha256(expectedSha256),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            App.Log($"[Update] Installer hash verification could not read '{installerPath}': {ex.Message}");
+            return false;
+        }
+    }
+
     private static bool IsSha256Hex(string value)
     {
         return value.Length == 64 && value.All(Uri.IsHexDigit);
+    }
+
+    // R20-S10-02: durable home for the download-time digest. The updater must
+    // never be asked to run an installer whose digest nobody remembers.
+    internal static string InstallerSidecarPath(string installerPath) => installerPath + ".sha256";
+
+    private static void WriteInstallerSidecarHash(string installerPath, string? sha256)
+    {
+        if (string.IsNullOrWhiteSpace(sha256))
+        {
+            return;
+        }
+
+        try
+        {
+            File.WriteAllText(InstallerSidecarPath(installerPath), NormalizeSha256(sha256));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            App.Log($"[Update] Could not persist the installer digest beside '{installerPath}': {ex.Message}");
+        }
+    }
+
+    internal static string ReadInstallerSidecarHash(string installerPath)
+    {
+        try
+        {
+            string sidecar = InstallerSidecarPath(installerPath);
+            if (!File.Exists(sidecar))
+            {
+                return string.Empty;
+            }
+
+            string raw = File.ReadAllText(sidecar).Trim();
+            return IsSha256Hex(raw) ? NormalizeSha256(raw) : string.Empty;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            App.Log($"[Update] Could not read the installer digest beside '{installerPath}': {ex.Message}");
+            return string.Empty;
+        }
     }
 
     private static string NormalizeVersionText(string value)

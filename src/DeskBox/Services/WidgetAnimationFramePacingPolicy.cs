@@ -20,6 +20,13 @@ internal sealed class WidgetAnimationFramePacingPolicy
 
     public double TargetIntervalMilliseconds { get; private set; }
 
+    // A cap is a deadline interval, not an integer divisor of display ticks.
+    // This also works for non-divisible rates such as 165 Hz capped at 60 fps.
+    internal static double ResolveFrameBudget(double displayBudgetMs, int frameRateCap) =>
+        frameRateCap > 0
+            ? Math.Max(NormalizeBudget(displayBudgetMs), 1000d / frameRateCap)
+            : NormalizeBudget(displayBudgetMs);
+
     public void Reset(double timestampMs, double frameBudgetMs)
     {
         _frameBudgetMilliseconds = NormalizeBudget(frameBudgetMs);

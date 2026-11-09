@@ -1,4 +1,5 @@
 using DeskBox.ViewModels;
+using DeskBox.Helpers;
 
 namespace DeskBox.Services;
 
@@ -105,8 +106,8 @@ public static class TodoClipboardFormatter
         DateTimeOffset localValue = value.ToLocalTime();
         var today = DateTimeOffset.Now.Date;
         string time = localValue.Second == 0
-            ? localValue.ToString("HH:mm")
-            : localValue.ToString("HH:mm:ss");
+            ? localValue.ToString("HH:mm", DisplayCulture.GregorianCurrent)
+            : localValue.ToString("HH:mm:ss", DisplayCulture.GregorianCurrent);
 
         if (localValue.Date == today)
         {
@@ -119,8 +120,8 @@ public static class TodoClipboardFormatter
         }
 
         return localValue.Second == 0
-            ? localValue.ToString("yyyy/M/d HH:mm")
-            : localValue.ToString("yyyy/M/d HH:mm:ss");
+            ? localValue.ToString("yyyy/M/d HH:mm", DisplayCulture.GregorianCurrent)
+            : localValue.ToString("yyyy/M/d HH:mm:ss", DisplayCulture.GregorianCurrent);
     }
 
     private static string GetColorMarkerEmoji(string? colorMarker)

@@ -6,96 +6,23 @@ namespace DeskBox.Controls.WidgetContents;
 
 public sealed partial class FileSurfaceContent
 {
-    private static readonly TimeSpan ScrollBarAutoHideDelay =
-        TimeSpan.FromSeconds(3);
-
-    private readonly DispatcherTimer _scrollBarHideTimer = new()
-    {
-        Interval = ScrollBarAutoHideDelay
-    };
-
     private void RegisterScrollBarActivityTracking(ListViewBase itemsView)
     {
-        itemsView.AddHandler(
-            UIElement.PointerMovedEvent,
-            new PointerEventHandler(ItemsView_ScrollBarActivity),
-            handledEventsToo: true);
-        itemsView.AddHandler(
-            UIElement.PointerPressedEvent,
-            new PointerEventHandler(ItemsView_ScrollBarActivity),
-            handledEventsToo: true);
-        itemsView.AddHandler(
-            UIElement.PointerWheelChangedEvent,
-            new PointerEventHandler(ItemsView_ScrollBarActivity),
-            handledEventsToo: true);
-        itemsView.AddHandler(
-            UIElement.PointerWheelChangedEvent,
-            new PointerEventHandler(ItemsView_IconSizePointerWheel),
-            handledEventsToo: true);
-
-        if (!_scrollBarHideTimer.IsEnabled)
-        {
-            _scrollBarHideTimer.Tick -= ScrollBarHideTimer_Tick;
-            _scrollBarHideTimer.Tick += ScrollBarHideTimer_Tick;
-        }
-    }
-
-    private void ItemsView_ScrollBarActivity(
-        object sender,
-        PointerRoutedEventArgs e)
-    {
-        ShowScrollBarTemporarily(sender as ListViewBase);
-    }
-
-    private void ShowScrollBarTemporarily(ListViewBase? itemsView)
-    {
-        if (_isDisposed || !IsLoaded)
-        {
-            return;
-        }
-
-        SetVerticalScrollBarVisibility(
-            itemsView ?? GetActiveItemsView(),
+        // Keep the viewport stable. WinUI's ScrollViewer owns the indicator's
+        // fade/hover/drag states; toggling Hidden/Auto from PointerMoved forces
+        // layout and can remove the thumb while the user still holds it.
+        itemsView.SetValue(ScrollViewer.VerticalScrollBarVisibilityProperty,
             ScrollBarVisibility.Auto);
-        _scrollBarHideTimer.Stop();
-        _scrollBarHideTimer.Start();
-    }
-
-    private void ScrollBarHideTimer_Tick(object? sender, object e)
-    {
-        HideInactiveScrollBars();
-    }
-
-    private void HideInactiveScrollBars()
-    {
-        StopScrollBarHideTimer();
-        SetVerticalScrollBarVisibility(ItemsGrid, ScrollBarVisibility.Hidden);
-        SetVerticalScrollBarVisibility(ItemsList, ScrollBarVisibility.Hidden);
-        if (_stackPopoverItemsView is { } stackPopoverItemsView)
-        {
-            SetVerticalScrollBarVisibility(
-                stackPopoverItemsView,
-                ScrollBarVisibility.Hidden);
-        }
-    }
-
-    private void StopScrollBarHideTimer()
-    {
-        _scrollBarHideTimer.Stop();
+        itemsView.AddHandler(UIElement.PointerWheelChangedEvent,
+            new PointerEventHandler(ItemsView_IconSizePointerWheel), handledEventsToo: true);
     }
 
     private void DisposeScrollBarActivityTracking()
     {
-        StopScrollBarHideTimer();
-        _scrollBarHideTimer.Tick -= ScrollBarHideTimer_Tick;
-    }
-
-    private static void SetVerticalScrollBarVisibility(
-        ListViewBase itemsView,
-        ScrollBarVisibility visibility)
-    {
-        itemsView.SetValue(
-            ScrollViewer.VerticalScrollBarVisibilityProperty,
-            visibility);
+        foreach (ListViewBase itemsView in new ListViewBase[] { ItemsGrid, ItemsList })
+        {
+            itemsView.RemoveHandler(UIElement.PointerWheelChangedEvent,
+                new PointerEventHandler(ItemsView_IconSizePointerWheel));
+        }
     }
 }

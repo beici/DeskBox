@@ -439,7 +439,10 @@ public sealed class WidgetVisualActivityContractTests
 
         Assert.Contains("isFullBleed ? 0.22 : 0.30", compactLive, StringComparison.Ordinal);
         Assert.Contains("midpoint: 0.6f, amplitude: 0.2f", compactLive, StringComparison.Ordinal);
+        Assert.Contains("!CompactAmbientAnimationsEnabled()", compactLive, StringComparison.Ordinal);
         Assert.Contains("!SystemAnimationsEnabled()", compactLive, StringComparison.Ordinal);
+        // Reduced motion: the gate-fail branch stops the animations and parks
+        // the visuals at their fixed static values instead of animating.
         Assert.Contains("CompactLiveProgressTransform.ScaleX = 1", compactLive, StringComparison.Ordinal);
         // DEF-089/FANI-01: the translation's end value follows the track
         // width, so it is a fresh per-start animation; the opacity pulse keeps
@@ -447,7 +450,11 @@ public sealed class WidgetVisualActivityContractTests
         Assert.Contains("_compositionResources.CreateScalar(", compactLive, StringComparison.Ordinal);
         Assert.Contains("InsertKeyFrame(1, (float)maxTranslate)", compactLive, StringComparison.Ordinal);
         Assert.Contains("WidgetAnimationTemplate.CompactLiveOpacity", compactLive, StringComparison.Ordinal);
+        // DEF-018: the fork removed the compact-live breathing helper (it was
+        // already dead upstream — its definition had no caller there either), so
+        // the compact-live visuals stay compositor-only with no dispatcher timer.
         Assert.DoesNotContain("CreateTimer()", compactLive, StringComparison.Ordinal);
+        Assert.DoesNotContain("StartSineOpacityBreathing(", compactLive, StringComparison.Ordinal);
 
         Assert.Contains("midpoint: 0.48f, amplitude: 0.1f", edgeGlow, StringComparison.Ordinal);
         Assert.Contains("EdgeGlowPulseDurationSeconds", edgeGlow, StringComparison.Ordinal);
@@ -514,6 +521,35 @@ public sealed class WidgetVisualActivityContractTests
             StringComparison.Ordinal);
 
         Assert.True(hideIndex >= 0 && hideIndex < suspendIndex);
+    }
+
+    [Fact]
+    public void TrayShow_ResumesVisualsBeforeRemovingCloak()
+    {
+        string show = ExtractSection(
+            Read("src/DeskBox/Views/ContentWidgetWindow.xaml.cs"),
+            "public void ShowPreparedRaisedFromTray(bool persistVisibility = true)",
+            "public void PlayTrayShowAnimation()");
+        int resumeIndex = show.IndexOf(
+            "ShowWithoutActivation(persistVisibility);",
+            StringComparison.Ordinal);
+        int revealIndex = show.IndexOf(
+            "TrayAnimation.RevealWindowForTrayShow();",
+            StringComparison.Ordinal);
+        Assert.True(resumeIndex >= 0 && resumeIndex < revealIndex);
+
+        string showWithoutActivation = ExtractSection(
+            Read("src/DeskBox/Views/ContentWidgetWindow.WindowInteraction.cs"),
+            "private void ShowWithoutActivation(bool persistVisibility)",
+            "private void QueueVisibleContentResume()");
+        Assert.Contains(
+            "NotifyCompactHostVisibilityChanged(true);",
+            showWithoutActivation,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "QueueVisibleContentResume();",
+            showWithoutActivation,
+            StringComparison.Ordinal);
     }
 
     [Theory]

@@ -218,7 +218,10 @@ public sealed class GlanceWidgetStore
     private static GlanceWidgetData Normalize(GlanceWidgetData? data)
     {
         data ??= new GlanceWidgetData();
-        data.Version = GlanceWidgetData.CurrentVersion;
+        // R21-S8-02: keep a newer on-disk version instead of writing it back
+        // down, otherwise a restore from a newer build drops unknown fields and
+        // blocks the later upgrade from migrating them.
+        data.Version = Math.Max(GlanceWidgetData.CurrentVersion, data.Version);
         data.LocalImagePaths ??= [];
         data.LocalImagePaths = data.LocalImagePaths
             .Where(path => !string.IsNullOrWhiteSpace(path))

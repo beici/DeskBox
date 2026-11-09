@@ -30,7 +30,7 @@ public sealed record WidgetCompactPresentation(
     bool UseFullBleedBackground = false,
     string BadgeText = "",
     bool BadgeIsWarning = false,
-    string EmojiIcon = "",
+
     // ── Visual effects ──────────────────────────────────────
     Windows.UI.Color? BackgroundColorStart = null,
     Windows.UI.Color? BackgroundColorEnd = null,
@@ -58,4 +58,12 @@ public sealed record WidgetCompactPresentation(
     bool UseUniformFullBleedOverlay = false,
     // Multiplies only the full-bleed image. Text, controls, readability masks,
     // and compact transition animations remain on independent layers.
-    double FullBleedBackgroundOpacity = 1.0);
+    double FullBleedBackgroundOpacity = 1.0,
+    // Bundled vector icon shown in place of the default glyph (weather).
+    ImageSource? IconImage = null,
+    // Accessible label for the compact primary action; empty falls back to
+    // the Todo mark-completed string (Pomodoro feeds Start/Pause here).
+    string PrimaryActionLabel = "",
+    // Marks per-second live text updates (countdowns). The shell then only
+    // swaps text/progress instead of rebuilding the compact surface.
+    bool IsLiveTextUpdate = false);

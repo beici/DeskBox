@@ -7,7 +7,7 @@ public sealed class FeatureWidgetEntryFactoryTests
     [Fact]
     public void CreateEntries_OnlyIncludesAvailableImplementedKinds()
     {
-        var settingsService = new SettingsService();
+        var settingsService = TestServices.CreateSettingsService();
         var localizationService = TestServices.CreateLocalizationService();
         var factory = new FeatureWidgetEntryFactory(
             localizationService,
@@ -24,7 +24,8 @@ public sealed class FeatureWidgetEntryFactoryTests
             WidgetKind.Music,
             WidgetKind.Weather,
             WidgetKind.Search,
-            WidgetKind.Glance
+            WidgetKind.Glance,
+            WidgetKind.Pomodoro
         ], entries.Select(entry => entry.Kind));
         Assert.All(entries, entry =>
         {

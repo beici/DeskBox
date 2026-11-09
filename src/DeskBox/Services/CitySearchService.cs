@@ -202,7 +202,7 @@ public sealed class CitySearchService : IDisposable
         // Add local results first (they have proper zh/en names)
         foreach (var r in localResults)
         {
-            var key = $"{r.Latitude:F2},{r.Longitude:F2}";
+            var key = string.Create(CultureInfo.InvariantCulture, $"{r.Latitude:F2},{r.Longitude:F2}");
             if (seen.Add(key))
             {
                 merged.Add(new CitySearchCandidate(
@@ -223,7 +223,7 @@ public sealed class CitySearchService : IDisposable
                     continue;
                 }
 
-                var key = $"{item.Latitude:F2},{item.Longitude:F2}";
+                var key = string.Create(CultureInfo.InvariantCulture, $"{item.Latitude:F2},{item.Longitude:F2}");
                 if (seen.Add(key))
                 {
                     string name = LocalizeChineseText(item.Name, useTraditional);

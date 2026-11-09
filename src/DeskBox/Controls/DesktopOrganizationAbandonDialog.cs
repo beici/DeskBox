@@ -1,4 +1,5 @@
 using System.Text;
+using DeskBox.Helpers;
 using DeskBox.Models;
 using DeskBox.Services;
 using Microsoft.UI.Xaml;
@@ -21,7 +22,14 @@ internal static class DesktopOrganizationAbandonDialog
     {
         if (xamlRoot is null)
         {
-            return true;
+            // Fail closed: no host root means the confirmation cannot be
+            // shown, and abandoning an interrupted restore without asking
+            // destroys the only receipts that could still recover the
+            // copies. Callers keep the banner so the user can retry.
+            App.Log(
+                "[DesktopOrganization] Abandon confirmation skipped: " +
+                "no XamlRoot; refusing to abandon without confirmation.");
+            return false;
         }
 
         var content = new StackPanel { Spacing = 12, MaxWidth = 480 };
@@ -41,7 +49,11 @@ internal static class DesktopOrganizationAbandonDialog
                     Text = itemDetails,
                     FontSize = 12,
                     TextWrapping = TextWrapping.Wrap,
-                    Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+                    // Application-scope themed lookups follow the system
+                    // theme; resolve against the host window's root instead.
+                    Foreground = NeutralInteractionBrush.ResolveThemedResource(
+                        "TextFillColorSecondaryBrush", xamlRoot.Content) ??
+                        new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x9E, 0x9E, 0x9E))
                 }
             });
         }

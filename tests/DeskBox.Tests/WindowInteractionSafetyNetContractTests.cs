@@ -29,13 +29,17 @@ public sealed class WindowInteractionSafetyNetContractTests
         string manager = ReadRepositoryFile("src/DeskBox/Services/WidgetManager.cs");
         string zorder = ReadRepositoryFile("src/DeskBox/Services/WidgetManager.ZOrder.cs");
 
-        // Begin arms the watchdog when the depth transitions 0 -> 1...
+        // Begin arms the watchdog through the session-manager event when the
+        // depth transitions 0 -> 1: BeginInteraction raises
+        // InteractionActiveChanged, whose handler arms the leak watchdog.
         int beginStart = IndexOf(manager, "public void BeginWidgetInteraction(string reason)");
-        int armGuard = IndexOf(manager, "if (!_sessionManager.IsInteractionActive)");
-        int armCall = IndexOf(manager, "StartInteractionLeakWatchdog();");
+        int beginCall = IndexOf(manager, "_sessionManager.BeginInteraction(reason);");
+        int eventWire = IndexOf(manager, "_sessionManager.InteractionActiveChanged += OnSessionInteractionActiveChanged;");
         Assert.True(beginStart >= 0, "BeginWidgetInteraction must exist");
-        Assert.True(armGuard > beginStart, "the arm guard must live inside BeginWidgetInteraction");
-        Assert.True(armCall > armGuard, "the watchdog must be armed by BeginWidgetInteraction");
+        Assert.True(beginCall > beginStart, "BeginWidgetInteraction must enter through the session manager");
+        Assert.True(eventWire >= 0, "the manager must observe the interaction-active transitions");
+        Assert.Contains("EnsureInteractionLeakWatchdogArmed();", zorder, StringComparison.Ordinal);
+        Assert.Contains("private void OnSessionInteractionActiveChanged()", zorder, StringComparison.Ordinal);
 
         // ...and End disarms it once the depth returns to zero.
         int endStart = IndexOf(manager, "public void EndWidgetInteraction(string reason)");

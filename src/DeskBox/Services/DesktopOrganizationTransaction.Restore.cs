@@ -154,9 +154,31 @@ public sealed partial class DesktopOrganizationTransaction
             var candidates = new List<DesktopOrganizationRecoveryItem>();
             foreach (var item in journal.Items)
             {
-                if (!EntryExists(item.DestinationPath)) continue;
+                if (!EntryExists(item.DestinationPath))
+                {
+                    // The object is gone (user moved/deleted it after the
+                    // crash): recovery has nothing to act on, so the item
+                    // leaves the journal here. The organization history
+                    // entry remains the durable record of where it went.
+                    App.Log(
+                        $"[Organization] Recovery dropped item whose destination " +
+                        $"disappeared: {item.SourcePath}");
+                    continue;
+                }
+
                 // A planned name alone is not proof that the move happened.
-                if (!item.Completed && (EntryExists(item.SourcePath) || !MatchesSnapshot(item.DestinationPath, item))) continue;
+                if (!item.Completed && (EntryExists(item.SourcePath) || !MatchesSnapshot(item.DestinationPath, item)))
+                {
+                    // Identity authority failed (never moved, source reappeared,
+                    // or the destination content changed): no automatic restore,
+                    // and the item leaves the journal. The organization history
+                    // entry remains the durable record for the user.
+                    App.Log(
+                        $"[Organization] Recovery dropped item without identity " +
+                        $"authority: {item.SourcePath}");
+                    continue;
+                }
+
                 item.RestorePath ??= FileService.GetAvailablePath(item.SourcePath, reserved);
                 candidates.Add(item);
             }
@@ -466,7 +488,9 @@ public sealed partial class DesktopOrganizationTransaction
         // (legacy journals written before this field existed, captures that
         // failed, or the rare crash between the physical move and the
         // receipt write) have NO automatic restore authority — the item
-        // stays where it is and the journal keeps the record for the user.
+        // stays where it is physically, and recovery drops it from the
+        // journal (with a log line). The organization history entry is the
+        // record that survives for the user; the journal is not.
         if (item.DestinationIdentity is not { } identity)
         {
             return false;

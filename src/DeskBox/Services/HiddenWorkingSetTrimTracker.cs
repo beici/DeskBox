@@ -22,6 +22,11 @@ internal sealed class HiddenWorkingSetTrimTracker
             return null;
         }
 
+        // A transition observed while trimming was disabled (or with no
+        // windows loaded) is deliberately NOT replayed later: the existing
+        // cleanup mechanism stays in control until the next hide cycle
+        // (pinned by HiddenWorkingSetTrimTrackerTests
+        // .DisabledOption_LeavesExistingCleanupInControlUntilNextHide).
         if (!_observedVisibleWidgets)
         {
             return null;

@@ -11,6 +11,13 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+# Single source of truth for the audit gates below: keep these in sync with
+# publish-aot-audit.ps1 ($auditProfileVersion, the summary schema version it
+# emits, and the current WMC1510 baseline in warningCodeCounts). Bump all of
+# them together when the audit profile changes.
+$requiredAuditProfileVersion = 65
+$requiredSummarySchemaVersion = 55
+$requiredWmc1510Count = 808
 $scenario = "RealDisplayAndCleanup"
 $smokeEnvironmentVariable = "DESKBOX_AOT_TODO_NOTIFICATION_SMOKE"
 $phaseEnvironmentVariable = "DESKBOX_AOT_TODO_NOTIFICATION_PHASE"
@@ -385,18 +392,18 @@ if (-not (Test-Path -LiteralPath $auditSummaryPath -PathType Leaf)) {
 $auditSummary = Get-Content `
     -LiteralPath $auditSummaryPath `
     -Raw | ConvertFrom-Json
-if ([int]$auditSummary.auditProfileVersion -ne 54 -or
-    [int]$auditSummary.schemaVersion -ne 51 -or
+if ([int]$auditSummary.auditProfileVersion -ne $requiredAuditProfileVersion -or
+    [int]$auditSummary.schemaVersion -ne $requiredSummarySchemaVersion -or
     -not [bool]$auditSummary.sourceStableDuringAudit -or
     [string]$auditSummary.configuration -cne "Release" -or
     [string]$auditSummary.platform -cne "x64" -or
     [string]$auditSummary.runtimeIdentifier -cne "win-x64" -or
     @($auditSummary.warningCodes | Where-Object { $_ -ceq "WMC1506" }).Count -ne 0 -or
-    [int]$auditSummary.warningCodeCounts.WMC1510 -ne 1213 -or
+    [int]$auditSummary.warningCodeCounts.WMC1510 -ne $requiredWmc1510Count -or
     @($auditSummary.alwaysThrowMessages).Count -ne 0 -or
     [int]$auditSummary.rustNative.abiVersion -ne 2 -or
     [int]$auditSummary.rustNative.capabilities -ne 511) {
-    throw "Todo notification smoke requires a successful profile 56 / schema 53 audit."
+    throw "Todo notification smoke requires a successful profile $requiredAuditProfileVersion / schema $requiredSummarySchemaVersion audit."
 }
 
 if ([string]::IsNullOrWhiteSpace($DataRoot)) {
@@ -425,7 +432,7 @@ New-Item -ItemType Directory -Path $dataDirectory -Force | Out-Null
     -Encoding UTF8
 
 $settings = [ordered]@{
-    schemaVersion = 5
+    schemaVersion = 9
     language = "zh-CN"
     autoStart = $false
     autoCheckForUpdates = $false

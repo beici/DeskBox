@@ -49,7 +49,7 @@ public sealed class CapsuleCollapseLayerRestoreQuietnessTests
         string rejoin = SliceMethod(
             layer,
             "    internal static bool TryReturnToRestingBandBelow(",
-            "    public static IntPtr ClearTopMostPreservingForeground(");
+            "    internal static IntPtr ClearTopMostPreservingForeground(");
 
         // Owner attach without the bottom move, then one insert-after.
         Assert.Contains("placeAtBottom: false", rejoin, StringComparison.Ordinal);

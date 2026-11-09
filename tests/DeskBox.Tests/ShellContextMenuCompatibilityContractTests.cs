@@ -1,6 +1,5 @@
 using DeskBox.Helpers;
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 
 namespace DeskBox.Tests;
 
@@ -26,7 +25,13 @@ public sealed class ShellContextMenuCompatibilityContractTests
             StringComparison.Ordinal);
         Assert.Contains("item.Path,", surface, StringComparison.Ordinal);
         Assert.Contains("screenX,", surface, StringComparison.Ordinal);
-        Assert.Contains("screenY);", surface, StringComparison.Ordinal);
+        Assert.Contains("screenY,", surface, StringComparison.Ordinal);
+        // The host labels the rename entry the native proxy appends; the
+        // label reuses the shared localized "Rename" string.
+        Assert.Contains(
+            "T(\"Common.Rename\")",
+            surface,
+            StringComparison.Ordinal);
         Assert.DoesNotContain(
             "ShellContextMenuHelper.ShowContextMenu(",
             surface,
@@ -37,7 +42,7 @@ public sealed class ShellContextMenuCompatibilityContractTests
             menuBuilder,
             StringComparison.Ordinal);
         Assert.Contains(
-            "await actions.ShowSystemContextMenuAsync(item);",
+            "await actions.ShowSystemContextMenuAsync(item)",
             menuBuilder,
             StringComparison.Ordinal);
 
@@ -71,7 +76,10 @@ public sealed class ShellContextMenuCompatibilityContractTests
         Assert.Contains("\"shown\"", proxy, StringComparison.Ordinal);
         Assert.Contains("TimeSpan.FromSeconds(15)", proxy, StringComparison.Ordinal);
         Assert.Contains("TimeSpan.FromMinutes(10)", proxy, StringComparison.Ordinal);
-        Assert.Contains("_process.Kill(entireProcessTree: true)", proxy, StringComparison.Ordinal);
+        // R2 ⑦-3: the server proxy is killed with entireProcessTree:false —
+        // the menu server INVOKE-verb launches user-chosen applications as
+        // its children, and killing the tree would kill those apps too.
+        Assert.Contains("_process.Kill(entireProcessTree: false)", proxy, StringComparison.Ordinal);
         Assert.Contains(
             "Interlocked.CompareExchange(ref s_menuInFlight, 1, 0)",
             proxy,
@@ -291,7 +299,11 @@ public sealed class ShellContextMenuCompatibilityContractTests
         Assert.Contains("\"cancel\"", native, StringComparison.Ordinal);
         Assert.Contains("dismiss_open_menu", native, StringComparison.Ordinal);
         Assert.Contains("VK_ESCAPE", native, StringComparison.Ordinal);
-        Assert.Contains("PostMessageW(Some(owner), WM_KEYDOWN", native, StringComparison.Ordinal);
+        // The escape key is posted to the menu owner as a key-down/up pair
+        // inside dismiss_open_menu (cargo fmt wraps the PostMessageW call, so
+        // pin the gesture, not the call-site layout).
+        Assert.Contains("fn dismiss_open_menu", native, StringComparison.Ordinal);
+        Assert.Contains("WM_KEYUP", native, StringComparison.Ordinal);
 
         // Activation alone cannot dismiss the menu over DeskBox's topmost,
         // non-activating widget windows, so the proxy also watches mouse input
@@ -390,40 +402,39 @@ public sealed class ShellContextMenuCompatibilityContractTests
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void NativeMenuRoundInFlight_KeepsExpandedCapsuleFromCollapsingUnderProxyMenu()
+    {
+        string proxy = ReadRepositoryFile(
+            "src/DeskBox/Helpers/ShellContextMenuProxy.cs");
+        string windowBase = ReadRepositoryFile(
+            "src/DeskBox/Views/WidgetWindowBase.cs");
+
+        // The in-flight gate covers the whole round (visible menu, A→B swap,
+        // one-shot fallback, InvokeCommand), so the flag can never drop while
+        // a menu the user is browsing is still on screen.
+        Assert.Contains(
+            "internal static bool IsMenuRoundInFlight => Volatile.Read(ref s_menuInFlight) != 0;",
+            proxy,
+            StringComparison.Ordinal);
+
+        // The guard must sit in the base funnel: HasBlockingFlyoutOpen feeds
+        // both the Smart auto-collapse snapshot and SetCollapsedState's own
+        // collapse gate, so every entry point (pointer-leave timer, Esc,
+        // deactivation) sees the native menu, not only Smart mode.
+        Assert.Contains(
+            "if (ShellContextMenuProxy.IsMenuRoundInFlight)",
+            windowBase,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "protected virtual bool HasBlockingFlyoutOpen()",
+            windowBase,
+            StringComparison.Ordinal);
+    }
+
     private static string ReadRepositoryFile(string relativePath) =>
         File.ReadAllText(TestPaths.FromRepository(relativePath));
 
-    private static string GetBuiltProxyPath()
-    {
-        string configuration =
-#if DEBUG
-            "Debug";
-#else
-            "Release";
-#endif
-        string platform = RuntimeInformation.ProcessArchitecture == Architecture.Arm64
-            ? "ARM64"
-            : "x64";
-        string outputRoot = Path.Combine(
-            "src",
-            "DeskBox",
-            "bin",
-            platform,
-            configuration,
-            "net10.0-windows10.0.22621.0");
-        string canonicalPath = TestPaths.FromRepository(Path.Combine(
-            outputRoot,
-            ShellThumbnailProxy.ExecutableName));
-        if (File.Exists(canonicalPath))
-        {
-            return canonicalPath;
-        }
-
-        return TestPaths.FromRepository(Path.Combine(
-            outputRoot,
-            RuntimeInformation.ProcessArchitecture == Architecture.Arm64
-                ? "win-arm64"
-                : "win-x64",
-            ShellThumbnailProxy.ExecutableName));
-    }
+    private static string GetBuiltProxyPath() =>
+        TestPaths.BuiltAppFile(ShellThumbnailProxy.ExecutableName);
 }

@@ -198,6 +198,62 @@ public sealed partial class QuickCaptureWidgetViewModel
         return viewModel;
     }
 
+    /// <summary>
+    /// Resolves the cached view model for <paramref name="id"/> even when the
+    /// active view or search filter hides the item. Detail editing must keep
+    /// its subject after a save that changes the item's filter match (for
+    /// example, editing a note until it no longer contains the search text);
+    /// resolving through <see cref="Items"/> alone clears the detail subject
+    /// and re-arms the auto-save forever.
+    /// </summary>
+    internal QuickCaptureItemViewModel? FindItemViewModelById(string id)
+    {
+        if (string.IsNullOrEmpty(id))
+        {
+            return null;
+        }
+
+        QuickCaptureItem? model = _cachedData?.Items
+            .Concat(_cachedData.RecentItems)
+            .FirstOrDefault(item =>
+                !item.IsDeleted && string.Equals(item.Id, id, StringComparison.Ordinal));
+
+        if (_itemViewModelCache.TryGetValue(id, out QuickCaptureItemViewModel? cached))
+        {
+            if (model is null)
+            {
+                // The item is gone: keeping a stale view model would let the
+                // detail editor keep writing to a row the store no longer has.
+                _itemViewModelCache.Remove(id);
+                return null;
+            }
+
+            // Refresh before handing the instance out. A cached view model can
+            // predate the save that just changed the body; returning it as-is
+            // makes the editor re-seed itself with the previous text.
+            cached.Update(model);
+            return cached;
+        }
+
+        if (model is null)
+        {
+            return null;
+        }
+
+        var viewModel = new QuickCaptureItemViewModel(
+            model,
+            _localizationService,
+            TextSize,
+            IconSize,
+            SearchText,
+            contentTextSize: ContentTextSize,
+            showPinnedSortControls: false,
+            canMovePinnedUp: false,
+            canMovePinnedDown: false);
+        _itemViewModelCache[id] = viewModel;
+        return viewModel;
+    }
+
     private void PruneItemViewModelCache(IReadOnlyList<QuickCaptureItem> visibleItems)
     {
         if (_cachedData is null && _itemViewModelCache.Count == 0)

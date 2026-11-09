@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-      - master
   pull_request:
 
 jobs:
@@ -47,6 +46,18 @@ jobs:
       - name: Test
         timeout-minutes: 10
         run: dotnet test .\tests\DeskBox.Tests\DeskBox.Tests.csproj --configuration Release --no-restore -p:Platform=x64 -p:RuntimeIdentifier=win-x64 -p:WindowsAppSdkBootstrapInitialize=false --blame-hang --blame-hang-timeout 5m --logger "trx;LogFileName=test-results.trx" -v:minimal
+
+      # R2-P1-2: the static gate (l10n key parity, async-void / sync-wait /
+      # clipboard-pairing budgets, contract-assertion replay) used to run only
+      # on an ad-hoc Linux box; running it here catches drift on every PR.
+      # It falls back to a pure-Python scanner when ripgrep is absent, so no
+      # extra tool install is needed.
+      - name: Static quality gate
+        shell: pwsh
+        run: |
+          python -m unittest discover -s scripts/quality -p test_static_gate.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/quality/static_gate.py
 
       - name: Upload test results
         if: always()

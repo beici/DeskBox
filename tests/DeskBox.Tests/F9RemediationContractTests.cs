@@ -44,7 +44,9 @@ public sealed class F9RemediationContractTests
         Assert.Matches(
             new Regex(@"event Action<string,\s*TodoItem\?,\s*TodoItem\?>\? TodoStoreChanged"),
             source);
-        Assert.Equal(3, Regex.Matches(source, @"PublishStoreChanged\(widget\.Id").Count);
+        // Call sites only (the lookbehind skips the private method declaration):
+        // the three MutateAsync write paths plus the external-notify API.
+        Assert.Equal(4, Regex.Matches(source, @"(?<!void )PublishStoreChanged\(").Count);
     }
 
     [Fact]

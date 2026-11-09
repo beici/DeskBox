@@ -1,4 +1,4 @@
-namespace DeskBox.Tests;
+﻿namespace DeskBox.Tests;
 
 public sealed class AotStage5B4C1C1ContractTests
 {
@@ -20,17 +20,29 @@ public sealed class AotStage5B4C1C1ContractTests
     }
 
     [Fact]
-    public void ProductPicker_UsesModernWindowIdApiAndRejectsInvalidOwner()
+    public void ProductPicker_PinsNoDereferenceLinksAndRejectsInvalidOwner()
     {
         string service = ReadRepositoryFile(
             "src/DeskBox/Services/FileOpenPickerService.cs");
+        string nativeDialog = ReadRepositoryFile(
+            "src/DeskBox/Platform/NativeFileOpenDialog.cs");
 
+        // "Add file" must not follow shortcuts: neither picker stack can turn
+        // that shell-dialog default off, so the entrance uses the native
+        // common item dialog with FOS_NODEREFERENCELINKS pinned. Picking a
+        // shortcut then yields the .lnk itself instead of moving the target
+        // entity (issue 458).
+        Assert.Contains("NativeFileOpenDialog.ShowPickFiles(", service, StringComparison.Ordinal);
+        Assert.Contains("FosNoDereferenceLinks", nativeDialog, StringComparison.Ordinal);
+        Assert.Contains("FosAllowMultiSelect", nativeDialog, StringComparison.Ordinal);
+        Assert.Contains("HResultCancelled", nativeDialog, StringComparison.Ordinal);
+
+        // The filtered single/multiple entrances stay on the owner-aware
+        // WinAppSDK picker.
         Assert.Contains("Microsoft.Windows.Storage.Pickers", service, StringComparison.Ordinal);
         Assert.Contains("GetWindowIdFromWindow(", service, StringComparison.Ordinal);
         Assert.Contains("new FileOpenPicker(ownerWindowId)", service, StringComparison.Ordinal);
-        Assert.Contains("SuggestedStartLocation = PickerLocationId.Desktop", service, StringComparison.Ordinal);
-        Assert.Contains("picker.SuggestedFolder = normalizedFolder", service, StringComparison.Ordinal);
-        Assert.Contains("await picker.PickMultipleFilesAsync()", service, StringComparison.Ordinal);
+
         Assert.Contains("ownerHwnd == IntPtr.Zero", service, StringComparison.Ordinal);
         Assert.Contains("!Win32Helper.IsWindow(ownerHwnd)", service, StringComparison.Ordinal);
         Assert.DoesNotContain("InitializeWithWindow", service, StringComparison.Ordinal);
@@ -189,7 +201,7 @@ public sealed class AotStage5B4C1C1ContractTests
             "$settingsPath = Join-Path $dataDirectory \"settings.json\"",
             runner,
             StringComparison.Ordinal);
-        Assert.Contains("schemaVersion = 5", runner, StringComparison.Ordinal);
+        Assert.Contains("schemaVersion = 9", runner, StringComparison.Ordinal);
         Assert.Contains(
             "hasResolvedInitialFileWidgetSetup = $true",
             runner,
@@ -229,14 +241,14 @@ public sealed class AotStage5B4C1C1ContractTests
         string launcher = ReadRepositoryFile("scripts/start-aot-preview.ps1");
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
 
-        Assert.Contains("$auditProfileVersion = 63", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 65", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1C1MissingRunnerPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1C1MissingSmokeScriptPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1C1ForbiddenScopePatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1C1RustAbiUnchanged", audit, StringComparison.Ordinal);
-        Assert.Contains("stage5B4C1C1ExpectedWmc1510Count = 742", audit, StringComparison.Ordinal);
-        Assert.Contains("$RequiredAuditProfileVersion = 63", launcher, StringComparison.Ordinal);
+        Assert.Contains("stage5B4C1C1ExpectedWmc1510Count = 808", audit, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 65", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("no-global-clipboard-mutation matrix", project, StringComparison.Ordinal);

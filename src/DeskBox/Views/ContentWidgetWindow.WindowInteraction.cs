@@ -1,4 +1,4 @@
-﻿using DeskBox.Contracts;
+using DeskBox.Contracts;
 using DeskBox.Controls;
 using DeskBox.Controls.WidgetContents;
 using DeskBox.Helpers;
@@ -31,7 +31,7 @@ public sealed partial class ContentWidgetWindow
 
     private void RootGrid_DragOver(object sender, DragEventArgs e)
     {
-        if (CurrentContent is FileSurfaceContent file)
+        if (CurrentContent is FileWidgetContentAdapter file)
         {
             // The transparent resize grid sits above the content along every
             // window edge. Reuse the file surface's normal feedback there so
@@ -48,7 +48,9 @@ public sealed partial class ContentWidgetWindow
 
         e.AcceptedOperation = todo.CanImportExternalDrop(e.DataView)
             ? DeskBoxDragData.HasDroppedFiles(e.DataView)
-                ? DeskBoxDragData.GetFileAssociationOperation(e.DataView)
+                ? DeskBoxDragData.GetFileAssociationOperation(
+                    e.DataView,
+                    e.AllowedOperations)
                 : DataPackageOperation.Copy
             : DataPackageOperation.None;
         if (DeskBoxDragData.HasDroppedFiles(e.DataView))
@@ -77,7 +79,7 @@ public sealed partial class ContentWidgetWindow
 
     private async void RootGrid_Drop(object sender, DragEventArgs e)
     {
-        if (CurrentContent is FileSurfaceContent file)
+        if (CurrentContent is FileWidgetContentAdapter file)
         {
             file.HandleHostEdgeDrop(e);
             return;
@@ -106,7 +108,7 @@ public sealed partial class ContentWidgetWindow
 
     private async void RootGrid_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
     {
-        if (CurrentContent is FileSurfaceContent fileSurface &&
+        if (CurrentContent is FileWidgetContentAdapter fileSurface &&
             await fileSurface.TryHandleClipboardShortcutAsync(e))
         {
             return;
@@ -323,15 +325,6 @@ public sealed partial class ContentWidgetWindow
         }
     }
 
-    // FARC-03: ProtectedCursor is a non-public WinRT projection property, so
-    // this reflection write is the only way to set it from a pointer-entered
-    // handler. Trimming can drop the property in Native AOT; when that
-    // happens the cursor silently stops changing, so log once (never per
-    // pointer move) and treat scripts/run-aot-*.ps1 as the gate before
-    // relying on this path in retail builds. Replacing the reflection with an
-    // AOT-safe alternative is deferred until measured there.
-    private static bool _loggedMissingProtectedCursorProperty;
-
     private void ResizeBorder_PointerEntered(object sender, PointerRoutedEventArgs e)
     {
         if (sender is not UIElement element)
@@ -343,21 +336,7 @@ public sealed partial class ContentWidgetWindow
             ? GetResizeCursorShapeForCurrentState(frameworkElement.Tag as string)
             : InputSystemCursorShape.Arrow;
 
-        var property = typeof(UIElement).GetProperty(
-            "ProtectedCursor",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        if (property is null)
-        {
-            if (!_loggedMissingProtectedCursorProperty)
-            {
-                _loggedMissingProtectedCursorProperty = true;
-                App.Log("[ContentWidgetWindow] UIElement.ProtectedCursor not resolvable (AOT trim?); resize cursor feedback disabled");
-            }
-
-            return;
-        }
-
-        property.SetValue(element, InputSystemCursor.Create(shape));
+        UiElementCursorHelper.SetCursor(element, shape);
     }
 
     // ── Activation ─────────────────────────────────────────────
@@ -380,47 +359,86 @@ public sealed partial class ContentWidgetWindow
         }
 
         _contentHost.OnActivated();
+        // A long-hidden release dropped the decoded custom background; the
+        // surface is cheap to rebuild from disk on the way back in.
+        RecoverCustomBackgroundIfReleased();
+        // Native activation (a body click on a resting widget) lifts the
+        // window without going through any raise path, so IsAtDesktopLayer
+        // never flipped and the Deactivated funnel above stayed blind — the
+        // window then floats above foreign apps with no owner for its
+        // restore. Every explicit raise path has already flipped the flag
+        // by now; the desktop-pinned band keeps its own activation funnels.
+        if (IsAtDesktopLayer && !WidgetLayerService.UsesDesktopPinnedMode())
+        {
+            IsAtDesktopLayer = false;
+        }
+        // Deliberately synchronous (callback-isolation exemption): deferring
+        // this reassert one dispatcher turn turns its SetForegroundWindow
+        // (active) from a no-op — the window is still the foreground when the
+        // handler runs — into a REAL foreground switch against whichever
+        // sibling the raise batch activated next. Each switch raises another
+        // Activated event, whose deferred reassert switches again: a 3ms
+        // activation ping-pong ring across the whole group (2026-10-15
+        // incident, 1805 band-split transactions during one raise). The
+        // manager's own guards (session flag, foreground ownership, the
+        // 400ms reassert suppression) bound the synchronous form.
         App.Current.WidgetManager?.ReassertRaisedWidgetGroupAfterDeskBoxActivation(
             HWnd,
             "content-window-activated");
+
+        // Windows also raises a capsule on native activation (including focus
+        // returning from another application), without acquiring an expansion
+        // lease. Its shadow can then cover the next row indefinitely: the
+        // ordinary idle pass excludes this now-raised window. Restore the peer
+        // order through the same required, deferred path as collapse completion.
+        // An expansion or drag begun by this input retains priority until it ends.
+        if (IsCompactCollapsedState)
+        {
+            App.Current.WidgetManager?.QueueIdleWidgetZOrderNormalization(
+                "compact-window-activated", TimeSpan.Zero, requirePeerOrderRestore: true);
+        }
     }
 
     private void QueueRestoreDesktopLayerIfForegroundLeavesDeskBox()
     {
         DispatcherQueue.TryEnqueue(async () =>
         {
-            await Task.Delay(80);
-            if (!Visible ||
-                IsAtDesktopLayer ||
-                IsRaisedFromManager ||
-                ShouldDeferDesktopLayerRestore() ||
-                (DateTime.UtcNow - LastElevateForInteractionUtc).TotalMilliseconds <= 300)
+            // R21-V9-02: queued async bodies are not observed by anyone — a
+            // throw here used to vanish in the unhandled-exception sink.
+            try
             {
-                return;
-            }
+                await Task.Delay(80);
+                if (!Visible ||
+                    IsAtDesktopLayer ||
+                    IsRaisedFromManager ||
+                    ShouldDeferDesktopLayerRestore() ||
+                    (DateTime.UtcNow - LastElevateForInteractionUtc).TotalMilliseconds <= 300)
+                {
+                    return;
+                }
 
-            IntPtr foregroundWindow = Win32Helper.GetForegroundWindow();
-            if (foregroundWindow == IntPtr.Zero ||
-                App.Current.IsDeskBoxWindow(foregroundWindow))
-            {
-                // Zero means activation is mid-transition (owned popover
-                // hand-off); do not read the gap as a DeskBox leave.
-                RestoreDesktopLayerWhenIdle = false;
-                return;
-            }
+                IntPtr foregroundWindow = Win32Helper.GetForegroundWindow();
+                if (foregroundWindow == IntPtr.Zero ||
+                    App.Current.IsDeskBoxWindow(foregroundWindow))
+                {
+                    // Zero means activation is mid-transition (owned popover
+                    // hand-off); do not read the gap as a DeskBox leave.
+                    RestoreDesktopLayerWhenIdle = false;
+                    return;
+                }
 
-            RestoreDesktopLayerWhenIdle = true;
-            if (App.Current.WidgetManager is { } widgetManager)
-            {
-                if (!widgetManager.RequestRestoreRaisedWidgetsToDesktopLayer(
-                        "content-window-deactivated"))
+                RestoreDesktopLayerWhenIdle = true;
+                // Raised-session holds are decided inline: while the tray session
+                // is alive its restore monitor owns the layer; otherwise this
+                // window restores itself.
+                if (App.Current.WidgetManager is not { WidgetsRaisedFromTray: true })
                 {
                     RestoreDesktopLayer(force: true);
                 }
             }
-            else
+            catch (Exception ex)
             {
-                RestoreDesktopLayer(force: true);
+                App.Log($"[ContentWidget] Deferred desktop-layer restore failed: {ex}");
             }
         });
     }
@@ -469,18 +487,28 @@ public sealed partial class ContentWidgetWindow
         _queuedContentRevealGeneration = generation;
         if (!DispatcherQueue.TryEnqueue(async () =>
             {
-                await Task.Delay(RevealCompletedBackgroundDelayMs);
-                if (!Visible ||
-                    IsClosing ||
-                    generation != _contentVisibilityGeneration)
+                // R21-V9-02: keep a failed reveal out of the unhandled-exception
+                // sink and reset the queued generation so the next resume retries.
+                try
                 {
-                    return;
-                }
+                    await Task.Delay(RevealCompletedBackgroundDelayMs);
+                    if (!Visible ||
+                        IsClosing ||
+                        generation != _contentVisibilityGeneration)
+                    {
+                        return;
+                    }
 
-                _contentHost.OnWindowRevealCompleted();
-                PerformanceLogger.Mark(
-                    "WidgetVisibleContentResumed",
-                    $"kind={_config.WidgetKind} id={_config.Id}");
+                    _contentHost.OnWindowRevealCompleted();
+                    PerformanceLogger.Mark(
+                        "WidgetVisibleContentResumed",
+                        $"kind={_config.WidgetKind} id={_config.Id}");
+                }
+                catch (Exception ex)
+                {
+                    _queuedContentRevealGeneration = -1;
+                    App.Log($"[ContentWidget] Visible-content resume failed: {ex}");
+                }
             }))
         {
             _queuedContentRevealGeneration = -1;

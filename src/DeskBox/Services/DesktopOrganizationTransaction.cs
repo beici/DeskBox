@@ -10,6 +10,7 @@ public sealed partial class DesktopOrganizationTransaction
     private readonly FileService _fileService;
     private readonly DesktopOrganizationRecoveryStore _recoveryStore;
     private readonly IDesktopOrganizationTransfer _transfer;
+    private readonly WidgetManager? _widgetManager;
 
     public bool HasPendingRecovery => _recoveryStore.HasPendingJournal;
 
@@ -19,12 +20,14 @@ public sealed partial class DesktopOrganizationTransaction
         SettingsService settingsService,
         FileService fileService,
         DesktopOrganizationRecoveryStore? recoveryStore = null,
-        IDesktopOrganizationTransfer? transfer = null)
+        IDesktopOrganizationTransfer? transfer = null,
+        WidgetManager? widgetManager = null)
     {
         _settingsService = settingsService;
         _fileService = fileService;
         _transfer = transfer ?? new DesktopOrganizationTransfer(fileService);
         _recoveryStore = recoveryStore ?? new DesktopOrganizationRecoveryStore();
+        _widgetManager = widgetManager;
     }
 
     public async Task<DesktopOrganizationExecutionResult> ExecuteAsync(
@@ -46,7 +49,10 @@ public sealed partial class DesktopOrganizationTransaction
             if (HasPendingRecovery)
                 throw new DesktopOrganizationPendingRecoveryException();
             ValidatePlan(plan);
-            ValidateAvailableSpace(plan);
+            // Directory sizing walks the filesystem recursively; keeping it
+            // on the UI thread froze the app on large trees (R2 ①-2). The
+            // sync ValidateAvailableSpace surface is preserved for tests.
+            await Task.Run(() => ValidateAvailableSpace(plan));
 
             var settings = _settingsService.Settings;
             var historyEntries = _settingsService.OrganizationHistory.Entries;
@@ -125,20 +131,28 @@ public sealed partial class DesktopOrganizationTransaction
                 if (publicItems.Count > 0) batches.Add(publicItems);
                 foreach (var batch in batches)
                 {
-                    var ready = new List<DesktopOrganizationRecoveryItem>();
-                    foreach (var item in batch)
+                    // RevalidateSource stats every source synchronously; the
+                    // whole pre-flight runs on one pool dispatch so the UI
+                    // thread only sees the batch boundary.
+                    var ready = await Task.Run(() =>
                     {
-                        try
+                        var validated = new List<DesktopOrganizationRecoveryItem>();
+                        foreach (var item in batch)
                         {
-                            cancellationToken.ThrowIfCancellationRequested();
-                            RevalidateSource(snapshotsByPath[item.SourcePath]);
-                            ready.Add(item);
+                            try
+                            {
+                                cancellationToken.ThrowIfCancellationRequested();
+                                RevalidateSource(snapshotsByPath[item.SourcePath]);
+                                validated.Add(item);
+                            }
+                            catch (Exception ex)
+                            {
+                                retainedItems.Add(CreateRetainedItem(snapshotsByPath[item.SourcePath], ex));
+                            }
                         }
-                        catch (Exception ex)
-                        {
-                            retainedItems.Add(CreateRetainedItem(snapshotsByPath[item.SourcePath], ex));
-                        }
-                    }
+
+                        return validated;
+                    });
                     Exception? failure = null;
                     if (ready.Count > 0)
                     {
@@ -151,17 +165,56 @@ public sealed partial class DesktopOrganizationTransaction
                                 ready.Select(item => new FileService.FileTransferPlan(item.SourcePath, item.DestinationPath)).ToList(),
                                 ready[0].SourceScope == DesktopOrganizationSourceScope.Public,
                                 ownerWindowHandle, RecordCompleted, cancellationToken);
-                            foreach (var result in results) RecordCompleted(result);
+                            // Any receipt the transfer path has not already
+                            // recorded still saves the full journal; those
+                            // writes must stay off the UI thread and in
+                            // result order, like the transfer-side dispatch.
+                            await Task.Run(() =>
+                            {
+                                foreach (var result in results) RecordCompleted(result);
+                            });
                         }
                         catch (Exception ex)
                         {
                             if (ex is FileService.IFileTransferWithCompletedResults partial)
-                                foreach (var result in partial.CompletedResults) RecordCompleted(result);
+                                await Task.Run(() =>
+                                {
+                                    foreach (var result in partial.CompletedResults) RecordCompleted(result);
+                                });
                             failure = ex;
                         }
+                        // Only the first uncompleted item inherits the batch
+                        // failure detail; the rest were never attempted
+                        // because the transfer stopped at the failure, and
+                        // attributing the same error to them misrepresents
+                        // what happened on a per-item results page.
+                        // These messages are diagnostic only: the results
+                        // page renders the localized RetentionHelp.<Reason>
+                        // string (DesktopOrganizationTaskView.Retained.cs),
+                        // never this raw Detail, so they stay English.
+                        var notAttempted = new IOException(
+                            "Not attempted: a previous item in this batch failed and stopped the transfer.");
+                        var firstUnattemptedSeen = false;
                         foreach (var item in ready.Where(item => !item.Completed))
-                            retainedItems.Add(CreateRetainedItem(snapshotsByPath[item.SourcePath],
-                                failure ?? new IOException("The file was not moved.")));
+                        {
+                            Exception reason;
+                            if (failure is null)
+                            {
+                                // Diagnostic-only detail; see comment above.
+                                reason = new IOException("The file was not moved.");
+                            }
+                            else if (!firstUnattemptedSeen)
+                            {
+                                reason = failure;
+                                firstUnattemptedSeen = true;
+                            }
+                            else
+                            {
+                                reason = notAttempted;
+                            }
+
+                            retainedItems.Add(CreateRetainedItem(snapshotsByPath[item.SourcePath], reason));
+                        }
                     }
                     completedCount += batch.Count;
                     var last = batch[^1];
@@ -314,17 +367,19 @@ public sealed partial class DesktopOrganizationTransaction
                 Path.TrimEndingDirectorySeparator(storageRoot),
                 StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException("A drive root cannot be used as the managed storage folder.");
+            throw new DesktopOrganizationInvalidStorageRootException(
+                "A drive root cannot be used as the managed storage folder.");
         }
 
         if (string.Equals(desktop, storage, StringComparison.OrdinalIgnoreCase) ||
             storage.StartsWith($"{desktop}{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException("The managed storage root cannot be the desktop or one of its subfolders.");
+            throw new DesktopOrganizationInvalidStorageRootException(
+                "The managed storage root cannot be the desktop or one of its subfolders.");
         }
 
         if (!string.IsNullOrWhiteSpace(plan.PublicDesktopPath) && FileService.PathsOverlap(storage, plan.PublicDesktopPath))
-            throw new InvalidOperationException("Managed storage overlaps the public desktop.");
+            throw new DesktopOrganizationInvalidStorageRootException("Managed storage overlaps the public desktop.");
         foreach (var item in plan.Targets.SelectMany(target => target.Items))
         {
             string root = item.SourceScope == DesktopOrganizationSourceScope.Public ? plan.PublicDesktopPath : plan.DesktopPath;
@@ -381,7 +436,9 @@ public sealed partial class DesktopOrganizationTransaction
     /// <summary>
     /// A same-volume move is a metadata rename and consumes no additional
     /// space; only items crossing volumes are charged against the target
-    /// drive. Directory sizes are not recursed (existing behavior).
+    /// drive. Directory items are recursed on demand — their snapshot size
+    /// is zero, so without the recursion a cross-volume folder move is
+    /// under-charged until the copy phase itself hits a full disk mid-batch.
     /// </summary>
     internal static IReadOnlyDictionary<string, long> ComputeRequiredSpaceByDrive(
         DesktopOrganizationPlan plan)
@@ -408,10 +465,79 @@ public sealed partial class DesktopOrganizationTransaction
             }
 
             requiredByDrive.TryGetValue(targetRoot, out long current);
-            requiredByDrive[targetRoot] = current + entry.Snapshot.Size;
+            requiredByDrive[targetRoot] = current + ComputeItemRequiredBytes(entry.Snapshot);
         }
 
         return requiredByDrive;
+    }
+
+    /// <summary>
+    /// Files are charged at their snapshot size; directories are enumerated
+    /// recursively (hidden and system files included — they are copied too).
+    /// Reparse-point subdirectories (junctions, directory symlinks) are not
+    /// followed and a visited-set plus a directory-count cap guard against
+    /// cycles, so a pathological tree cannot turn this probe into an
+    /// unbounded walk. Entries that cannot be read are skipped and logged: a
+    /// skip under-charges, which fails loudly later at the copy phase instead
+    /// of blocking the organization up front.
+    /// </summary>
+    private static long ComputeItemRequiredBytes(DesktopOrganizationFileSnapshot item)
+    {
+        if (!item.IsDirectory)
+        {
+            return item.Size;
+        }
+
+        const int MaxVisitedDirectories = 100_000;
+        long total = 0;
+        var options = new EnumerationOptions
+        {
+            IgnoreInaccessible = true,
+            AttributesToSkip = 0,
+        };
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pending = new Stack<DirectoryInfo>();
+        pending.Push(new DirectoryInfo(item.SourcePath));
+        try
+        {
+            while (pending.Count > 0)
+            {
+                DirectoryInfo directory = pending.Pop();
+                if (!visited.Add(directory.FullName))
+                {
+                    continue;
+                }
+
+                if (visited.Count > MaxVisitedDirectories)
+                {
+                    App.Log(
+                        $"[DesktopOrganization] Sizing directory '{item.SourcePath}' " +
+                        "aborted after the visited-directory cap; the estimate under-charges.");
+                    break;
+                }
+
+                foreach (var file in directory.EnumerateFiles("*", options))
+                {
+                    total += file.Length;
+                }
+
+                foreach (var subdirectory in directory.EnumerateDirectories("*", options))
+                {
+                    if ((subdirectory.Attributes & FileAttributes.ReparsePoint) == 0)
+                    {
+                        pending.Push(subdirectory);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log(
+                $"[DesktopOrganization] Failed to size directory " +
+                $"'{item.SourcePath}': {ex.Message}");
+        }
+
+        return total;
     }
 
     private static void RevalidateSource(DesktopOrganizationFileSnapshot item)
@@ -461,10 +587,27 @@ public sealed partial class DesktopOrganizationTransaction
                 BoundsCoordinateVersion = WidgetConfig.CurrentBoundsCoordinateVersion,
                 Width = settings.DefaultWidgetWidth,
                 Height = settings.DefaultWidgetHeight,
-                X = bounds?.X ?? 100,
-                Y = bounds?.Y ?? 100,
                 IsVisible = true
             };
+            // Organizer-planned rects flow through the placement funnel as
+            // explicit bounds (spec 5.8 step 1); without a manager (older
+            // callers) the planned rect from the initializer above stands.
+            if (_widgetManager is not null)
+            {
+                _widgetManager.ApplyNewWidgetPlacement(
+                    config,
+                    new NewWidgetPlacementContext(
+                        bounds is null
+                            ? null
+                            : new Windows.Graphics.RectInt32(
+                                (int)Math.Round(bounds.Value.X),
+                                (int)Math.Round(bounds.Value.Y),
+                                Math.Max(1, (int)Math.Round(bounds.Value.Width)),
+                                Math.Max(1, (int)Math.Round(bounds.Value.Height)))));
+            }
+
+            // DEF-070: append under the settings lock so a concurrent
+            // debounced save cannot enumerate the list mid-insert.
             _settingsService.AddWidget(config);
             created.Add(config);
         }
@@ -647,15 +790,28 @@ public sealed partial class DesktopOrganizationTransaction
         DesktopOrganizationRecoveryItem item,
         string path)
     {
-        // Captures only the object identity. The Size/LastWriteTimeUtc
-        // snapshot keeps the values from organization time — they are the
-        // conjunction baseline, so a file whose content changed after the
-        // move (same object id, different size/mtime) still fails the match.
+        // The Size/LastWriteTimeUtc conjunction baseline is re-based onto
+        // the destination object together with its identity: a cross-volume
+        // directory copy never reproduces the source's mtime (creating the
+        // copied children re-stamps the destination), so a baseline frozen
+        // at scan time would make every cross-volume folder fail the match
+        // forever. Same-volume moves and file copies with metadata
+        // write-back re-stamp identical values, so only the cross-volume
+        // directory case actually changes. Content changed after this
+        // capture still fails the match later.
         if (FileService.TryCaptureSourceIdentity(path) is not { } identity ||
             identity.FileId is not { } fileId)
         {
             item.DestinationIdentity = null;
             return;
+        }
+
+        item.LastWriteTimeUtc = identity.LastWriteTimeUtc;
+        // Directory receipts carry no size (a folder length is meaningless),
+        // so the match stays identity + mtime only for them.
+        if (item.Size.HasValue)
+        {
+            item.Size = identity.Length;
         }
 
         item.DestinationIdentity = new DesktopOrganizationDestinationIdentity

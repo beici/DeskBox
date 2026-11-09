@@ -150,13 +150,6 @@ public sealed class SearchEngineService : IDisposable
         return response;
     }
 
-    public async IAsyncEnumerable<SearchResponse> SearchStagedAsync(
-        string query,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        yield return await SearchAsync(query, cancellationToken).ConfigureAwait(false);
-    }
-
     private SearchResponse BuildSearchResponse(
         string query,
         SearchFileQueryPage filePage,
@@ -587,6 +580,14 @@ public sealed class SearchEngineService : IDisposable
 
             foreach (TodoItem item in data.Items)
             {
+                // Tombstoned todos stay in todo.json (undo window, capped at
+                // 500 entries); without this guard they resurface as ghost
+                // hits. The QuickCapture loop below applies the same filter.
+                if (item.IsDeleted)
+                {
+                    continue;
+                }
+
                 cancellationToken.ThrowIfCancellationRequested();
                 documents.Add(new DeskBoxSearchDocument(
                     SearchResultKind.Todo,

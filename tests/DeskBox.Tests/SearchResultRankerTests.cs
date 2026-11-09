@@ -99,6 +99,7 @@ public sealed class SearchResultRankerTests
                 DetailPath = path,
                 RelevanceScore = 90
             });
+            SearchHistoryService.WaitForAllPendingPersists();
 
             var reloaded = new SearchHistoryService(storePath);
             var recent = Assert.Single(reloaded.RecentResults);
@@ -106,6 +107,7 @@ public sealed class SearchResultRankerTests
 
             reloaded.ClearAllHistory();
             Assert.Empty(reloaded.RecentResults);
+            SearchHistoryService.WaitForAllPendingPersists();
         }
         finally
         {
@@ -138,6 +140,7 @@ public sealed class SearchResultRankerTests
 
             Assert.True(history.RemoveRecentQuery("deskbox"));
             Assert.False(history.RemoveRecentQuery("missing"));
+            SearchHistoryService.WaitForAllPendingPersists();
 
             var reloaded = new SearchHistoryService(storePath);
             Assert.Equal(new[] { "weather" }, reloaded.RecentQueries);

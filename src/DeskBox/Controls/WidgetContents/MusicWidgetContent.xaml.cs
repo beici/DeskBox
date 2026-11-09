@@ -1,4 +1,4 @@
-﻿using System.Numerics;
+using System.Numerics;
 using System.ComponentModel;
 using DeskBox.Models;
 using DeskBox.Services;
@@ -429,18 +429,56 @@ public sealed partial class MusicWidgetContent : UserControl, IDisposable
         e.Handled = true;
     }
 
-    private async void ProgressHost_PointerReleased(object sender, PointerRoutedEventArgs e)
+    private void ProgressHost_PointerReleased(object sender, PointerRoutedEventArgs e)
     {
         if (ViewModel is not null)
         {
             UpdateSeekFromPointer(e);
-            await ViewModel.CommitSeekAsync();
         }
 
+        // Reset only the view layer synchronously. The VM's _isSeeking flag
+        // stays set: CommitSeekAsync both guards on it and clears it itself,
+        // so clearing it here would turn the commit into a no-op and drop
+        // the seek. The commit itself is fire-and-forget so a stalled media
+        // session cannot keep the pointer handler suspended with capture
+        // still held (the old async void awaited the commit before
+        // releasing capture).
         _isProgressDragging = false;
         ProgressHost.ReleasePointerCapture(e.Pointer);
         UpdateProgressVisuals();
         e.Handled = true;
+
+        if (ViewModel is not null)
+        {
+            _ = CommitReleasedSeekAsync(ViewModel);
+        }
+    }
+
+    private static async Task CommitReleasedSeekAsync(MusicWidgetViewModel viewModel)
+    {
+        try
+        {
+            await viewModel.CommitSeekAsync();
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[MusicWidget] Progress seek commit failed: {ex.Message}");
+        }
+    }
+
+    private void ProgressHost_PointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        // Capture can be lost mid-drag (window deactivate, modal system
+        // gestures) without a Released ever arriving; abandon the seek
+        // instead of leaving _isProgressDragging stuck on.
+        if (!_isProgressDragging)
+        {
+            return;
+        }
+
+        _isProgressDragging = false;
+        ViewModel?.CancelSeek();
+        UpdateProgressVisuals();
     }
 
     private void AlbumArtSurface_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -1524,6 +1562,7 @@ public sealed partial class MusicWidgetContent : UserControl, IDisposable
         {
             ProgressFill.Width = 0;
             RecordProgressFill.Width = 0;
+            RecordHorizontalProgressFill.Width = 0;
             ProgressThumb.Opacity = 0;
             return;
         }
@@ -1546,6 +1585,9 @@ public sealed partial class MusicWidgetContent : UserControl, IDisposable
             ProgressThumb.Opacity = 0;
         }
 
+        // Record layouts use the same custom track+fill pair as the default
+        // layout: the native ProgressBar swap (A10) rendered neither track
+        // nor indicator, leaving the record rows without a visible bar.
         if (RecordProgressHost.ActualWidth > 0)
         {
             RecordProgressFill.Width = Math.Max(0, RecordProgressHost.ActualWidth * ratio);
@@ -1558,8 +1600,10 @@ public sealed partial class MusicWidgetContent : UserControl, IDisposable
 
         if (RecordHorizontalProgressHost.ActualWidth > 0)
         {
-            RecordHorizontalProgressFill.Width = Math.Max(0, RecordHorizontalProgressHost.ActualWidth * ratio);
-            RecordHorizontalProgressTrack.Opacity = ViewModel.HasSeekableTimeline ? 0.36 : 0.2;
+            RecordHorizontalProgressFill.Width =
+                Math.Max(0, RecordHorizontalProgressHost.ActualWidth * ratio);
+            RecordHorizontalProgressTrack.Opacity =
+                ViewModel.HasSeekableTimeline ? 0.36 : 0.2;
         }
         else
         {

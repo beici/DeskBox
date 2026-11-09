@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [ValidateSet("x64", "ARM64")]
     [string]$Platform = "x64",
@@ -20,6 +20,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+. (Join-Path $PSScriptRoot "native-build-paths.ps1")
 $manifestPath = Join-Path $repoRoot "native\Cargo.toml"
 $targetTriple = if ($Platform -eq "ARM64") {
     "aarch64-pc-windows-msvc"
@@ -117,7 +118,9 @@ if (-not $ValidateOnly.IsPresent) {
     else {
         "target-feature=-crt-static"
     }
-    $encodedRustFlags = @("-C", $crtTargetFeature) -join [char]0x1F
+    $rustFlags = @("-C", $crtTargetFeature) + @(
+        Get-DeskBoxNativePrivacyFlags -Configuration $Configuration -RepositoryRoot $repoRoot)
+    $encodedRustFlags = $rustFlags -join [char]0x1F
     try {
         [Environment]::SetEnvironmentVariable("CARGO_TERM_COLOR", "never", "Process")
         [Environment]::SetEnvironmentVariable(

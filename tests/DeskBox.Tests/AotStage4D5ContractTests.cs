@@ -64,7 +64,12 @@ public sealed class AotStage4D5ContractTests
         string source = ReadRepositoryFile("src/DeskBox/App.Tray.cs");
 
         Assert.Contains("ContextMenuMode = ContextMenuMode.SecondWindow", source, StringComparison.Ordinal);
-        Assert.Contains("_trayIcon.ShowContextMenu(point)", source, StringComparison.Ordinal);
+        // The library call now runs on the locally captured icon (the whole
+        // menu open is deferred one dispatcher turn off the tray WndProc
+        // frame, 2026-10-14 callback-isolation batch); the pin anchors the
+        // captured-local shape so the unguarded field access cannot return.
+        Assert.Contains("trayIcon.ShowContextMenu(point)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_trayIcon.ShowContextMenu", source, StringComparison.Ordinal);
         Assert.Contains("Win32Helper.TryGetNotifyIconRect", source, StringComparison.Ordinal);
         Assert.Contains("GetFallbackTrayContextMenuAnchorPoint", source, StringComparison.Ordinal);
         Assert.Contains("ScrollViewer.VerticalScrollModeProperty", source, StringComparison.Ordinal);
@@ -78,7 +83,7 @@ public sealed class AotStage4D5ContractTests
     {
         string audit = ReadRepositoryFile("scripts/publish-aot-audit.ps1");
 
-        Assert.Contains("$auditProfileVersion = 63", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 65", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage4D5SourceFiles", audit, StringComparison.Ordinal);
         Assert.Contains("stage4D5LegacyReflectionPatterns", audit, StringComparison.Ordinal);

@@ -55,6 +55,7 @@ public sealed partial class GlanceWidgetViewModel : ObservableObject, IDisposabl
         DateTime.Today.Year,
         DateTime.Today.Month,
         1);
+    private DateOnly _lastObservedDate = DateOnly.FromDateTime(DateTime.Today);
 
     public GlanceWidgetViewModel(
         WidgetConfig config,
@@ -303,6 +304,9 @@ public sealed partial class GlanceWidgetViewModel : ObservableObject, IDisposabl
         if (visible)
         {
             UpdateDateAndTime();
+            // The clock timer stops while hidden; catch up on any day change
+            // missed across midnight so the calendar is not stale on reveal.
+            RefreshIfObservedDateChanged(DateOnly.FromDateTime(DateTime.Now));
             if (!_isCompact && IsOnlineSource(_settings.BackgroundSource) && !_onlineRefreshCompletedForSession)
             {
                 _ = RefreshOnlineInBackgroundAsync();
@@ -318,9 +322,13 @@ public sealed partial class GlanceWidgetViewModel : ObservableObject, IDisposabl
             CancelOnlineRefresh();
         }
         UpdateTimers();
-        if (!collapsed && _isWindowVisible && IsOnlineSource(_settings.BackgroundSource) && !_onlineRefreshCompletedForSession)
+        if (!collapsed && _isWindowVisible)
         {
-            _ = RefreshOnlineInBackgroundAsync();
+            RefreshIfObservedDateChanged(DateOnly.FromDateTime(DateTime.Now));
+            if (IsOnlineSource(_settings.BackgroundSource) && !_onlineRefreshCompletedForSession)
+            {
+                _ = RefreshOnlineInBackgroundAsync();
+            }
         }
     }
 
@@ -465,21 +473,6 @@ public sealed partial class GlanceWidgetViewModel : ObservableObject, IDisposabl
         if (Uri.TryCreate(CurrentImage?.SourcePageUrl, UriKind.Absolute, out Uri? uri))
         {
             await Launcher.LaunchUriAsync(uri);
-        }
-    }
-
-    public async Task OpenCurrentImageContextAsync()
-    {
-        GlanceImageInfo? image = CurrentImage;
-        if (Uri.TryCreate(image?.SourcePageUrl, UriKind.Absolute, out Uri? uri))
-        {
-            await Launcher.LaunchUriAsync(uri);
-            return;
-        }
-
-        if (!string.IsNullOrWhiteSpace(image?.LocalPath) && File.Exists(image.LocalPath))
-        {
-            Win32Helper.ShowInExplorer(image.LocalPath);
         }
     }
 
@@ -775,7 +768,7 @@ public sealed partial class GlanceWidgetViewModel : ObservableObject, IDisposabl
         TimeText = FormatTimeText(now, _settings.TimeFormat, culture);
         DateText = FormatDateText(now, culture, _settings.ShowYear);
         CompactCalendarDateText = FormatCompactCalendarDateText(now, culture);
-        WeekdayText = now.ToString("dddd", culture);
+        WeekdayText = now.ToString("dddd", DisplayCulture.EnsureGregorian(culture));
     }
 
     internal static string FormatTimeText(
@@ -863,6 +856,7 @@ public sealed partial class GlanceWidgetViewModel : ObservableObject, IDisposabl
         bool includeYear)
     {
         ArgumentNullException.ThrowIfNull(culture);
+        culture = EnsureGregorianCalendar(culture);
         if (!includeYear)
         {
             return date.ToString("M", culture);
@@ -878,6 +872,19 @@ public sealed partial class GlanceWidgetViewModel : ObservableObject, IDisposabl
             RegexOptions.CultureInvariant);
         pattern = pattern.Trim().Trim(',', '，', '،').Trim();
         return date.ToString(pattern, culture);
+    }
+
+    /// <summary>
+    /// Cultures such as ar-SA default to a non-Gregorian calendar (Um
+    /// Al-Qura), which would render the main date in a calendar the rest of
+    /// the app (and the Glance grid) never uses. The main date is always
+    /// Gregorian; non-Gregorian calendars stay available through the
+    /// dedicated traditional-calendar line. Shared implementation:
+    /// <see cref="DisplayCulture.EnsureGregorian"/>.
+    /// </summary>
+    private static CultureInfo EnsureGregorianCalendar(CultureInfo culture)
+    {
+        return DisplayCulture.EnsureGregorian(culture);
     }
 
     private async Task UpdateCalendarAsync()
@@ -995,22 +1002,42 @@ public sealed partial class GlanceWidgetViewModel : ObservableObject, IDisposabl
 
     private void ClockTimer_Tick(DispatcherQueueTimer sender, object args)
     {
-        DateOnly previousDate = DateOnly.FromDateTime(DateTime.Now.AddMinutes(-1));
         DateOnly currentDate = DateOnly.FromDateTime(DateTime.Now);
         UpdateDateAndTime();
-        if (previousDate != currentDate)
-        {
-            DateOnly previousMonth = new(previousDate.Year, previousDate.Month, 1);
-            DateOnly currentMonth = new(currentDate.Year, currentDate.Month, 1);
-            if (_displayedCalendarMonth == previousMonth && previousMonth != currentMonth)
-            {
-                _displayedCalendarMonth = currentMonth;
-                OnPropertyChanged(nameof(DisplayedCalendarMonth));
-            }
-
-            _ = UpdateCalendarAsync();
-        }
+        RefreshIfObservedDateChanged(currentDate);
         UpdateClockTimer();
+    }
+
+    /// <summary>
+    /// Single cross-day path: the midnight tick and every re-show/expand after
+    /// the window was hidden or compact across midnight funnel through here.
+    /// Calendar data, the text highlight and the today background all hang off
+    /// this refresh, so none of them can lag the others.
+    /// </summary>
+    private void RefreshIfObservedDateChanged(DateOnly currentDate)
+    {
+        if (currentDate == _lastObservedDate)
+        {
+            return;
+        }
+
+        GlanceCalendarDayChangeDecision decision = GlanceCalendarDayChangePolicy.Evaluate(
+            _lastObservedDate,
+            currentDate,
+            _displayedCalendarMonth);
+        _lastObservedDate = currentDate;
+        if (!decision.CalendarRefreshRequired)
+        {
+            return;
+        }
+
+        if (decision.DisplayedMonth != _displayedCalendarMonth)
+        {
+            _displayedCalendarMonth = decision.DisplayedMonth;
+            OnPropertyChanged(nameof(DisplayedCalendarMonth));
+        }
+
+        _ = UpdateCalendarAsync();
     }
 
     private void RotationTimer_Tick(DispatcherQueueTimer sender, object args)

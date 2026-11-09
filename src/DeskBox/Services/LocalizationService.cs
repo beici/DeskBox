@@ -1,9 +1,10 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Reflection;
 using Microsoft.Win32;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DeskBox.Models;
+using DeskBox.Helpers;
 
 namespace DeskBox.Services;
 
@@ -22,6 +23,7 @@ public sealed class LocalizationService
     public const string LanguageArabic = SettingsService.LanguageArabic;
     public const string LanguageBengali = SettingsService.LanguageBengali;
     public const string LanguageRussian = SettingsService.LanguageRussian;
+    public const string LanguageKorean = SettingsService.LanguageKorean;
 
     private readonly SettingsService _settingsService;
 
@@ -53,7 +55,7 @@ public sealed class LocalizationService
     public bool IsTraditionalChinese => CurrentCultureName == LanguageChineseTraditional;
 
     /// <summary>
-    /// Returns a 2-letter language code ("en", "zh", "ja", "de", "pt", "hi", "es", "fr", "ar", "bn", "ru")
+    /// Returns a 2-letter language code ("en", "zh", "ja", "de", "pt", "hi", "es", "fr", "ar", "bn", "ru", "ko")
     /// suitable for passing to weather and location APIs.
     /// </summary>
     public string ApiLanguageCode => CurrentCultureName switch
@@ -68,6 +70,7 @@ public sealed class LocalizationService
         LanguageArabic => "ar",
         LanguageBengali => "bn",
         LanguageRussian => "ru",
+        LanguageKorean => "ko",
         _ => "en"
     };
 
@@ -85,7 +88,8 @@ public sealed class LocalizationService
         LanguageFrench,
         LanguageArabic,
         LanguageBengali,
-        LanguageRussian
+        LanguageRussian,
+        LanguageKorean
     ];
 
     public string GetLanguageDisplayName(string language)
@@ -104,6 +108,7 @@ public sealed class LocalizationService
             LanguageArabic => "العربية",
             LanguageBengali => "বাংলা",
             LanguageRussian => "Русский",
+            LanguageKorean => "한국어",
             _ => T("Language.System")
         };
     }
@@ -170,6 +175,7 @@ public sealed class LocalizationService
             LanguageArabic => ArSa,
             LanguageBengali => BnBd,
             LanguageRussian => RuRu,
+            LanguageKorean => KoKr,
             _ => IsEnglish ? EnUs : ZhCn
         };
         
@@ -190,7 +196,7 @@ public sealed class LocalizationService
 
     public string Format(string key, params object[] args)
     {
-        return string.Format(CultureInfo.CurrentCulture, T(key), args);
+        return string.Format(DisplayCulture.GregorianCurrent, T(key), args);
     }
 
     public static string DefaultText(string key)
@@ -200,13 +206,13 @@ public sealed class LocalizationService
 
     public static string DefaultFormat(string key, params object[] args)
     {
-        return string.Format(CultureInfo.CurrentCulture, DefaultText(key), args);
+        return string.Format(DisplayCulture.GregorianCurrent, DefaultText(key), args);
     }
 
     public static string NormalizeLanguageSetting(string? language)
     {
         return language is LanguageChinese or LanguageChineseTraditional or LanguageEnglish or LanguageJapanese or LanguageGerman or LanguagePortuguese
-            or LanguageHindi or LanguageSpanish or LanguageFrench or LanguageArabic or LanguageBengali or LanguageRussian
+            or LanguageHindi or LanguageSpanish or LanguageFrench or LanguageArabic or LanguageBengali or LanguageRussian or LanguageKorean
             ? language
             : LanguageSystem;
     }
@@ -238,6 +244,8 @@ public sealed class LocalizationService
             return LanguageBengali;
         if (name.StartsWith("ru", StringComparison.OrdinalIgnoreCase))
             return LanguageRussian;
+        if (name.StartsWith("ko", StringComparison.OrdinalIgnoreCase))
+            return LanguageKorean;
         return LanguageEnglish;
     }
 
@@ -298,7 +306,8 @@ public sealed class LocalizationService
                     || value == LanguageFrench
                     || value == LanguageArabic
                     || value == LanguageBengali
-                    || value == LanguageRussian))
+                    || value == LanguageRussian
+                    || value == LanguageKorean))
             {
                 return value;
             }
@@ -312,18 +321,22 @@ public sealed class LocalizationService
         return ResolveSystemLanguage();
     }
 
-    private static Dictionary<string, string>? _zhCn;
-    private static Dictionary<string, string>? _zhTw;
-    private static Dictionary<string, string>? _enUs;
-    private static Dictionary<string, string>? _jaJp;
-    private static Dictionary<string, string>? _deDe;
-    private static Dictionary<string, string>? _ptBr;
-    private static Dictionary<string, string>? _hiIn;
-    private static Dictionary<string, string>? _esEs;
-    private static Dictionary<string, string>? _frFr;
-    private static Dictionary<string, string>? _arSa;
-    private static Dictionary<string, string>? _bnBd;
-    private static Dictionary<string, string>? _ruRu;
+    // Volatile: the fast-path getters read these outside s_loadLock; without
+    // volatile publication a reader could observe the reference before the
+    // dictionary's contents are visible (populated under the lock).
+    private static volatile Dictionary<string, string>? _zhCn;
+    private static volatile Dictionary<string, string>? _zhTw;
+    private static volatile Dictionary<string, string>? _enUs;
+    private static volatile Dictionary<string, string>? _jaJp;
+    private static volatile Dictionary<string, string>? _deDe;
+    private static volatile Dictionary<string, string>? _ptBr;
+    private static volatile Dictionary<string, string>? _hiIn;
+    private static volatile Dictionary<string, string>? _esEs;
+    private static volatile Dictionary<string, string>? _frFr;
+    private static volatile Dictionary<string, string>? _arSa;
+    private static volatile Dictionary<string, string>? _bnBd;
+    private static volatile Dictionary<string, string>? _ruRu;
+    private static volatile Dictionary<string, string>? _koKr;
     private static readonly object s_loadLock = new();
 
     private static Dictionary<string, string> ZhCn
@@ -482,6 +495,19 @@ public sealed class LocalizationService
         }
     }
 
+    private static Dictionary<string, string> KoKr
+    {
+        get
+        {
+            if (_koKr is not null) return _koKr;
+            lock (s_loadLock)
+            {
+                _koKr ??= LoadStringResource("DeskBox.Strings.ko-KR.json");
+            }
+            return _koKr;
+        }
+    }
+
     private static Dictionary<string, string> LoadStringResource(string resourceName)
     {
         var assembly = Assembly.GetExecutingAssembly();
@@ -514,7 +540,8 @@ public sealed class LocalizationService
             CaptureAotSmokeResource("fr-FR", FrFr),
             CaptureAotSmokeResource("ar-SA", ArSa),
             CaptureAotSmokeResource("bn-BD", BnBd),
-            CaptureAotSmokeResource("ru-RU", RuRu)
+            CaptureAotSmokeResource("ru-RU", RuRu),
+            CaptureAotSmokeResource("ko-KR", KoKr)
         ];
     }
 
@@ -525,7 +552,10 @@ public sealed class LocalizationService
         return new AotLocaleResourceDiagnostic(
             locale,
             resources.Count,
-            resources.TryGetValue("Window.Settings.Title", out string? settingsTitle) &&
+            // The settings window title key was renamed by the settings-entry
+            // consolidation (bc8fd2eb retired "Window.Settings.Title"); the
+            // smoke keeps requiring the live key, "Settings.WindowTitle".
+            resources.TryGetValue("Settings.WindowTitle", out string? settingsTitle) &&
                 !string.IsNullOrWhiteSpace(settingsTitle),
             resources.TryGetValue("Search.Action.OpenSettings", out string? openSettings) &&
                 !string.IsNullOrWhiteSpace(openSettings));

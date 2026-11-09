@@ -26,7 +26,14 @@ internal sealed class DesktopOrganizationTransfer(FileService files) : IDesktopO
             allowShellElevation: publicDesktop,
             itemCompleted: publicDesktop ? itemCompleted : null);
         if (!publicDesktop)
-            foreach (var result in results) itemCompleted(result);
+            // One pool dispatch for the whole batch: every receipt writes
+            // the full journal (serialize + replace + flush to disk), which
+            // must leave the awaiting UI thread, and a single loop preserves
+            // the receipts' result order.
+            await Task.Run(() =>
+            {
+                foreach (var result in results) itemCompleted(result);
+            });
         return results;
     }
 }
@@ -48,3 +55,7 @@ public sealed class DesktopOrganizationInsufficientSpaceException(string driveNa
 {
     public string DriveName { get; } = driveName;
 }
+
+/// <summary>Surfaced verbatim in the UI; the generic failure text would hide the cause.</summary>
+public sealed class DesktopOrganizationInvalidStorageRootException(string message)
+    : InvalidOperationException(message);

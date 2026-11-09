@@ -12,19 +12,14 @@ namespace DeskBox.Controls.WidgetContents;
 /// content pipeline without making the widget kind user-creatable yet.
 /// </summary>
 public sealed class TodoWidgetContentAdapter :
-    IWidgetContent,
+    WidgetContentAdapterBase,
     IWidgetAddActionContent,
     IWidgetFeedbackSource,
     IWidgetTransientStateContent,
     IWidgetResponsiveLayoutContent,
     IWidgetInteractiveResizeContent,
-    IWidgetGroupContentCacheable,
-    IDisposable
+    IWidgetGroupContentCacheable
 {
-    private readonly Func<TodoWidgetViewModel, FrameworkElement> _viewFactory;
-    private FrameworkElement? _view;
-    private bool _isDisposed;
-
     public TodoWidgetContentAdapter(WidgetConfig config, LocalizationService localizationService)
         : this(config, new TodoWidgetStore(config.Id), localizationService)
     {
@@ -44,50 +39,31 @@ public sealed class TodoWidgetContentAdapter :
         WidgetConfig config,
         TodoWidgetViewModel viewModel,
         Func<TodoWidgetViewModel, FrameworkElement>? viewFactory = null)
+        : base(
+            config,
+            () => (viewFactory ?? (vm => new TodoWidgetContent(vm)))(viewModel))
     {
         if (config.WidgetKind != WidgetKind.Todo)
         {
             throw new ArgumentException("Todo content requires a Todo widget config.", nameof(config));
         }
 
-        Config = config;
         ViewModel = viewModel;
-        _viewFactory = viewFactory ?? (vm => new TodoWidgetContent(vm));
-        // DEF-043: the reminder-relay subscription lives on TodoWidgetContent
-        // (Loaded/Unloaded). Keeping it out of the adapter lets unit tests
-        // construct the adapter without a WinUI Application - touching
-        // App.Current here performs COM activation and throws
-        // REGDB_E_CLASSNOTREG in the test host.
-    }
-
-    public WidgetConfig Config { get; }
-
-    public string WidgetId => Config.Id;
-
-    public WidgetKind WidgetKind => Config.WidgetKind;
-
-    public FrameworkElement View
-    {
-        get
-        {
-            if (_view is null)
-            {
-                _view = _viewFactory(ViewModel);
-                if (_view is TodoWidgetContent todoContent)
-                {
-                    todoContent.FeedbackRequested += TodoContent_FeedbackRequested;
-                }
-            }
-
-            return _view;
-        }
     }
 
     public TodoWidgetViewModel ViewModel { get; }
 
-    public bool IsReadyForReuse => ViewModel.IsInitialized && !_isDisposed;
+    public bool IsReadyForReuse => ViewModel.IsInitialized && !IsDisposed;
 
     public event EventHandler<WidgetFeedbackRequestedEventArgs>? FeedbackRequested;
+
+    protected override void OnViewMaterialized(FrameworkElement view)
+    {
+        if (view is TodoWidgetContent todoContent)
+        {
+            todoContent.FeedbackRequested += TodoContent_FeedbackRequested;
+        }
+    }
 
     private void TodoContent_FeedbackRequested(
         object? sender,
@@ -96,34 +72,46 @@ public sealed class TodoWidgetContentAdapter :
         FeedbackRequested?.Invoke(this, e);
     }
 
-    public Task InitializeAsync()
+    public override Task InitializeAsync()
     {
         return ViewModel.InitializeAsync();
     }
 
-    public Task RefreshAsync()
+    public override Task RefreshAsync()
     {
         return ViewModel.InitializeAsync();
     }
 
-    public void ApplyAppearance()
+    public override void ApplyAppearance()
     {
         ViewModel.ApplyAppearance();
     }
 
-    public void OnActivated()
+    public override void OnWindowVisibilityChanged(bool visible)
     {
+        if (MaterializedView is TodoWidgetContent todoContent)
+        {
+            todoContent.OnWindowVisibilityChanged(visible);
+        }
     }
 
-    public void OnDeactivated()
+    public override void OnWindowLongHidden()
     {
-    }
-
-    public void OnWindowLongHidden()
-    {
-        if (_view is TodoWidgetContent todoContent)
+        if (MaterializedView is TodoWidgetContent todoContent)
         {
             todoContent.ReleaseTransientRenderingSubscriptions();
+        }
+    }
+
+    public override void OnDeactivated()
+    {
+        // A deactivated window ends any pending copy box-selection: the
+        // pointer is gone (often released outside the window), and an
+        // un-thresholded press holds no capture so no Released/CaptureLost
+        // will ever arrive to clear it.
+        if (MaterializedView is TodoWidgetContent todoContent)
+        {
+            todoContent.AbandonPendingBoxSelection();
         }
     }
 
@@ -132,7 +120,7 @@ public sealed class TodoWidgetContentAdapter :
         double targetContentHeight,
         bool isCollapsing)
     {
-        if (_view is TodoWidgetContent todoContent)
+        if (MaterializedView is TodoWidgetContent todoContent)
         {
             todoContent.BeginResponsiveLayoutTransition(
                 targetContentWidth,
@@ -145,7 +133,7 @@ public sealed class TodoWidgetContentAdapter :
         double finalContentWidth,
         double finalContentHeight)
     {
-        if (_view is TodoWidgetContent todoContent)
+        if (MaterializedView is TodoWidgetContent todoContent)
         {
             todoContent.CompleteResponsiveLayoutTransition(
                 finalContentWidth,
@@ -155,7 +143,7 @@ public sealed class TodoWidgetContentAdapter :
 
     public void CancelResponsiveLayoutTransition()
     {
-        if (_view is TodoWidgetContent todoContent)
+        if (MaterializedView is TodoWidgetContent todoContent)
         {
             todoContent.CancelResponsiveLayoutTransition();
         }
@@ -163,7 +151,7 @@ public sealed class TodoWidgetContentAdapter :
 
     public void BeginInteractiveResize(double contentWidth, double contentHeight)
     {
-        if (_view is TodoWidgetContent todoContent)
+        if (MaterializedView is TodoWidgetContent todoContent)
         {
             todoContent.BeginInteractiveResize();
         }
@@ -171,7 +159,7 @@ public sealed class TodoWidgetContentAdapter :
 
     public void CompleteInteractiveResize(double contentWidth, double contentHeight)
     {
-        if (_view is TodoWidgetContent todoContent)
+        if (MaterializedView is TodoWidgetContent todoContent)
         {
             todoContent.CompleteInteractiveResize(contentWidth);
         }
@@ -179,10 +167,27 @@ public sealed class TodoWidgetContentAdapter :
 
     public object? CaptureTransientState()
     {
+        // R1-087: transient state now also captures the selection surface —
+        // list filters and the open detail item — so a cached group member
+        // restored later comes back where the user left it (aligns with the
+        // File adapter's captured selection). This is view-model selection,
+        // distinct from the pointer marquee box-selection that OnDeactivated
+        // abandons.
+        // R8 B10: a creation-mode draft (open new-detail editor with typed
+        // title) is part of the transient state too — dropping it silently
+        // lost the user's half-written task.
+        bool isCreatingDetail = ViewModel.IsCreatingDetailItem;
         return new TodoTransientState(
             ViewModel.InputText,
             ViewModel.DraftImportant,
-            ViewModel.DraftDueDate);
+            ViewModel.DraftDueDate,
+            ViewModel.SelectedFilter,
+            ViewModel.SelectedColorFilter,
+            ViewModel.SelectedDetailItem?.Id,
+            isCreatingDetail,
+            isCreatingDetail
+                ? ViewModel.SelectedDetailItem?.Text ?? string.Empty
+                : string.Empty);
     }
 
     public void RestoreTransientState(object? state)
@@ -195,6 +200,22 @@ public sealed class TodoWidgetContentAdapter :
         ViewModel.InputText = todoState.InputText;
         ViewModel.DraftImportant = todoState.DraftImportant;
         ViewModel.DraftDueDate = todoState.DraftDueDate;
+        ViewModel.SelectedFilter = todoState.SelectedFilter;
+        ViewModel.SetColorFilter(todoState.SelectedColorFilter);
+        if (todoState.IsCreatingDetail)
+        {
+            // Re-open the creation editor with the captured draft title;
+            // OpenNewDetail builds a fresh transient item, so the draft text
+            // has to be carried over explicitly.
+            ViewModel.OpenNewDetail().Text = todoState.CreatingDraftTitle;
+        }
+        else if (todoState.SelectedDetailItemId is { } detailId)
+        {
+            // Reopens the detail page only when the item still exists;
+            // OpenDetail returns null for a deleted item and the list page
+            // stays up instead of dangling.
+            ViewModel.OpenDetail(detailId);
+        }
     }
 
     public Task AddFromTitleButtonAsync()
@@ -210,7 +231,12 @@ public sealed class TodoWidgetContentAdapter :
     private sealed record TodoTransientState(
         string InputText,
         bool DraftImportant,
-        DateTimeOffset? DraftDueDate);
+        DateTimeOffset? DraftDueDate,
+        TodoFilter SelectedFilter,
+        TodoColorFilter SelectedColorFilter,
+        string? SelectedDetailItemId,
+        bool IsCreatingDetail,
+        string CreatingDraftTitle);
 
     internal bool CanImportExternalDrop(DataPackageView dataView)
     {
@@ -235,15 +261,9 @@ public sealed class TodoWidgetContentAdapter :
             : Task.FromResult(false);
     }
 
-    public void Dispose()
+    protected override void Dispose(bool disposing)
     {
-        if (_isDisposed)
-        {
-            return;
-        }
-
-        _isDisposed = true;
-        if (_view is TodoWidgetContent todoContent)
+        if (MaterializedView is TodoWidgetContent todoContent)
         {
             todoContent.ReleaseTransientRenderingSubscriptions();
             todoContent.FeedbackRequested -= TodoContent_FeedbackRequested;

@@ -1,4 +1,4 @@
-﻿using DeskBox.Helpers;
+using DeskBox.Helpers;
 using DeskBox.Models;
 using DeskBox.Platform;
 using DeskBox.Services;
@@ -593,6 +593,31 @@ public abstract partial class WidgetWindowBase
 
         bool cancelledRestorePending = false;
 
+        // Runs before the editor window closes on Save/Enter: an invalid
+        // entry keeps the dialog open with the inline error visible instead
+        // of the old close-then-validate order, whose error text landed on
+        // a dialog that had already vanished.
+        bool ValidateMarginEntries()
+        {
+            bool perSide = modeSelection.SelectedIndex == 1;
+            bool valid = perSide
+                ? WidgetMarginSettings.TryParseMargin(leftBox.Text, out _) &&
+                    WidgetMarginSettings.TryParseMargin(topBox.Text, out _) &&
+                    WidgetMarginSettings.TryParseMargin(rightBox.Text, out _) &&
+                    WidgetMarginSettings.TryParseMargin(bottomBox.Text, out _)
+                : WidgetMarginSettings.TryParseMargin(uniformBox.Text, out _);
+            if (!valid)
+            {
+                validation.Text = string.Format(
+                    localization.T("Widget.Margin.Invalid"),
+                    WidgetMarginSettings.MinimumMarginPixels,
+                    WidgetMarginSettings.MaximumMarginPixels);
+                validation.Visibility = Visibility.Visible;
+            }
+
+            return valid;
+        }
+
         try
         {
             bool saved = await ShowToolDialogAsync(
@@ -600,7 +625,8 @@ public abstract partial class WidgetWindowBase
                 content,
                 localization.T("Common.Save"),
                 localization.T("Common.Cancel"),
-                viewport);
+                viewport,
+                validatePrimary: ValidateMarginEntries);
             // A debounced preview must never fire after the editor is gone: on
             // cancel it would move the widget again right after the restore.
             previewTimer.Stop();

@@ -99,7 +99,7 @@ public sealed class AotStage5B4C3AContractTests
         string runner = Read("scripts/run-aot-todo-recurrence-reminder-smoke.ps1");
         string managedRunner = Read("scripts/run-aot-managed-ui-smoke.ps1");
 
-        Assert.Contains("profile 56 / schema 53", runner, StringComparison.Ordinal);
+        Assert.Contains("profile $requiredAuditProfileVersion / schema $requiredSummarySchemaVersion", runner, StringComparison.Ordinal);
         Assert.Contains("Invoke-TodoRecurrenceReminderPhase", runner, StringComparison.Ordinal);
         Assert.Contains("processIdsDistinct", runner, StringComparison.Ordinal);
         Assert.Contains("executableHashesMatch", runner, StringComparison.Ordinal);
@@ -123,12 +123,12 @@ public sealed class AotStage5B4C3AContractTests
         string project = Read("src/DeskBox/DeskBox.csproj");
         string rust = Read("native/deskbox-native/src/lib.rs");
 
-        Assert.Contains("$auditProfileVersion = 63", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 65", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C3ARequiredScenarioPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C3AMissingSmokeScriptPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C3ARustAbiUnchanged", audit, StringComparison.Ordinal);
-        Assert.Contains("$RequiredAuditProfileVersion = 63", launcher, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 65", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("Native AOT stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("assert_eq!(deskbox_native_capabilities(), 511);", rust, StringComparison.Ordinal);

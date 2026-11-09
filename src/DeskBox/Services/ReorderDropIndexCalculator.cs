@@ -202,11 +202,30 @@ public static class ReorderDropIndexCalculator
         int lastVisibleIndex = -1;
         int candidate = -1;
 
-        for (int index = 0; index < list.Items.Count; index++)
+        // Walk the realized panel children instead of probing every index with
+        // ContainerFromIndex. That call is an O(n) virtualization query, and
+        // DragOver fires it on every native drag tick, so a large mapped folder
+        // paid a full-collection lookup per pointer move. The panel only holds
+        // the containers that actually exist, in index order, which is exactly
+        // the realized range this calculation is defined over.
+        if (list.ItemsPanelRoot is not { } realizedPanel)
         {
-            if (list.ContainerFromIndex(index) is not FrameworkElement container ||
+            return list.Items.Count == 0
+                ? 0
+                : Math.Clamp(lastValidInsertionIndex < 0 ? 0 : lastValidInsertionIndex, 0, list.Items.Count);
+        }
+
+        foreach (UIElement realizedChild in realizedPanel.Children)
+        {
+            if (realizedChild is not FrameworkElement container ||
                 container.ActualWidth <= 0 ||
                 container.ActualHeight <= 0)
+            {
+                continue;
+            }
+
+            int index = list.IndexFromContainer(container);
+            if (index < 0)
             {
                 continue;
             }

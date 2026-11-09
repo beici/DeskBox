@@ -51,6 +51,7 @@ internal static class WidgetStyleBackupProjection
         // backup document — the slice owns the field, the whitelist is a
         // hand-maintained wire-name set.
         "widgetAnimationFrameRate",
+        "widgetAnimationStaggerEnabled",
         "displayWidgetChromeMode", "interactiveWidgetChromeMode",
         "widgetTitleIconMode",
         // Fork-only title alignment (chrome/title display family).
@@ -64,16 +65,17 @@ internal static class WidgetStyleBackupProjection
 
     /// <summary>
     /// Per-widget style fields whitelisted out of each WidgetConfig element:
-    /// title and display/sort preferences only. Geometry (x, y, width,
-    /// height, position*, compactPlacement, compactWidth), compact/collapse
-    /// state (isCollapsed), per-widget density (iconSizeOverride), file
-    /// bindings (mappedFolderPath, items, fileAddedAt*), visibility/lock
-    /// state (isVisible, isDisabled, *Locked) and metadata never leave the
-    /// device.
+    /// title, display/sort preferences, and the per-widget icon-label
+    /// visibility override. Geometry (x, y, width, height, position*,
+    /// compactPlacement, compactWidth), compact/collapse state (isCollapsed),
+    /// per-widget density (iconSizeOverride), file bindings (mappedFolderPath,
+    /// items, fileAddedAt*), visibility/lock state (isVisible, isDisabled,
+    /// *Locked) and metadata never leave the device.
     /// </summary>
     internal static readonly HashSet<string> WidgetKeys = new(StringComparer.Ordinal)
     {
-        "name", "isDefaultTitle", "viewMode", "sortMode", "sortDescending"
+        "name", "isDefaultTitle", "viewMode", "sortMode", "sortDescending",
+        "iconLabelHiddenOverride"
     };
 
     internal sealed record ApplyResult(

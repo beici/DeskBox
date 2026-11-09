@@ -23,10 +23,29 @@ internal sealed class WidgetShowDesktopSelfHealService : IDisposable
     private static readonly TimeSpan DebounceDelay = TimeSpan.FromMilliseconds(700);
     private static readonly TimeSpan HookRetryDelay = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// Cadence of the hook-independent verify pass. It only has to beat the
+    /// user's patience, not the shell's animation, because the debounced hook
+    /// path still fires first whenever it works at all.
+    /// </summary>
+    private static readonly TimeSpan WatchdogInterval = TimeSpan.FromMilliseconds(1500);
+
     private const int ObjectIdWindow = 0;
 
     private readonly DispatcherQueue _dispatcherQueue;
     private readonly DispatcherQueueTimer _debounceTimer;
+
+    /// <summary>
+    /// Safety net for the WinEvent hooks. SetWinEventHook callbacks are the
+    /// fast path, but they are delivered out-of-context through the message
+    /// pump and a hook handle that installs cleanly can still never fire —
+    /// which is exactly the state this machine was observed in. Show Desktop
+    /// is a user-visible state change, so the verify pass also runs on a fixed
+    /// cadence; the pass itself bails out immediately unless the desktop owns
+    /// the foreground or a previous pass raised widgets, which keeps the idle
+    /// cost at one GetForegroundWindow probe.
+    /// </summary>
+    private readonly DispatcherQueueTimer _watchdogTimer;
     private readonly Action<string> _verifyAction;
     private readonly Win32Helper.WinEventProc _winEventProc;
     private DispatcherQueueTimer? _hookRetryTimer;
@@ -45,6 +64,10 @@ internal sealed class WidgetShowDesktopSelfHealService : IDisposable
         _debounceTimer.Interval = DebounceDelay;
         _debounceTimer.IsRepeating = false;
         _debounceTimer.Tick += DebounceTimer_Tick;
+        _watchdogTimer = dispatcherQueue.CreateTimer();
+        _watchdogTimer.Interval = WatchdogInterval;
+        _watchdogTimer.IsRepeating = true;
+        _watchdogTimer.Tick += WatchdogTimer_Tick;
     }
 
     public void Start()
@@ -84,6 +107,11 @@ internal sealed class WidgetShowDesktopSelfHealService : IDisposable
         {
             return;
         }
+
+        // The watchdog is independent of hook registration: it is the whole
+        // point of this pass that Show Desktop is handled even when the hooks
+        // install cleanly and then never deliver a callback.
+        StartWatchdogTimer();
 
         uint flags = Win32Helper.WINEVENT_OUTOFCONTEXT | Win32Helper.WINEVENT_SKIPOWNPROCESS;
         if (_minimizeHook == IntPtr.Zero)
@@ -129,6 +157,29 @@ internal sealed class WidgetShowDesktopSelfHealService : IDisposable
             $"minimizeHook=0x{_minimizeHook.ToInt64():X} " +
             $"foregroundHook=0x{_foregroundHook.ToInt64():X}; will retry");
         StartHookRetryTimer();
+    }
+
+    private void StartWatchdogTimer()
+    {
+        _watchdogTimer.Stop();
+        _watchdogTimer.Start();
+    }
+
+    private void WatchdogTimer_Tick(DispatcherQueueTimer sender, object args)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        try
+        {
+            _verifyAction("watchdog");
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[ShowDesktop] Watchdog verification failed: {ex.Message}");
+        }
     }
 
     private void StartHookRetryTimer()
@@ -206,6 +257,8 @@ internal sealed class WidgetShowDesktopSelfHealService : IDisposable
         _disposed = true;
         _debounceTimer.Stop();
         _debounceTimer.Tick -= DebounceTimer_Tick;
+        _watchdogTimer.Stop();
+        _watchdogTimer.Tick -= WatchdogTimer_Tick;
         if (_hookRetryTimer is not null)
         {
             _hookRetryTimer.Stop();

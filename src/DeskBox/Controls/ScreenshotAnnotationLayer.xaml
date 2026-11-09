@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="DeskBox.Controls.ScreenshotAnnotationLayer"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    HorizontalAlignment="Left"
+    VerticalAlignment="Top"
+    IsHitTestVisible="False"
+    Loaded="AnnotationLayer_Loaded">
+    <Canvas
+        x:Name="AnnotationCanvas"
+        Background="Transparent"
+        PointerCaptureLost="AnnotationCanvas_PointerCaptureLost"
+        PointerMoved="AnnotationCanvas_PointerMoved"
+        PointerPressed="AnnotationCanvas_PointerPressed"
+        PointerReleased="AnnotationCanvas_PointerReleased" />
+</UserControl>

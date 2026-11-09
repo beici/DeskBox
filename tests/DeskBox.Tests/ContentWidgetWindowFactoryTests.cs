@@ -47,7 +47,6 @@ public sealed class ContentWidgetWindowFactoryTests : IDisposable
 
     [Theory]
     [InlineData(WidgetKind.Tags)]
-    [InlineData(WidgetKind.SystemMonitor)]
     public void CreateContentWindowPlan_ReturnsPlaceholderForFutureKinds(WidgetKind widgetKind)
     {
         var config = CreateConfig("future-window", widgetKind);
@@ -92,7 +91,7 @@ public sealed class ContentWidgetWindowFactoryTests : IDisposable
     {
         return new ContentWidgetWindowFactory(
             TestServices.CreateWidgetContentFactory(),
-            new SettingsService(),
+            TestServices.CreateSettingsService(),
             todoStoreFactory: widget => new TodoWidgetStore(_widgetsDataRoot, widget.Id));
     }
 

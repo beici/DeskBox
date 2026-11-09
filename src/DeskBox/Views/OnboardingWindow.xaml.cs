@@ -59,7 +59,7 @@ public sealed partial class OnboardingWindow : Window
         _settingsService = settingsService;
         _localizationService = localizationService;
         _stepIndex = Math.Clamp(initialStep, 0, StepCount - 1);
-        _windowSubclassProc = WindowSubclassProc;
+        _windowSubclassProc = CallbackDepth.WrapSubclassProc(WindowSubclassProc);
         InitializeComponent();
         _localizationService.LanguageChanged += OnLanguageChanged;
         _settingsService.SettingsChanged += OnFeatureWidgetSettingsChanged;
@@ -100,15 +100,24 @@ public sealed partial class OnboardingWindow : Window
 
             DispatcherQueue.TryEnqueue(async () =>
             {
-                int introGeneration = _introGeneration;
-                await Task.Delay(IntroAnimationTargetMilliseconds + 1500);
-                if (introGeneration == _introGeneration &&
-                    IntroOverlay.Visibility == Visibility.Visible &&
-                    (StepContainer.Opacity <= 0.01 ||
-                     FooterNav.Opacity <= 0.01))
+                // R21-V9-02: a throw in this queued body used to disappear in the
+                // unhandled-exception sink and leave the intro overlay stuck.
+                try
                 {
-                    App.Log("[Onboarding] First paint fallback restored hidden main content.");
-                    DismissIntro();
+                    int introGeneration = _introGeneration;
+                    await Task.Delay(IntroAnimationTargetMilliseconds + 1500);
+                    if (introGeneration == _introGeneration &&
+                        IntroOverlay.Visibility == Visibility.Visible &&
+                        (StepContainer.Opacity <= 0.01 ||
+                         FooterNav.Opacity <= 0.01))
+                    {
+                        App.Log("[Onboarding] First paint fallback restored hidden main content.");
+                        DismissIntro();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    App.Log($"[Onboarding] First-paint fallback failed: {ex}");
                 }
             });
         };
@@ -165,8 +174,14 @@ public sealed partial class OnboardingWindow : Window
         int minWidth = ToPhysicalPixels(MinWindowWidth, scale);
         int minHeight = ToPhysicalPixels(MinWindowHeight, scale);
         int workAreaMargin = ToPhysicalPixels(WindowWorkAreaMargin, scale);
-        int width = Math.Clamp(desiredWidth, minWidth, Math.Max(minWidth, workArea.Width - workAreaMargin));
-        int height = Math.Clamp(desiredHeight, minHeight, Math.Max(minHeight, workArea.Height - workAreaMargin));
+        // The upper bound must stay below the work area even when the design minimum is
+        // larger than the screen: clamping to Math.Max(min, workArea - margin) used to
+        // keep the window at its minimum size and push the footer (outside the scroll
+        // viewer) off-screen on 1366x768@150% and similar configurations.
+        int maxWidth = Math.Max(1, workArea.Width - workAreaMargin);
+        int maxHeight = Math.Max(1, workArea.Height - workAreaMargin);
+        int width = Math.Clamp(desiredWidth, Math.Min(minWidth, maxWidth), maxWidth);
+        int height = Math.Clamp(desiredHeight, Math.Min(minHeight, maxHeight), maxHeight);
 
         _appWindow.Resize(new Windows.Graphics.SizeInt32(width, height));
         _appWindow.Move(new Windows.Graphics.PointInt32(
@@ -319,13 +334,65 @@ public sealed partial class OnboardingWindow : Window
         TaskStep5GlanceToggle.IsEnabled = false;
         NextButton.IsEnabled = false;
         BackButton.IsEnabled = false;
-        await _featureWidgetSelectionUpdateTask;
-        _settingsService.Settings.HasCompletedOnboarding = true;
-        _settingsService.Settings.CompletedOnboardingVersion = CurrentOnboardingVersion;
-        _settingsService.Settings.OnboardingStepIndex = 0;
-        await _settingsService.SaveAsync();
+        try
+        {
+            await _featureWidgetSelectionUpdateTask;
+            _settingsService.Settings.HasCompletedOnboarding = true;
+            _settingsService.Settings.CompletedOnboardingVersion = CurrentOnboardingVersion;
+            _settingsService.Settings.OnboardingStepIndex = 0;
+            await _settingsService.SaveAsync();
+        }
+        catch (Exception ex)
+        {
+            // A failed save must not strand the wizard on a fully disabled
+            // final step; report and re-arm so the user can finish again.
+            App.Log($"[Onboarding] Complete failed: {ex.Message}");
+            TaskStep5TodoToggle.IsEnabled = true;
+            TaskStep5QuickCaptureToggle.IsEnabled = true;
+            TaskStep5SearchToggle.IsEnabled = true;
+            TaskStep5WeatherToggle.IsEnabled = true;
+            TaskStep5MusicToggle.IsEnabled = true;
+            TaskStep5GlanceToggle.IsEnabled = true;
+            NextButton.IsEnabled = true;
+            BackButton.IsEnabled = true;
+            try
+            {
+                await ShowOnboardingCompleteFailedDialogAsync();
+            }
+            catch (Exception dialogEx)
+            {
+                // Even the failure dialog can fail while the window is
+                // tearing down; closing is the only escape left.
+                App.Log($"[Onboarding] Failure dialog failed: {dialogEx.Message}");
+                Close();
+            }
+            return;
+        }
         ReleaseFilePracticeWidget();
         Close();
+    }
+
+    private async Task ShowOnboardingCompleteFailedDialogAsync()
+    {
+        if (Content.XamlRoot is null)
+        {
+            return;
+        }
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = Content.XamlRoot,
+            Title = _localizationService.T("Onboarding.WindowTitle"),
+            CloseButtonText = _localizationService.T("Common.Close"),
+            DefaultButton = ContentDialogButton.Close,
+            Content = new TextBlock
+            {
+                Text = _localizationService.T("Common.OperationFailedRetry"),
+                TextWrapping = TextWrapping.Wrap
+            }
+        };
+
+        await dialog.ShowAsync();
     }
 
     private async Task NavigateToStepAsync(int newStep, bool forward)
@@ -816,8 +883,14 @@ public sealed partial class OnboardingWindow : Window
         {
             var minMaxInfo = System.Runtime.InteropServices.Marshal.PtrToStructure<MinMaxInfo>(lParam);
             double scale = GetCurrentDpiScale();
-            minMaxInfo.MinTrackSize.X = Math.Max(minMaxInfo.MinTrackSize.X, ToPhysicalPixels(MinWindowWidth, scale));
-            minMaxInfo.MinTrackSize.Y = Math.Max(minMaxInfo.MinTrackSize.Y, ToPhysicalPixels(MinWindowHeight, scale));
+            // Cap the minimum track size by the monitor work area, otherwise the window
+            // manager refuses to shrink the window below a size that does not fit the
+            // screen and the footer navigation stays unreachable.
+            var workArea = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Primary).WorkArea;
+            int maxWidth = Math.Max(1, workArea.Width - ToPhysicalPixels(WindowWorkAreaMargin, scale));
+            int maxHeight = Math.Max(1, workArea.Height - ToPhysicalPixels(WindowWorkAreaMargin, scale));
+            minMaxInfo.MinTrackSize.X = Math.Clamp(ToPhysicalPixels(MinWindowWidth, scale), 1, maxWidth);
+            minMaxInfo.MinTrackSize.Y = Math.Clamp(ToPhysicalPixels(MinWindowHeight, scale), 1, maxHeight);
             System.Runtime.InteropServices.Marshal.StructureToPtr(minMaxInfo, lParam, false);
             return IntPtr.Zero;
         }

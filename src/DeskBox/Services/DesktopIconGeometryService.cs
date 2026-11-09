@@ -54,32 +54,77 @@ internal static partial class DesktopIconGeometryService
     private static IReadOnlyList<RectInt32> s_cachedRects = [];
     private static long s_cachedTimestamp;
     private static bool s_hasCachedResult;
+    private static Task? s_refreshInFlight;
+    private static long s_generation;
 
     /// <summary>
     /// Desktop icon rectangles in physical screen pixels, or an empty list when
     /// Explorer's desktop view cannot be read. Callers must treat "empty" as
     /// "no icon reference available", never as "no icons exist".
+    /// <para>
+    /// B7: never blocks. A full read costs up to 512 cross-process
+    /// SendMessageTimeout round trips (~120ms each against a busy Explorer),
+    /// and this is called on every margin-dialog keystroke — a synchronous
+    /// read froze the UI thread for the whole pass. The value returned is
+    /// the cached one; a stale or missing cache kicks a single-flight
+    /// background refresh whose result lands for a later call.
+    /// </para>
     /// </summary>
     public static IReadOnlyList<RectInt32> GetIconRects()
     {
         lock (CacheGate)
         {
-            if (s_hasCachedResult &&
-                Stopwatch.GetElapsedTime(s_cachedTimestamp) < CacheLifetime)
-            {
-                return s_cachedRects;
-            }
+            EnsureRefreshStartedLocked();
+            return s_cachedRects;
         }
+    }
 
-        IReadOnlyList<RectInt32> rects = ReadIconRects();
-        lock (CacheGate)
+    private static void EnsureRefreshStartedLocked()
+    {
+        if (s_hasCachedResult &&
+            Stopwatch.GetElapsedTime(s_cachedTimestamp) < CacheLifetime)
         {
-            s_cachedRects = rects;
-            s_cachedTimestamp = Stopwatch.GetTimestamp();
-            s_hasCachedResult = true;
+            return;
         }
 
-        return rects;
+        // Single flight: concurrent cache misses share one refresh instead
+        // of piling reads onto the thread pool.
+        if (s_refreshInFlight is not null)
+        {
+            return;
+        }
+
+        long generation = s_generation;
+        s_refreshInFlight = Task.Run(() =>
+        {
+            try
+            {
+                IReadOnlyList<RectInt32> rects = ReadIconRects();
+                lock (CacheGate)
+                {
+                    // Generation guard: an Invalidate() that fired while this
+                    // read was in flight means the result is already stale —
+                    // publish nothing and let a fresh read happen.
+                    if (Volatile.Read(ref s_generation) == generation)
+                    {
+                        s_cachedRects = rects;
+                        s_cachedTimestamp = Stopwatch.GetTimestamp();
+                        s_hasCachedResult = true;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                App.Log($"[DesktopIcons] Icon geometry refresh failed: {ex.Message}");
+            }
+            finally
+            {
+                lock (CacheGate)
+                {
+                    s_refreshInFlight = null;
+                }
+            }
+        });
     }
 
     /// <summary>
@@ -89,6 +134,7 @@ internal static partial class DesktopIconGeometryService
     {
         lock (CacheGate)
         {
+            s_generation++;
             s_hasCachedResult = false;
             s_cachedRects = [];
         }

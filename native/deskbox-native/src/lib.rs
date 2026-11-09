@@ -6,6 +6,7 @@
 
 use std::mem::size_of;
 
+mod com_scaffold;
 mod explorer_shell_launch;
 mod music_volume;
 mod quick_access;
@@ -614,13 +615,26 @@ fn is_valid_output_buffer(buffer: &DeskBoxNativeUtf16BufferV1) -> bool {
 }
 
 fn is_valid_input_string(value: &DeskBoxNativeUtf16StringV1, allow_empty: bool) -> bool {
-    value.reserved0 == 0
-        && value.length_chars <= DESKBOX_SHORTCUT_MAX_INPUT_VALUE_CHARS
-        && if value.length_chars == 0 {
-            allow_empty && value.data.is_null()
+    if value.reserved0 != 0
+        || value.length_chars > DESKBOX_SHORTCUT_MAX_INPUT_VALUE_CHARS
+        || if value.length_chars == 0 {
+            !(allow_empty && value.data.is_null())
         } else {
-            !value.data.is_null()
+            value.data.is_null()
         }
+    {
+        return false;
+    }
+
+    if value.length_chars == 0 {
+        return true;
+    }
+
+    // Embedded NUL rejection, aligned with the other exports' input
+    // validators: an interior NUL would silently truncate the string when
+    // it is handed to the shell as a path or display text.
+    // SAFETY: Pointer readability for the declared length is part of the ABI contract.
+    !unsafe { std::slice::from_raw_parts(value.data, value.length_chars as usize) }.contains(&0)
 }
 
 unsafe fn is_valid_music_input_string(value: &DeskBoxNativeUtf16StringV1) -> bool {
@@ -2360,7 +2374,7 @@ mod tests {
     }
 
     #[test]
-    fn write_overwrites_existing_shortcut_and_clears_optional_fields() {
+    fn write_overwrites_existing_shortcut_and_skips_icon_setter_when_empty() {
         let fixture = ShortcutFixture::new("--old-arguments");
         let replacement_target = fixture.root.join("replacement target.exe");
         fs::write(&replacement_target, b"replacement").expect("create replacement target");
@@ -2376,8 +2390,18 @@ mod tests {
 
         let (status, result) = write_shortcut_file(&fixture.link_path, &values);
 
+        // An empty icon path skips SetIconLocation and is not reported in
+        // succeeded_fields (both backends treat empty as "no custom icon"
+        // rather than relying on undocumented empty-string reset semantics —
+        // the C# oracle DragDropPermissionService.CreateOrUpdateShortcutWithCSharp
+        // has the same skip). Because write_v2 always creates a fresh Shell
+        // Link object and saves over the path, the net effect still clears
+        // a previously stored icon; only the field bit and HRESULT differ.
         assert_eq!(status, DESKBOX_NATIVE_STATUS_OK);
-        assert_eq!(result.succeeded_fields, ALL_SHORTCUT_FIELDS);
+        assert_eq!(
+            result.succeeded_fields,
+            ALL_SHORTCUT_FIELDS & !DESKBOX_SHORTCUT_FIELD_ICON_PATH
+        );
         let read = read_shortcut_file(
             &fixture.link_path,
             DESKBOX_SHORTCUT_READ_MODE_STORED_RAW,
@@ -2481,7 +2505,13 @@ mod tests {
 
         assert_eq!(status, DESKBOX_NATIVE_STATUS_OPERATION_FAILED);
         assert_eq!(result.attempted_phases, WRITE_PHASES);
-        assert_eq!(result.succeeded_fields, ALL_SHORTCUT_FIELDS);
+        // Empty icon path: SetIconLocation is skipped, so the Icon bit is
+        // absent from succeeded_fields even though every executed setter
+        // succeeded (see write_overwrites_existing_shortcut_…_icon_empty).
+        assert_eq!(
+            result.succeeded_fields,
+            ALL_SHORTCUT_FIELDS & !DESKBOX_SHORTCUT_FIELD_ICON_PATH
+        );
         assert_ne!(result.save_hresult, DESKBOX_NATIVE_S_OK);
         assert_eq!(result.operation_hresult, result.save_hresult);
         assert!(!missing_parent_link.exists());

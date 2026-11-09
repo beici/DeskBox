@@ -133,18 +133,28 @@ public sealed class QuickCaptureStore
             Path.DirectorySeparatorChar;
     }
 
+    /// <summary>
+    /// Source of the most recent <see cref="LoadAsync"/> call. Callers use it to
+    /// tell "the stored document was read" apart from "the read failed and the
+    /// default document was handed back": the latter must never be treated as
+    /// authoritative, because it looks exactly like an empty user document.
+    /// </summary>
+    internal ResilientJsonLoadSource LastLoadSource { get; private set; } = ResilientJsonLoadSource.DefaultMissing;
+
     public async Task<QuickCaptureStoreData> LoadAsync()
     {
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            return await ResilientJsonStore.LoadAsync(
+            ResilientJsonLoadResult<QuickCaptureStoreData> result = await ResilientJsonStore.LoadWithResultAsync(
                 _storePath,
                 json => Normalize(JsonSerializer.Deserialize(
                     json,
                     QuickCaptureJsonContext.Default.StoreData)),
                 () => new QuickCaptureStoreData(),
                 nameof(QuickCaptureStore)).ConfigureAwait(false);
+            LastLoadSource = result.Source;
+            return result.Value;
         }
         finally
         {
@@ -155,13 +165,30 @@ public sealed class QuickCaptureStore
     public async Task SaveAsync(QuickCaptureStoreData data)
     {
         data = Normalize(data);
-        string json = JsonSerializer.Serialize(
-            data,
-            QuickCaptureJsonContext.Default.StoreData);
+        // Fork: serialize writes per store path (DEF-043 family). The gate is
+        // held across the whole write so two writers can never interleave and
+        // lose one side's changes.
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            await ResilientJsonStore.SaveAsync(_storePath, json).ConfigureAwait(false);
+            // Stream the UTF-8 directly into the temp file: materializing the
+            // whole document as a string first doubles the transient footprint
+            // on every save, and quick-capture autosave fires while the user
+            // keeps typing.
+            await ResilientJsonStore.SaveAsync(
+                _storePath,
+                async tempPath =>
+                {
+                    await using var stream = new FileStream(
+                        tempPath,
+                        FileMode.Create,
+                        FileAccess.Write,
+                        FileShare.None);
+                    await JsonSerializer.SerializeAsync(
+                        stream,
+                        data,
+                        QuickCaptureJsonContext.Default.StoreData);
+                }).ConfigureAwait(false);
         }
         finally
         {
@@ -172,7 +199,12 @@ public sealed class QuickCaptureStore
     private static QuickCaptureStoreData Normalize(QuickCaptureStoreData? data)
     {
         data ??= new QuickCaptureStoreData();
-        data.Version = CurrentVersion;
+        // R21-S8-02: never write the store version back down. A cloud restore
+        // from a newer build (or a downgrade) used to rewrite Version to the
+        // running build's value, which silently dropped the newer fields and
+        // made a later upgrade unable to re-migrate. Same rule as
+        // TodoWidgetStore.Normalize (Math.Max with the current version).
+        data.Version = Math.Max(CurrentVersion, data.Version);
         data.Items ??= [];
         data.RecentItems ??= [];
 

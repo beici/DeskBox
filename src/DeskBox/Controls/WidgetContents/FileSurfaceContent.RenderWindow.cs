@@ -1,3 +1,4 @@
+using DeskBox.Services;
 using DeskBox.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -7,6 +8,7 @@ namespace DeskBox.Controls.WidgetContents;
 
 public sealed partial class FileSurfaceContent
 {
+    private bool _renderWindowCoverageQueued;
     private ScrollViewer? _gridRenderWindowScrollViewer;
     private ScrollViewer? _listRenderWindowScrollViewer;
 
@@ -19,8 +21,7 @@ public sealed partial class FileSurfaceContent
     {
         ItemsGrid.Loaded += ItemsView_LoadedForRenderWindow;
         ItemsList.Loaded += ItemsView_LoadedForRenderWindow;
-        ItemsGrid.LayoutUpdated += ItemsView_LayoutUpdatedForRenderWindow;
-        ItemsList.LayoutUpdated += ItemsView_LayoutUpdatedForRenderWindow;
+        FileItemsViewport.LayoutUpdated += ItemsView_LayoutUpdatedForRenderWindow;
         ItemsGrid.SizeChanged += ItemsView_SizeChangedForRenderWindow;
         ItemsList.SizeChanged += ItemsView_SizeChangedForRenderWindow;
         ViewModel.PropertyChanged += ViewModel_PropertyChangedForRenderWindow;
@@ -39,8 +40,7 @@ public sealed partial class FileSurfaceContent
     {
         ItemsGrid.Loaded -= ItemsView_LoadedForRenderWindow;
         ItemsList.Loaded -= ItemsView_LoadedForRenderWindow;
-        ItemsGrid.LayoutUpdated -= ItemsView_LayoutUpdatedForRenderWindow;
-        ItemsList.LayoutUpdated -= ItemsView_LayoutUpdatedForRenderWindow;
+        FileItemsViewport.LayoutUpdated -= ItemsView_LayoutUpdatedForRenderWindow;
         ItemsGrid.SizeChanged -= ItemsView_SizeChangedForRenderWindow;
         ItemsList.SizeChanged -= ItemsView_SizeChangedForRenderWindow;
         ViewModel.PropertyChanged -= ViewModel_PropertyChangedForRenderWindow;
@@ -62,27 +62,40 @@ public sealed partial class FileSurfaceContent
 
     private void QueueRenderWindowViewportCoverage()
     {
-        if (_isDisposed)
+        if (_isDisposed || _renderWindowCoverageQueued)
         {
             return;
         }
 
-        // Scattered item changes coalesce once per dispatcher pass; a batched
-        // import defers all of them to its single end-of-batch reconcile, so
-        // this check runs once after the batch settles.
-        _ = DispatcherQueue.TryEnqueue(() =>
+        // Never insert a large prefix inside ScrollViewer's ViewChanged/layout
+        // callback. Coalesce requests and let input/rendering run before growth.
+        _renderWindowCoverageQueued = true;
+        if (!DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
-            if (!_isDisposed)
+            try
             {
-                EnsureRenderWindowCoversViewport(GetActiveItemsView());
+                if (_isDisposed || !IsLoaded)
+                {
+                    return;
+                }
+
+                ListViewBase itemsView = GetActiveItemsView();
+                EnsureRenderWindowCoversViewport(itemsView);
             }
-        });
+            finally
+            {
+                _renderWindowCoverageQueued = false;
+            }
+        }))
+        {
+            _renderWindowCoverageQueued = false;
+        }
     }
 
     private void ItemsView_SizeChangedForRenderWindow(
         object sender,
         Microsoft.UI.Xaml.SizeChangedEventArgs e) =>
-        EnsureRenderWindowCoversViewport(sender as ListViewBase);
+        QueueRenderWindowViewportCoverage();
 
     private void ViewModel_PropertyChangedForRenderWindow(
         object? sender,
@@ -91,7 +104,7 @@ public sealed partial class FileSurfaceContent
         if (e.PropertyName is nameof(WidgetViewModel.IconCellWidth) or
             nameof(WidgetViewModel.IconCellHeight))
         {
-            EnsureRenderWindowCoversViewport(ItemsGrid);
+            QueueRenderWindowViewportCoverage();
         }
     }
 
@@ -122,30 +135,25 @@ public sealed partial class FileSurfaceContent
             return;
         }
 
-        if (ReferenceEquals(itemsView, ItemsGrid))
-        {
-            ViewModel.EnsureRenderWindowCoversViewport(
-                WidgetViewModel.ComputeViewportRenderMinimum(
-                    viewportWidth,
-                    viewportHeight,
-                    ViewModel.IconCellWidth,
-                    ViewModel.IconCellHeight,
-                    bufferRows: 2));
-        }
-        else
-        {
-            // List rows size to content, not to the icon cell: measure the
-            // first realized container and fall back to a conservative small
-            // row height (over-rendering beats stranding items).
-            double rowHeight = EstimateListRowHeight(itemsView);
-            ViewModel.EnsureRenderWindowCoversViewport(
-                WidgetViewModel.ComputeViewportRenderMinimum(
-                    viewportWidth,
-                    viewportHeight,
-                    Math.Max(1, viewportWidth),
-                    rowHeight,
-                    bufferRows: 2));
-        }
+        bool isGrid = ReferenceEquals(itemsView, ItemsGrid);
+        // List rows size to content; their realized height is authoritative.
+        int viewportMinimum = WidgetViewModel.ComputeViewportRenderMinimum(
+            viewportWidth,
+            viewportHeight,
+            isGrid ? ViewModel.IconCellWidth : Math.Max(1, viewportWidth),
+            isGrid ? ViewModel.IconCellHeight : EstimateListRowHeight(itemsView),
+            bufferRows: 2);
+        bool isNearRenderedEnd = scrollViewer is { ViewportHeight: > 0 } &&
+            scrollViewer.VerticalOffset + scrollViewer.ViewportHeight * 2 >= scrollViewer.ExtentHeight;
+
+        // One request means one reconcile and one hydration generation. Never
+        // fill the viewport and then prefetch again against its stale extent.
+        ViewModel.EnsureRenderWindowCoversViewport(
+            FileRenderWindowGrowthPolicy.ComputeRequestedMinimum(
+                ViewModel.RenderedItems.Count,
+                viewportMinimum,
+                ViewModel.CanGrowRenderWindow,
+                isNearRenderedEnd));
     }
 
     private double EstimateListRowHeight(ListViewBase itemsView)
@@ -162,10 +170,10 @@ public sealed partial class FileSurfaceContent
 
     private void ItemsView_LoadedForRenderWindow(object sender, RoutedEventArgs e)
     {
-        HookRenderWindowScrollViewer(sender as ListViewBase, retry: true);
+        HookRenderWindowScrollViewer(sender as ListViewBase);
     }
 
-    private void HookRenderWindowScrollViewer(ListViewBase? itemsView, bool retry)
+    private void HookRenderWindowScrollViewer(ListViewBase? itemsView)
     {
         if (_isDisposed || itemsView is null)
         {
@@ -177,27 +185,8 @@ public sealed partial class FileSurfaceContent
             StoreRenderWindowScrollViewer(itemsView, scrollViewer);
             scrollViewer.ViewChanged -= ItemsView_ViewChangedForRenderWindow;
             scrollViewer.ViewChanged += ItemsView_ViewChangedForRenderWindow;
-            EnsureRenderWindowCoversViewport(itemsView);
-            TryGrowRenderWindowToFillViewport(scrollViewer);
-            return;
+            QueueRenderWindowViewportCoverage();
         }
-
-        if (retry)
-        {
-            // The templated ScrollViewer may not exist during the first
-            // Loaded pass; retry once layout has produced it.
-            itemsView.LayoutUpdated += RetryRenderWindowScrollHook;
-        }
-    }
-
-    private void RetryRenderWindowScrollHook(object? sender, object e)
-    {
-        if (sender is ListViewBase itemsView)
-        {
-            itemsView.LayoutUpdated -= RetryRenderWindowScrollHook;
-        }
-
-        HookRenderWindowScrollViewer(sender as ListViewBase, retry: false);
     }
 
     private void ItemsView_ViewChangedForRenderWindow(
@@ -209,12 +198,18 @@ public sealed partial class FileSurfaceContent
             return;
         }
 
+        // The expanded-label overlay is positioned against the viewport;
+        // scrolling invalidates that position, so collapse it rather than
+        // chase the item.
+        HideNameExpansion(isPopoverView: false);
+
         // Grow while unrendered content remains and the user is within two
         // viewports of the rendered end, so scrolling never hits a wall.
-        if (scrollViewer.VerticalOffset + (scrollViewer.ViewportHeight * 2) >=
+        if (ViewModel.CanGrowRenderWindow &&
+            scrollViewer.VerticalOffset + (scrollViewer.ViewportHeight * 2) >=
             scrollViewer.ExtentHeight)
         {
-            ViewModel.GrowRenderWindow();
+            QueueRenderWindowViewportCoverage();
         }
     }
 
@@ -227,8 +222,19 @@ public sealed partial class FileSurfaceContent
     /// </summary>
     private void ItemsView_LayoutUpdatedForRenderWindow(object? sender, object e)
     {
-        if (_isDisposed || sender is not ListViewBase itemsView)
+        if (_isDisposed || !IsLoaded)
         {
+            return;
+        }
+
+        // WinUI always passes null for LayoutUpdated.sender. Subscribe once
+        // for the viewport and explicitly select its active items view.
+        ListViewBase itemsView = GetActiveItemsView();
+        if (GetRenderWindowScrollViewer(itemsView) is null)
+        {
+            // The template may not exist during Loaded. Keep the retry on
+            // this shared layout hook until its ScrollViewer is available.
+            HookRenderWindowScrollViewer(itemsView);
             return;
         }
 
@@ -245,7 +251,7 @@ public sealed partial class FileSurfaceContent
         if (scrollViewer.ViewportHeight > 0 &&
             scrollViewer.ExtentHeight <= scrollViewer.ViewportHeight)
         {
-            ViewModel.GrowRenderWindow();
+            QueueRenderWindowViewportCoverage();
         }
     }
 

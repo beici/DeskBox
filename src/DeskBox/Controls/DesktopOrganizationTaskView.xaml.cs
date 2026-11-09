@@ -21,6 +21,7 @@ public sealed partial class DesktopOrganizationTaskView : UserControl
     private int _scanGeneration;
     private bool _isExecuting;
     private bool _closeAfterExecutionStops;
+    private bool _isUndoing;
     private bool _hasCompletedExecution;
     private bool _isScanning;
     private readonly HashSet<string> _newPaths = new(StringComparer.OrdinalIgnoreCase);
@@ -63,6 +64,20 @@ public sealed partial class DesktopOrganizationTaskView : UserControl
         if (!_isExecuting)
         {
             CloseRequested?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
+        if (_isUndoing)
+        {
+            // Undo runs without a cancellation token, so there is nothing to
+            // cancel and no stop to close after. Arming the auto-close flag
+            // here would survive the undo and close the window after some
+            // LATER execution stops — a spurious close. The host keeps
+            // blocking close attempts while the undo runs.
+            ResultInfo.Severity = InfoBarSeverity.Warning;
+            ResultInfo.Title = T("DesktopOrganization.Window.CloseBlocked");
+            ResultInfo.Message = string.Empty;
+            ResultInfo.IsOpen = true;
             return;
         }
 
@@ -281,7 +296,7 @@ public sealed partial class DesktopOrganizationTaskView : UserControl
         CancelButton.Content = T("DesktopOrganization.Window.Cancel");
         RetryPublicButton.Content = T("DesktopOrganization.Layout.RetryRemaining");
         RecoverButton.Content = T("DesktopOrganization.Public.Recover");
-        RecoveryInfoText.Text = T("DesktopOrganization.Public.RecoveryPending");
+        RecoveryInfo.Message = T("DesktopOrganization.Public.RecoveryPending");
         AbandonRecoveryButton.Content = T("DesktopOrganization.Public.AbandonRestore");
         AbandonUndoButton.Content = T("DesktopOrganization.Public.AbandonRestore");
         DoneButton.Content = T("DesktopOrganization.Window.Done");

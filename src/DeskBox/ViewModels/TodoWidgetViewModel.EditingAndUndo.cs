@@ -179,6 +179,11 @@ public sealed partial class TodoWidgetViewModel
         }
 
         CaptureUndoSnapshot(_localizationService.Format("Todo.Undo.ClearedCompleted", completedItems.Count));
+        if (SelectedDetailItem is not null && completedItems.Any(item =>
+                string.Equals(item.Id, SelectedDetailItem.Id, StringComparison.Ordinal)))
+        {
+            SelectedDetailItem = null;
+        }
         foreach (var item in completedItems)
         {
             TombstoneItem(item);
@@ -200,6 +205,10 @@ public sealed partial class TodoWidgetViewModel
 
         int removedCount = Items.Count;
         CaptureUndoSnapshot(_localizationService.Format("Todo.Undo.ClearedAll", removedCount));
+        // Same guard as the delete paths: a dangling SelectedDetailItem would
+        // keep the detail page alive on a tombstoned item and silently drop
+        // any edits not yet persisted.
+        SelectedDetailItem = null;
         var clearedAt = DateTimeOffset.UtcNow;
         foreach (var item in Items)
         {
@@ -256,10 +265,26 @@ public sealed partial class TodoWidgetViewModel
             return false;
         }
 
+        // R2-④F1: the table below is rebuilt from clones, so any open detail
+        // page is bound to an instance that is about to be detached. Close
+        // the detail (and any brand-new draft) first, then re-open the same
+        // item by id when the undo kept it; when the undo removed it the
+        // detail stays closed — the undo is the user's statement that the
+        // removed state should come back or go away as a whole.
+        string? selectedId = SelectedDetailItem?.Id;
+        bool wasCreating = IsCreatingDetailItem;
+        SelectedDetailItem = null;
+        IsCreatingDetailItem = false;
+
         Items.Clear();
         foreach (var item in _undoSnapshot.Items.Select(CloneTodoItem))
         {
             Items.Add(new TodoItemViewModel(item, _localizationService));
+        }
+
+        if (!wasCreating && selectedId is not null)
+        {
+            SelectedDetailItem = Items.FirstOrDefault(item => item.Id == selectedId);
         }
 
         _undoSnapshot = null;

@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [ValidateSet("x64", "ARM64")]
     [string]$Platform = "x64",
@@ -99,7 +99,7 @@ function Copy-WindowsAppRuntimeInsightsResource {
         throw "The restored $($runtimeLibrary.Name) framework MSIX is missing for '$NativePlatform'."
     }
 
-    # WindowsAppSDK 2.4.0 resolves Foundation 2.3.9, whose self-contained
+    # WindowsAppSDK 2.5.1 resolves Foundation 2.3.12, whose self-contained
     # component payload omits this signed resource DLL even though the matching
     # Runtime framework MSIX contains it. Extract the file from that exact,
     # restore-locked MSIX so app-local RuntimeInfo/AppNotification startup does
@@ -292,10 +292,16 @@ try {
             ForEach-Object { $_.FullName })
 
     foreach ($restoreProject in $restoreProjects) {
+        # R21-S10-01: without locked mode a drifted packages.aot.lock.json is
+        # silently rewritten and the retail package ships against a dependency
+        # graph nobody reviewed. CI passes RestoreLockedMode=true at job level,
+        # so this entry point (the one AGENTS.md names) was the only unlocked
+        # path.
         $restoreArguments = @(
             "restore",
             $restoreProject,
             "--artifacts-path", $buildArtifactsDir,
+            "-p:RestoreLockedMode=true",
             "-v:minimal"
         ) + $commonProperties
         & $dotnet @restoreArguments 2>&1 | Tee-Object -FilePath $logPath -Append

@@ -90,7 +90,7 @@ public sealed class SearchResultActionServiceTests : IDisposable
             _settingsService,
             TestServices.CreateLocalizationService(),
             dispatcherQueue: null,
-            _ => { },
+            _ => Task.FromResult(true),
             widgetId => new TodoWidgetStore(_widgetsDataRoot, widgetId),
             () => DateTimeOffset.Now);
         // Mirrors the App relay: background/external store changes are merged

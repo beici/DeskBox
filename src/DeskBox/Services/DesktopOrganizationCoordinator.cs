@@ -28,7 +28,10 @@ public sealed class DesktopOrganizationCoordinator
         var classifier = new DesktopOrganizationClassifier();
         _scanner = new DesktopOrganizationScanner(classifier);
         _planner = new DesktopOrganizationPlanner(new DesktopOrganizationRuleResolver());
-        _transaction = new DesktopOrganizationTransaction(settingsService, fileService)
+        _transaction = new DesktopOrganizationTransaction(
+            settingsService,
+            fileService,
+            widgetManager: widgetManager)
         {
             AutoOrganizationSuppressions = organizerService.AutoOrganizationSuppressions
         };
@@ -359,25 +362,41 @@ public sealed class DesktopOrganizationCoordinator
             return;
         }
 
-        Win32Helper.NativeRect nativeWorkArea = default;
-        if (!Win32Helper.SystemParametersInfo(SpiGetWorkArea, 0, ref nativeWorkArea, 0))
+        // New widgets land on the primary monitor's work area. Point (0,0)
+        // is the primary monitor's origin, so the nearest-monitor lookup
+        // resolves to the primary without a new P/Invoke; rcWork already
+        // excludes the taskbar. The scale is the same monitor's effective
+        // DPI (GetDpiForSystem would report the system DPI and misplace
+        // widgets on a mixed-DPI desktop). Widget bounds keep their stored
+        // convention: X/Y physical, W/H logical.
+        if (!Win32Helper.TryGetMonitorWorkArea(0, 0, out _, out var primaryWorkArea))
         {
             return;
         }
 
-        double scale = Math.Max(1, Win32Helper.GetDpiForSystem() / 96d);
+        double scale = Math.Max(1, Win32Helper.GetDpiScaleForPoint(0, 0));
         var workArea = new DesktopOrganizationRect(
-            nativeWorkArea.Left,
-            nativeWorkArea.Top,
-            nativeWorkArea.Right - nativeWorkArea.Left,
-            nativeWorkArea.Bottom - nativeWorkArea.Top);
+            primaryWorkArea.Left,
+            primaryWorkArea.Top,
+            primaryWorkArea.Right - primaryWorkArea.Left,
+            primaryWorkArea.Bottom - primaryWorkArea.Top);
         var occupied = _settingsService.Settings.Widgets
             .Where(widget => widget.IsVisible && !widget.IsDisabled)
-            .Select(widget => new DesktopOrganizationRect(
-                widget.X,
-                widget.Y,
-                widget.Width * scale,
-                widget.Height * scale))
+            // R8 B12: each existing widget's on-screen footprint is scaled by
+            // the DPI of the monitor it actually sits on (widget.X/Y are
+            // physical coordinates, which is what GetDpiScaleForPoint takes),
+            // not by the placement monitor's scale.
+            .Select(widget =>
+            {
+                double widgetScale = Math.Max(
+                    1,
+                    Win32Helper.GetDpiScaleForPoint((int)widget.X, (int)widget.Y));
+                return new DesktopOrganizationRect(
+                    widget.X,
+                    widget.Y,
+                    widget.Width * widgetScale,
+                    widget.Height * widgetScale);
+            })
             .ToList();
 
         if (!_placementPlanner.TryAssignBounds(
@@ -410,5 +429,4 @@ public sealed class DesktopOrganizationCoordinator
         }
     }
 
-    private const uint SpiGetWorkArea = 0x0030;
 }

@@ -1,34 +1,24 @@
-use std::slice;
-
 use windows::{
     Win32::{
-        Foundation::{E_POINTER, RPC_E_CHANGED_MODE, TYPE_E_TYPEMISMATCH},
-        Globalization::{CSTR_EQUAL, CompareStringOrdinal},
-        Storage::FileSystem::GetFullPathNameW,
-        System::{
-            Com::{
-                CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
-                CoUninitialize,
-            },
-            Variant::{VARIANT, VT_BOOL, VT_BSTR, VT_I4},
-        },
-        UI::Shell::{FolderItem, FolderItem2, IShellDispatch, Shell},
+        Foundation::{E_POINTER, TYPE_E_TYPEMISMATCH},
+        System::Variant::{VARIANT, VT_BOOL, VT_BSTR, VT_I4},
+        UI::Shell::{FolderItem, FolderItem2, IShellDispatch},
     },
-    core::{BSTR, Error, Interface, PCWSTR},
+    core::{BSTR, Interface},
 };
 
+use crate::com_scaffold::{com_shell_prelude, input_slice, normalize_full_path, paths_equal};
 use crate::{
-    DESKBOX_NATIVE_S_FALSE, DESKBOX_NATIVE_S_OK, DESKBOX_NATIVE_STATUS_COM_INITIALIZATION_FAILED,
-    DESKBOX_NATIVE_STATUS_OBJECT_CREATION_FAILED, DESKBOX_NATIVE_STATUS_OK,
-    DESKBOX_NATIVE_STATUS_OPERATION_FAILED, DESKBOX_QUICK_ACCESS_OPERATION_PIN,
-    DESKBOX_QUICK_ACCESS_OPERATION_QUERY_PIN_STATE, DESKBOX_QUICK_ACCESS_OPERATION_UNPIN,
-    DESKBOX_QUICK_ACCESS_PHASE_COM_INITIALIZE, DESKBOX_QUICK_ACCESS_PHASE_CREATE_OBJECT,
-    DESKBOX_QUICK_ACCESS_PHASE_ENUMERATE, DESKBOX_QUICK_ACCESS_PHASE_INVOKE,
-    DESKBOX_QUICK_ACCESS_PHASE_ITEM_PATH, DESKBOX_QUICK_ACCESS_PHASE_ITEMS,
-    DESKBOX_QUICK_ACCESS_PHASE_PARENT_NAMESPACE, DESKBOX_QUICK_ACCESS_PHASE_PARSE_NAME,
-    DESKBOX_QUICK_ACCESS_PHASE_PROPERTY, DESKBOX_QUICK_ACCESS_PHASE_QUICK_NAMESPACE,
-    DESKBOX_QUICK_ACCESS_PIN_STATE_NOT_PINNED, DESKBOX_QUICK_ACCESS_PIN_STATE_PINNED,
-    DESKBOX_QUICK_ACCESS_PIN_STATE_UNKNOWN, DeskBoxNativeUtf16StringV1,
+    DESKBOX_NATIVE_E_INVALIDARG, DESKBOX_NATIVE_S_OK, DESKBOX_NATIVE_STATUS_INVALID_ARGUMENT,
+    DESKBOX_NATIVE_STATUS_OK, DESKBOX_NATIVE_STATUS_OPERATION_FAILED,
+    DESKBOX_QUICK_ACCESS_OPERATION_PIN, DESKBOX_QUICK_ACCESS_OPERATION_QUERY_PIN_STATE,
+    DESKBOX_QUICK_ACCESS_OPERATION_UNPIN, DESKBOX_QUICK_ACCESS_PHASE_COM_INITIALIZE,
+    DESKBOX_QUICK_ACCESS_PHASE_CREATE_OBJECT, DESKBOX_QUICK_ACCESS_PHASE_ENUMERATE,
+    DESKBOX_QUICK_ACCESS_PHASE_INVOKE, DESKBOX_QUICK_ACCESS_PHASE_ITEM_PATH,
+    DESKBOX_QUICK_ACCESS_PHASE_ITEMS, DESKBOX_QUICK_ACCESS_PHASE_PARENT_NAMESPACE,
+    DESKBOX_QUICK_ACCESS_PHASE_PARSE_NAME, DESKBOX_QUICK_ACCESS_PHASE_PROPERTY,
+    DESKBOX_QUICK_ACCESS_PHASE_QUICK_NAMESPACE, DESKBOX_QUICK_ACCESS_PIN_STATE_NOT_PINNED,
+    DESKBOX_QUICK_ACCESS_PIN_STATE_PINNED, DESKBOX_QUICK_ACCESS_PIN_STATE_UNKNOWN,
     DeskBoxQuickAccessRequestV1, DeskBoxQuickAccessResultV1,
 };
 
@@ -37,58 +27,17 @@ const PIN_VERB: &str = "pintohome";
 const UNPIN_VERB: &str = "unpinfromhome";
 const IS_PINNED_PROPERTY: &str = "System.IsPinnedToNameSpaceTree";
 
-struct ComUninitializeGuard {
-    active: bool,
-}
-
-impl Drop for ComUninitializeGuard {
-    fn drop(&mut self) {
-        if self.active {
-            // SAFETY: Each active guard represents one successful CoInitializeEx call.
-            unsafe { CoUninitialize() };
-        }
-    }
-}
-
 pub(crate) unsafe fn execute(
     request: &DeskBoxQuickAccessRequestV1,
     result: &mut DeskBoxQuickAccessResultV1,
 ) -> u32 {
-    result.attempted_phases |= DESKBOX_QUICK_ACCESS_PHASE_COM_INITIALIZE;
-    // SAFETY: COM initialization is balanced by the guard for S_OK and S_FALSE.
-    let com_hresult = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
-    result.com_hresult = com_hresult.0;
-    let should_uninitialize =
-        com_hresult.0 == DESKBOX_NATIVE_S_OK || com_hresult.0 == DESKBOX_NATIVE_S_FALSE;
-    if !should_uninitialize && com_hresult.0 != RPC_E_CHANGED_MODE.0 {
-        return finish(
-            result,
-            DESKBOX_NATIVE_STATUS_COM_INITIALIZATION_FAILED,
-            com_hresult.0,
-            false,
-        );
-    }
-    let _com_guard = ComUninitializeGuard {
-        active: should_uninitialize,
-    };
-
-    result.attempted_phases |= DESKBOX_QUICK_ACCESS_PHASE_CREATE_OBJECT;
-    // SAFETY: Shell is the documented Shell.Application coclass and the requested
-    // interface is generated from the Windows Shell type library.
-    let shell: IShellDispatch = match unsafe { CoCreateInstance(&Shell, None, CLSCTX_ALL) } {
-        Ok(value) => {
-            result.create_hresult = DESKBOX_NATIVE_S_OK;
-            value
-        }
-        Err(error) => {
-            result.create_hresult = error.code().0;
-            return finish(
-                result,
-                DESKBOX_NATIVE_STATUS_OBJECT_CREATION_FAILED,
-                error.code().0,
-                false,
-            );
-        }
+    let (shell, _com_guard) = match com_shell_prelude!(
+        result,
+        DESKBOX_QUICK_ACCESS_PHASE_COM_INITIALIZE,
+        DESKBOX_QUICK_ACCESS_PHASE_CREATE_OBJECT
+    ) {
+        Ok(prelude) => prelude,
+        Err((status, hresult)) => return finish(result, status, hresult, false),
     };
 
     match request.operation {
@@ -120,7 +69,17 @@ pub(crate) unsafe fn execute(
                 )
             }
         }
-        _ => unreachable!("Quick Access operation was validated before dispatch"),
+        // The operation is validated before dispatch, but an unknown value
+        // must still return through the ABI instead of panicking across it.
+        // E_INVALIDARG (not S_OK): a caller checking the per-operation
+        // hresult should see the argument was rejected, matching the other
+        // exports' invalid-argument reporting.
+        _ => finish(
+            result,
+            DESKBOX_NATIVE_STATUS_INVALID_ARGUMENT,
+            DESKBOX_NATIVE_E_INVALIDARG,
+            false,
+        ),
     }
 }
 
@@ -458,67 +417,6 @@ unsafe fn shell_namespace_wide(
     unsafe { shell.NameSpace(&value) }
 }
 
-fn normalize_full_path(path: &[u16]) -> Result<Vec<u16>, i32> {
-    let mut terminated = Vec::with_capacity(path.len() + 1);
-    terminated.extend_from_slice(path);
-    terminated.push(0);
-
-    // SAFETY: terminated is a readable, NUL-terminated UTF-16 buffer.
-    let required = unsafe { GetFullPathNameW(PCWSTR(terminated.as_ptr()), None, None) };
-    if required == 0 {
-        return Err(Error::from_thread().code().0);
-    }
-
-    let mut buffer = vec![0_u16; required as usize];
-    // SAFETY: terminated remains alive and buffer is writable for its full capacity.
-    let written = unsafe {
-        GetFullPathNameW(
-            PCWSTR(terminated.as_ptr()),
-            Some(buffer.as_mut_slice()),
-            None,
-        )
-    };
-    if written == 0 {
-        return Err(Error::from_thread().code().0);
-    }
-    if written as usize >= buffer.len() {
-        buffer.resize(written as usize + 1, 0);
-        // SAFETY: terminated remains alive and the resized buffer is writable.
-        let retried = unsafe {
-            GetFullPathNameW(
-                PCWSTR(terminated.as_ptr()),
-                Some(buffer.as_mut_slice()),
-                None,
-            )
-        };
-        if retried == 0 || retried as usize >= buffer.len() {
-            return Err(Error::from_thread().code().0);
-        }
-        buffer.truncate(retried as usize);
-        return Ok(buffer);
-    }
-
-    buffer.truncate(written as usize);
-    Ok(buffer)
-}
-
-fn paths_equal(left: &[u16], right: &[u16]) -> bool {
-    let left = trim_directory_separators(left);
-    let right = trim_directory_separators(right);
-    // SAFETY: Both slices are readable for their declared lengths.
-    unsafe { CompareStringOrdinal(left, right, true) == CSTR_EQUAL }
-}
-
-fn trim_directory_separators(mut value: &[u16]) -> &[u16] {
-    while value
-        .last()
-        .is_some_and(|last| *last == b'\\' as u16 || *last == b'/' as u16)
-    {
-        value = &value[..value.len() - 1];
-    }
-    value
-}
-
 pub(crate) fn parse_pinned_variant(value: &VARIANT) -> Option<bool> {
     match value.vt() {
         VT_BOOL => bool::try_from(value).ok(),
@@ -536,15 +434,6 @@ pub(crate) fn parse_pinned_variant(value: &VARIANT) -> Option<bool> {
             }
         }
         _ => None,
-    }
-}
-
-unsafe fn input_slice(value: &DeskBoxNativeUtf16StringV1) -> &[u16] {
-    if value.length_chars == 0 {
-        &[]
-    } else {
-        // SAFETY: Export validation requires a readable pointer for every non-empty input.
-        unsafe { slice::from_raw_parts(value.data, value.length_chars as usize) }
     }
 }
 

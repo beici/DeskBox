@@ -207,14 +207,16 @@ public sealed class TodoWidgetStore
     /// Persists an already-normalized document. Callers must hold
     /// <see cref="_gate"/> (Load/Save/Mutate wrappers do); the JSON
     /// serialization call sites intentionally stay at the frozen
-    /// JsonSerializationBaseline inventory count for this file.
+    /// JsonSerializationBaseline inventory count for this file. The payload is
+    /// serialized straight to UTF-8 bytes and handed to the byte overload so a
+    /// large board never materializes the extra UTF-16 string (R17-P3-03).
     /// </summary>
     private async Task SaveUnsafeAsync(TodoWidgetData data)
     {
-        string json = JsonSerializer.Serialize(
+        byte[] utf8Json = JsonSerializer.SerializeToUtf8Bytes(
             data,
             TodoJsonContext.Default.StoreData);
-        await ResilientJsonStore.SaveAsync(_storePath, json).ConfigureAwait(false);
+        await ResilientJsonStore.SaveAsync(_storePath, utf8Json).ConfigureAwait(false);
     }
 
     private static TodoWidgetData Normalize(TodoWidgetData? data)
@@ -312,7 +314,13 @@ public sealed class TodoWidgetStore
         }
 
         data.Items = data.Items
-            .Where(item => item is not null && !string.IsNullOrWhiteSpace(item.Text))
+            // R8 B16: an empty-text item is normally dropped, but one that
+            // still carries attachments is kept — dropping it here would
+            // orphan the attachment files on disk with no item pointing at
+            // them and no way for the user to reach them.
+            .Where(item => item is not null &&
+                (!string.IsNullOrWhiteSpace(item.Text) ||
+                 (item.Attachments is { Count: > 0 })))
             .GroupBy(item => item.Id, StringComparer.Ordinal)
             .Select(group => group.First())
             .OrderBy(item => item.SortOrder)
@@ -508,8 +516,19 @@ public sealed class TodoWidgetStore
         string trimmed = widgetId.Trim();
         char[] invalidChars = Path.GetInvalidFileNameChars();
         var safeChars = trimmed.Select(ch => invalidChars.Contains(ch) ? '_' : ch).ToArray();
-        string safe = new(safeChars);
-        return string.IsNullOrWhiteSpace(safe) ? Guid.NewGuid().ToString("N") : safe;
+        string safe = new string(safeChars).TrimEnd('.', ' ');
+
+        // "." and ".." survive the invalid-character sweep because dots are
+        // legal in file names, but they are directory references: an id of
+        // ".." would place this widget's todo.json one level above
+        // data/widgets/. Trailing dots/spaces are also rejected by the file
+        // system, so an id that is only dots/spaces falls back to a fresh id.
+        if (string.IsNullOrWhiteSpace(safe) || safe.All(ch => ch == '.'))
+        {
+            return Guid.NewGuid().ToString("N");
+        }
+
+        return safe;
     }
 
     /// <summary>
@@ -600,8 +619,35 @@ public sealed class TodoWidgetStore
 
             string adoptedId = Path.GetFileName(candidateDir);
             Directory.Move(candidateDir, targetDir);
-            await RebaseManagedAttachmentPathsAsync(
-                widgetsDataRoot, adoptedId, targetDir, cancellationToken);
+            try
+            {
+                await RebaseManagedAttachmentPathsAsync(
+                    widgetsDataRoot, adoptedId, targetDir, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                // The directory already moved: reporting "not adopted"
+                // while leaving the store at the target would hand the new
+                // widget a todo.json whose managed attachment paths all
+                // point at the now-missing old directory. Move it back
+                // before bailing; a failed move-back is logged and still
+                // returns null — adoption never throws.
+                App.Log(
+                    $"[TodoWidgetStore] Adoption rebase failed; rolling back: {ex.Message}");
+                try
+                {
+                    Directory.Move(targetDir, candidateDir);
+                }
+                catch (Exception rollbackEx)
+                {
+                    App.Log(
+                        $"[TodoWidgetStore] Could not roll back '{targetDir}' to " +
+                        $"'{candidateDir}': {rollbackEx.Message}");
+                }
+
+                return null;
+            }
+
             App.Log(
                 $"[TodoWidgetStore] Adopted orphaned todo store '{adoptedId}' for new widget '{targetId}'.");
             return adoptedId;

@@ -109,8 +109,13 @@ public sealed class CapsuleClickAndMorphContinuityTests
 
         int persistGuard = release.IndexOf("if (hasMoved)", StringComparison.Ordinal);
         Assert.True(persistGuard > 0, "The persist guard is gone.");
+        // Upstream 1.5.8 replaced the direct CapturePositionAnchor +
+        // UpdateConfigBoundsFromPhysical pair with the unified placement commit.
+        // WidgetManager.CommitUserPlacement performs the same anchor capture and
+        // physical-bounds sync, and additionally marks the surface entry
+        // authoritative and persists, so the guarded write is still there.
         Assert.Contains(
-            "UpdateConfigBoundsFromPhysical",
+            "CommitUserPlacementFromWindow",
             release[persistGuard..guard],
             StringComparison.Ordinal);
     }
@@ -180,11 +185,12 @@ public sealed class CapsuleClickAndMorphContinuityTests
         double[] rawSteps = [117.1, frameBudgetMs, frameBudgetMs, 51.1, frameBudgetMs];
         foreach (double rawStepMs in rawSteps)
         {
-            double stepMs = stalledMs < maximumStallMs
-                ? WidgetCompactTransitionProgressPolicy.ClampStepMs(rawStepMs, maximumStepMs)
-                : rawStepMs;
+            (double stepMs, double absorbedMs) = WidgetCompactTransitionProgressPolicy.ResolveStep(
+                rawStepMs,
+                frameBudgetMs,
+                maximumStallMs - stalledMs);
             progressMs += stepMs;
-            stalledMs += rawStepMs - stepMs;
+            stalledMs += absorbedMs;
             progressSamples.Add(Math.Clamp(progressMs / durationMs, 0, 1));
         }
 
@@ -272,7 +278,7 @@ public sealed class CapsuleClickAndMorphContinuityTests
         string rendering = SliceMethod(
             collapse,
             "    private void CollapseAnimationRendering()",
-            "    private void RecordCollapseAnimationTickCadence(");
+            "    private void CommitCollapseAnimationBounds(");
         int firstFrame = rendering.IndexOf(
             "if (!_hasCommittedCollapseAnimationFrame)",
             StringComparison.Ordinal);

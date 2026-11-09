@@ -25,6 +25,20 @@ public sealed class WidgetTrayBatchAnimationEntry
     public int? RefreshAnchorX { get; init; }
     public int? RefreshAnchorY { get; init; }
 
+    /// <summary>
+    /// Starts independent Composition channels once the entry reaches its
+    /// actual start frame. The argument is linear timeline progress so a late
+    /// first frame can seek the visuals to the same phase as native movement.
+    /// </summary>
+    public Action<double>? StartVisual { get; init; }
+
+    /// <summary>
+    /// Optional per-frame visual hook (eased progress) for effects whose
+    /// visuals must track the shared position clock — e.g. the crossing fade,
+    /// whose opacity follows the window's boundary-relative displacement.
+    /// </summary>
+    public Action<double>? FrameVisual { get; init; }
+
     /// <summary>Returns false when the owning window started a newer animation.</summary>
     public required Func<bool> IsValid { get; init; }
 
@@ -112,7 +126,9 @@ internal static class WidgetTrayWindowPositionCommitter
 /// Drives a batch of widget slide animations from a single
 /// shared interaction-clock registration,
 /// committing all window positions in one DeferWindowPos transaction per
-/// frame so every window moves in lockstep (no staggered "wave").
+/// frame so every window stays frame-aligned (no per-window commit jitter).
+/// Windows move in lockstep by default; an optional per-window stagger delay
+/// produces a top-left-first wave while keeping the atomic per-frame commit.
 /// Physical movement semantics are preserved: HWNDs still travel off the
 /// screen; only the commit mechanism changes from N independent
 /// SetWindowPos calls to one atomic batch commit.
@@ -130,6 +146,7 @@ public sealed class WidgetTrayBatchAnimationDriver
     private readonly Func<long> _getTimestamp;
     private long? _startedTimestamp;
     private double _durationMs = 1;
+    private double _maxStaggerDelayMs;
     private string _easingIntensity = string.Empty;
     private bool _isShowing;
     private int _remainingDelayFrames;
@@ -177,16 +194,26 @@ public sealed class WidgetTrayBatchAnimationDriver
     }
 
     /// <summary>
+    /// The idle task of the batch that is current right now. A waiter that
+    /// captured <see cref="WaitForIdleAsync"/> earlier can compare the two to
+    /// detect that a newer batch has already replaced its own.
+    /// </summary>
+    public Task CurrentIdleTask => _idleTask;
+
+    /// <summary>
     /// Starts a shared batch run. Any previously running batch is cancelled
     /// first (its entries complete nothing; window-side generation checks
-    /// keep state consistent).
+    /// keep state consistent). With <paramref name="staggerIntervalMs"/> &gt; 0
+    /// each window starts after a per-window delay (top-left first) while
+    /// positions still commit through the same single per-frame transaction.
     /// </summary>
     public void Start(
         IReadOnlyList<WidgetTrayBatchAnimationEntry> entries,
         int durationMs,
         string easingIntensity,
         bool isShowing,
-        int startDelayFrames)
+        int startDelayFrames,
+        int staggerIntervalMs = 0)
     {
         Cancel();
         _idleTask = Task.CompletedTask;
@@ -196,11 +223,41 @@ public sealed class WidgetTrayBatchAnimationDriver
         }
 
         _entries.AddRange(entries);
-        foreach (var entry in entries)
+        double maxDelayMs = 0;
+        if (staggerIntervalMs > 0 && entries.Count > 1)
         {
-            _motionStates[entry] = new EntryMotionState(entry);
+            // Wave order: top-left window leads, the rest follow by position.
+            var ordered = entries
+                .Select((entry, index) => (entry, index))
+                .OrderBy(pair => pair.entry.BaseY)
+                .ThenBy(pair => pair.entry.BaseX)
+                .ToList();
+            double[] delays = new double[entries.Count];
+            for (int rank = 0; rank < ordered.Count; rank++)
+            {
+                delays[ordered[rank].index] = (double)staggerIntervalMs * rank;
+            }
+
+            for (int index = 0; index < entries.Count; index++)
+            {
+                var entry = entries[index];
+                _motionStates[entry] = new EntryMotionState(entry)
+                {
+                    DelayMs = delays[index]
+                };
+                maxDelayMs = Math.Max(maxDelayMs, delays[index]);
+            }
         }
+        else
+        {
+            foreach (var entry in entries)
+            {
+                _motionStates[entry] = new EntryMotionState(entry);
+            }
+        }
+
         _durationMs = Math.Max(1, durationMs);
+        _maxStaggerDelayMs = maxDelayMs;
         _easingIntensity = easingIntensity;
         _isShowing = isShowing;
         _remainingDelayFrames = Math.Max(0, startDelayFrames);
@@ -212,7 +269,8 @@ public sealed class WidgetTrayBatchAnimationDriver
         StartFrameClock();
         _log(
             $"[BatchAnim] Start count={_entries.Count} durationMs={_durationMs} " +
-            $"mode={(isShowing ? "show" : "hide")} delayFrames={_remainingDelayFrames}");
+            $"mode={(isShowing ? "show" : "hide")} delayFrames={_remainingDelayFrames} " +
+            $"staggerIntervalMs={staggerIntervalMs}");
     }
 
     private void StartFrameClock()
@@ -307,10 +365,11 @@ public sealed class WidgetTrayBatchAnimationDriver
             _frameTracker?.RecordFrame(frameTimestamp);
 
             double nowMs = Stopwatch.GetElapsedTime(_startedTimestamp.Value, frameTimestamp).TotalMilliseconds;
-            double rawProgress = Math.Clamp(nowMs / _durationMs, 0.0, 1.0);
-            bool finalFrame = rawProgress >= 1.0;
-            double easedProgress = finalFrame ? 1.0 : WidgetAnimationSettings.Ease(rawProgress, _easingIntensity, _isShowing);
-            bool committed = MoveEntriesFrame(easedProgress, finalFrame, frameTimestamp, nowMs);
+            // The batch ends when the latest-staggered window has finished.
+            double totalMs = _durationMs + _maxStaggerDelayMs;
+            double rawProgress = Math.Clamp(nowMs / totalMs, 0.0, 1.0);
+            bool finalFrame = nowMs >= totalMs;
+            bool committed = MoveEntriesFrame(nowMs, finalFrame, frameTimestamp);
 
             if (finalFrame && !committed)
             {
@@ -333,10 +392,10 @@ public sealed class WidgetTrayBatchAnimationDriver
         }
     }
 
-    private bool MoveEntriesFrame(double easedProgress, bool finalFrame, long timestamp, double nowMs)
+    private bool MoveEntriesFrame(double nowMs, bool finalFrame, long timestamp)
     {
         long started = Stopwatch.GetTimestamp();
-        bool committed = MoveEntriesFrameCore(easedProgress, finalFrame, timestamp, nowMs);
+        bool committed = MoveEntriesFrameCore(nowMs, finalFrame, timestamp);
         double elapsedMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         if (elapsedMs >= 8)
         {
@@ -347,7 +406,7 @@ public sealed class WidgetTrayBatchAnimationDriver
         return committed;
     }
 
-    private bool MoveEntriesFrameCore(double easedProgress, bool finalFrame, long timestamp, double nowMs)
+    private bool MoveEntriesFrameCore(double nowMs, bool finalFrame, long timestamp)
     {
         var moves = _pendingMoves;
         var participants = _pendingParticipants;
@@ -356,16 +415,41 @@ public sealed class WidgetTrayBatchAnimationDriver
         foreach (var entry in _entries)
         {
             EntryMotionState state = _motionStates[entry];
+            double entryElapsedMs = nowMs - state.DelayMs;
+            if (entryElapsedMs < 0)
+            {
+                continue;
+            }
+
             double budgetMs = _getFrameBudget(entry);
             if (!state.Pacing.ShouldSubmit(nowMs, budgetMs, force: finalFrame))
             {
                 continue;
             }
+
+            // Each window runs its own eased progress on the shared clock,
+            // offset by its stagger delay (zero when staggering is off).
+            double entryProgress = Math.Clamp(entryElapsedMs / _durationMs, 0.0, 1.0);
+            if (!state.VisualStarted)
+            {
+                // Start before position deduplication: fade/scale/wipe effects
+                // can animate for their whole duration without moving an HWND.
+                state.VisualStarted = true;
+                entry.StartVisual?.Invoke(entryProgress);
+            }
+
+            double easedProgress = entryProgress >= 1.0
+                ? 1.0
+                : WidgetAnimationSettings.Ease(entryProgress, _easingIntensity, _isShowing);
             var position = GetEntryFramePosition(entry, easedProgress);
             if (!finalFrame && state.LastPosition == position)
             {
                 continue;
             }
+
+            // Position unchanged implies displacement unchanged, so the visual
+            // hook only needs to run on frames that actually move the window.
+            entry.FrameVisual?.Invoke(easedProgress);
             moves.Add(new WidgetTrayWindowPosition(entry.WindowHandle, position.X, position.Y));
             participants.Add((state, (int)Math.Round(1000.0 / Math.Max(0.1, budgetMs))));
         }
@@ -490,6 +574,11 @@ public sealed class WidgetTrayBatchAnimationDriver
         }
 
         public WidgetAnimationFramePacingPolicy Pacing { get; } = new();
+
+        public double DelayMs { get; init; }
+
+        public bool VisualStarted { get; set; }
+
         public (int X, int Y) LastPosition { get; set; }
     }
 

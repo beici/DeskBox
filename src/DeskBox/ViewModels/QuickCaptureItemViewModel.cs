@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using DeskBox.Models;
 using DeskBox.Services;
 using Microsoft.UI.Xaml;
+using DeskBox.Helpers;
 
 namespace DeskBox.ViewModels;
 
@@ -230,6 +231,25 @@ public sealed partial class QuickCaptureItemViewModel : ObservableObject
         UpdatedAt = _model.UpdatedAt
     };
 
+    /// <summary>
+    /// Clears the cached display text and raises the derived text
+    /// properties. Update() alone keeps the cache when the model is
+    /// unchanged, so a language switch must go through here explicitly.
+    /// </summary>
+    public void RefreshLocalizedDisplay()
+    {
+        _displayText = null;
+        OnPropertyChanged(nameof(Body));
+        OnPropertyChanged(nameof(CopyText));
+        OnPropertyChanged(nameof(DisplayText));
+        OnPropertyChanged(nameof(HighlightStartIndex));
+        OnPropertyChanged(nameof(HighlightLength));
+        OnPropertyChanged(nameof(HighlightVisibility));
+        // Localized, XAML-bound, and only otherwise notified when IsPinned
+        // itself changes in Update().
+        OnPropertyChanged(nameof(PinTooltip));
+    }
+
     public void Update(QuickCaptureItem model)
     {
         var old = _model;
@@ -392,7 +412,7 @@ public sealed partial class QuickCaptureItemViewModel : ObservableObject
         var now = DateTimeOffset.Now;
         return local.Date == now.Date
             ? local.ToString("HH:mm:ss")
-            : local.ToString("MM-dd HH:mm:ss");
+            : local.ToString("MM-dd HH:mm:ss", DisplayCulture.GregorianCurrent);
     }
 
     private static string NormalizeSearchText(string? searchText)

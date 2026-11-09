@@ -18,9 +18,9 @@ public sealed class AotStage4D2ContractTests
     {
         string fileService = ReadRepositoryFile("src/DeskBox/Services/FileService.cs");
 
-        Assert.Contains("ExecuteShellMovePlanAsync(", fileService, StringComparison.Ordinal);
+        // The legacy SHFileOperation move bridge was retired (2026-10-13);
+        // FileService still owns the delete channel's shell call.
         Assert.Contains("DeleteEntryWithShell(", fileService, StringComparison.Ordinal);
-        Assert.Contains("MoveEntriesWithShellProgress(", fileService, StringComparison.Ordinal);
         Assert.Contains("SHFileOperation(ref", fileService, StringComparison.Ordinal);
 
         string repositoryRoot = TestPaths.FromRepository(".");
@@ -39,7 +39,7 @@ public sealed class AotStage4D2ContractTests
     {
         string script = ReadRepositoryFile("scripts/publish-aot-audit.ps1");
 
-        Assert.Contains("$auditProfileVersion = 63", script, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 65", script, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", script, StringComparison.Ordinal);
         Assert.Contains("stage4D2RemovedSourceFiles", script, StringComparison.Ordinal);
         Assert.Contains("stage4D2UnexpectedExistingSourceFiles", script, StringComparison.Ordinal);

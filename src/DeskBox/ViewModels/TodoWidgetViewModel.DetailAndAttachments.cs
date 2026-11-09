@@ -251,20 +251,19 @@ public sealed partial class TodoWidgetViewModel
         item.Item.Notes = normalizedNotes;
         item.UpdatedAt = DateTimeOffset.UtcNow;
         item.RefreshDetailProperties();
-        try
-        {
-            await SaveAsync();
-            return true;
-        }
-        catch
+        // SaveAsync reports failure instead of throwing (its other callers
+        // are fire-and-forget), so the rollback keys off its return value.
+        if (!await SaveAsync())
         {
             // Keep persistence transactional from the editor's point of view.
             // The source editor retains the draft and can safely retry.
             item.Item.Notes = previousNotes;
             item.UpdatedAt = previousUpdatedAt;
             item.RefreshDetailProperties();
-            throw;
+            return false;
         }
+
+        return true;
     }
 
     public async Task<TodoAttachmentViewModel?> AddAttachmentAsync(
@@ -333,24 +332,6 @@ public sealed partial class TodoWidgetViewModel
         return addedCount;
     }
 
-    public async Task<TodoAttachmentViewModel?> AddAttachmentStreamAsync(
-        string itemId,
-        Stream stream,
-        string? fileName)
-    {
-        TodoItemViewModel? item = FindItem(itemId);
-        if (item is null)
-        {
-            return null;
-        }
-
-        TodoAttachment? attachment = await AttachmentStorageService.SaveStreamAsync(
-            stream,
-            fileName,
-            GetManagedAttachmentDirectory(itemId));
-        return attachment is null ? null : await AddAttachmentAsync(item, attachment);
-    }
-
     private async Task<TodoAttachmentViewModel?> AddAttachmentAsync(
         TodoItemViewModel item,
         TodoAttachment attachment)
@@ -371,7 +352,10 @@ public sealed partial class TodoWidgetViewModel
         return attachmentViewModel;
     }
 
-    public async Task<bool> DeleteAttachmentAsync(string itemId, string attachmentId)
+    public async Task<bool> DeleteAttachmentAsync(
+        string itemId,
+        string attachmentId,
+        Func<string, Task<bool>>? recycleFileAsync = null)
     {
         TodoItemViewModel? item = FindItem(itemId);
         TodoAttachmentViewModel? attachment = item?.Attachments.FirstOrDefault(entry =>
@@ -392,24 +376,46 @@ public sealed partial class TodoWidgetViewModel
             // with the source occurrence (same FilePath, different Id). Only
             // delete it when no other item in this widget still references
             // the same path, otherwise the other side is left dangling.
+            // Retained tombstones count as references too: their attachment
+            // lists survive in the store, and an undo/merge restore would
+            // resurrect an item pointing at a file this path just deleted.
             bool stillReferenced = Items.Any(other =>
                 !ReferenceEquals(other, item) &&
                 other.Item.Attachments.Any(shared =>
                     shared is not null &&
-                    string.Equals(shared.FilePath, attachment.FilePath, StringComparison.OrdinalIgnoreCase)));
+                    string.Equals(shared.FilePath, attachment.FilePath, StringComparison.OrdinalIgnoreCase)))
+                || _tombstones.Any(tombstone =>
+                    tombstone.Attachments.Any(shared =>
+                        shared is not null &&
+                        string.Equals(shared.FilePath, attachment.FilePath, StringComparison.OrdinalIgnoreCase)));
             if (!stillReferenced)
             {
-                try
-                {
-                    File.Delete(attachment.FilePath);
-                }
-                catch (Exception ex)
-                {
-                    App.Log($"[Todo] Failed to delete managed attachment '{attachment.FilePath}': {ex.Message}");
-                }
+                // Only files inside the managed attachment tree are eligible
+                // for deletion, and they go through the caller's recycle
+                // kernel when one is available. Headless callers (tests, AOT
+                // smokes) pass no kernel; the containment gate still applies,
+                // and the managed copy is deleted directly.
+                await AttachmentStorageService.TryDeleteManagedCopyAsync(
+                    attachment.FilePath,
+                    _store.AttachmentDirectory,
+                    recycleFileAsync ?? DeleteManagedCopyDirectlyAsync);
             }
         }
         return true;
+    }
+
+    private static Task<bool> DeleteManagedCopyDirectlyAsync(string path)
+    {
+        try
+        {
+            File.Delete(path);
+            return Task.FromResult(true);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[Todo] Failed to delete managed attachment '{path}': {ex.Message}");
+            return Task.FromResult(false);
+        }
     }
 
     private string GetManagedAttachmentDirectory(string itemId)

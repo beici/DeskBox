@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
-    <SupportedOSPlatformVersion>10.0.19044.0</SupportedOSPlatformVersion>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
@@ -28,6 +28,7 @@
     <DeskBoxNativeTestInput Include="$(MSBuildProjectDirectory)\..\..\native\deskbox-native\src\**\*" />
     <DeskBoxNativeTestInput Include="$(MSBuildProjectDirectory)\..\..\native\include\deskbox_native.h" />
     <DeskBoxNativeTestInput Include="$(MSBuildProjectDirectory)\..\..\scripts\build-rust-native.ps1" />
+    <DeskBoxNativeTestInput Include="$(MSBuildProjectDirectory)\..\..\scripts\native-build-paths.ps1" />
     <DeskBoxNativeTestInput Include="$(MSBuildProjectDirectory)\..\..\scripts\native-pe-contract.ps1" />
     <DeskBoxNativeTestInput Include="$(MSBuildProjectDirectory)\..\..\scripts\rust-arm64-msvc-environment.ps1" />
   </ItemGroup>

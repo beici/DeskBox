@@ -1,6 +1,34 @@
 <Project>
   <PropertyGroup>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <!-- AOT embeds the runtime in the executable. Keep retail and audit builds
+         on the Brotli security fix even when using the pinned 10.0.402 SDK. -->
+    <DeskBoxAotRuntimeVersion>10.0.14</DeskBoxAotRuntimeVersion>
+    <PathMap Condition="'$(Configuration)' == 'Release' and '$(PathMap)' == ''">$(MSBuildThisFileDirectory)=/_/DeskBox/</PathMap>
     <NuGetLockFilePath Condition="'$(PublishAot)' == 'true'">$(MSBuildProjectDirectory)\packages.aot.lock.json</NuGetLockFilePath>
+    <DeskBoxDebugOutputDirectory Condition="'$(DeskBoxDebugOutputDirectory)' == ''">$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..\DeskBox-debug'))</DeskBoxDebugOutputDirectory>
+  </PropertyGroup>
+
+  <!-- Keep the runnable Debug payload together, including builds without an
+       explicit Configuration. Leave project references and explicit CI output
+       layouts separate so their build products cannot overwrite each other. -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'DeskBox' and
+                            ('$(Configuration)' == 'Debug' or ('$(Configuration)' == '' and ('$(DefaultProjectConfiguration)' == '' or '$(DefaultProjectConfiguration)' == 'Debug'))) and
+                            '$(OutputPath)' == '' and '$(OutDir)' == '' and '$(BaseOutputPath)' == '' and
+                            '$(ArtifactsPath)' == '' and '$(UseArtifactsOutput)' != 'true'">
+    <OutputPath>$(DeskBoxDebugOutputDirectory)</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <!-- The SDK's append switches also affect intermediate paths. Keep RID and
+         platform builds isolated even though their runnable output is shared. -->
+    <_DeskBoxDebugIntermediateBase>$(BaseIntermediateOutputPath)</_DeskBoxDebugIntermediateBase>
+    <_DeskBoxDebugIntermediateBase Condition="'$(_DeskBoxDebugIntermediateBase)' == ''">obj\</_DeskBoxDebugIntermediateBase>
+    <_DeskBoxDebugIntermediatePlatform>$(Platform)</_DeskBoxDebugIntermediatePlatform>
+    <_DeskBoxDebugIntermediatePlatform Condition="'$(_DeskBoxDebugIntermediatePlatform)' == ''">AnyCPU</_DeskBoxDebugIntermediatePlatform>
+    <_DeskBoxDebugIntermediateRuntime>$(RuntimeIdentifier)</_DeskBoxDebugIntermediateRuntime>
+    <_DeskBoxDebugIntermediateRuntime Condition="'$(_DeskBoxDebugIntermediateRuntime)' == ''">no-rid</_DeskBoxDebugIntermediateRuntime>
+    <IntermediateOutputPath Condition="'$(IntermediateOutputPath)' == ''">$([MSBuild]::EnsureTrailingSlash('$(_DeskBoxDebugIntermediateBase)'))$(_DeskBoxDebugIntermediatePlatform)\Debug\$(_DeskBoxDebugIntermediateRuntime)\</IntermediateOutputPath>
+    <!-- Old in-repository outputs must remain excluded from source globs. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);bin/**;obj/**</DefaultItemExcludes>
   </PropertyGroup>
 </Project>

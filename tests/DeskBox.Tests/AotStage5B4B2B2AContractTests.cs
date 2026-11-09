@@ -163,6 +163,113 @@ public sealed class AotStage5B4B2B2AContractTests
     }
 
     [Fact]
+    public void Evidence_ProjectsOnlyLiveItemsBecauseDeletesPersistAsTombstones()
+    {
+        string persistence = ReadRepositoryFile(
+            "src/DeskBox/App.AotTodoPersistenceSmoke.cs");
+        string steps = ReadRepositoryFile(
+            "src/DeskBox/App.AotTodoStepsPersistenceSmoke.cs");
+        string attachments = ReadRepositoryFile(
+            "src/DeskBox/App.AotTodoAttachmentsPersistenceSmoke.cs");
+
+        Assert.Contains("Where(item => !item.IsDeleted)", persistence, StringComparison.Ordinal);
+        Assert.Contains("Single(entry => !entry.IsDeleted)", persistence, StringComparison.Ordinal);
+        Assert.Contains("Single(entry => !entry.IsDeleted)", steps, StringComparison.Ordinal);
+        Assert.Contains("Single(entry => !entry.IsDeleted)", attachments, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Evidence_GatesDeletedItemTombstoneWriteAndRestartSurvival()
+    {
+        string persistence = ReadRepositoryFile(
+            "src/DeskBox/App.AotTodoPersistenceSmoke.cs");
+        string steps = ReadRepositoryFile(
+            "src/DeskBox/App.AotTodoStepsPersistenceSmoke.cs");
+        string attachments = ReadRepositoryFile(
+            "src/DeskBox/App.AotTodoAttachmentsPersistenceSmoke.cs");
+
+        Assert.Contains(
+            "TombstoneIdCount = data.Items.Count(item => item.IsDeleted)",
+            persistence,
+            StringComparison.Ordinal);
+        Assert.Contains("public int TombstoneIdCount { get; set; }", persistence, StringComparison.Ordinal);
+        Assert.Contains("public List<string> TombstoneIds { get; set; } = [];", persistence, StringComparison.Ordinal);
+        Assert.Contains(
+            "RequireAotTodoTombstonesPersisted(evidence.After, itemId)",
+            persistence,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "RequireAotTodoTombstonesPersisted(evidence.After, restart.ItemId)",
+            steps,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "RequireAotTodoTombstonesPersisted(evidence.After, deletion.ItemId)",
+            attachments,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "RequireAotTodoTombstoneSurvivedRestart(evidence.Before)",
+            persistence,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "RequireAotTodoTombstoneSurvivedRestart(evidence.Before)",
+            steps,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "RequireAotTodoTombstoneSurvivedRestart(evidence.Before)",
+            attachments,
+            StringComparison.Ordinal);
+        Assert.Contains("TodoDeletedItemTombstonePersisted", persistence, StringComparison.Ordinal);
+        Assert.Contains("TodoDeleteTombstoneSurvivedRestart", persistence, StringComparison.Ordinal);
+        Assert.Contains("TodoStepsDeletedItemTombstonePersisted", steps, StringComparison.Ordinal);
+        Assert.Contains("TodoStepsDeleteTombstoneSurvivedRestart", steps, StringComparison.Ordinal);
+        Assert.Contains("TodoAttachmentsDeletedItemTombstonePersisted", attachments, StringComparison.Ordinal);
+        Assert.Contains("TodoAttachmentsDeleteTombstoneSurvivedRestart", attachments, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OuterRunner_GatesDeletedItemTombstoneIdsAcrossRestart()
+    {
+        string script = ReadRepositoryFile("scripts/run-aot-managed-ui-smoke.ps1");
+
+        Assert.Contains("$deletedTodoItemId", script, StringComparison.Ordinal);
+        Assert.Contains("tombstoneIdsAfterDelete", script, StringComparison.Ordinal);
+        Assert.Contains("tombstoneIdsAfterRestart", script, StringComparison.Ordinal);
+        Assert.Contains("$deletedTodoStepsItemId", script, StringComparison.Ordinal);
+        Assert.Contains("todoStepsTombstoneIdsAfterRestart", script, StringComparison.Ordinal);
+        Assert.Contains("$deletedTodoAttachmentsItemId", script, StringComparison.Ordinal);
+        Assert.Contains("todoAttachmentsTombstoneIdsAfterRestart", script, StringComparison.Ordinal);
+        Assert.Contains(
+            "did not persist its soft-delete tombstone across the process restart.",
+            script,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AuditFreezesTombstoneWritePathGatesInAllTodoStages()
+    {
+        string audit = ReadRepositoryFile("scripts/publish-aot-audit.ps1");
+
+        Assert.Contains(
+            "stage5B4B2B2ARequiredRunnerPatterns",
+            audit,
+            StringComparison.Ordinal);
+        Assert.Contains("'TombstoneIdCount'", audit, StringComparison.Ordinal);
+        Assert.Contains("'RequireAotTodoTombstonesPersisted'", audit, StringComparison.Ordinal);
+        Assert.Contains("'RequireAotTodoTombstoneSurvivedRestart'", audit, StringComparison.Ordinal);
+        Assert.Contains(
+            "'RequireAotTodoTombstonesPersisted(evidence.After, restart.ItemId)'",
+            audit,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "'RequireAotTodoTombstonesPersisted(evidence.After, deletion.ItemId)'",
+            audit,
+            StringComparison.Ordinal);
+        Assert.Contains("'tombstoneIdsAfterRestart'", audit, StringComparison.Ordinal);
+        Assert.Contains("'todoStepsTombstoneIdsAfterRestart'", audit, StringComparison.Ordinal);
+        Assert.Contains("'todoAttachmentsTombstoneIdsAfterRestart'", audit, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TodoScenario_ReusesSingleSourceGeneratedResultWriter()
     {
         string source = ReadRepositoryFile("src/DeskBox/App.AotManagedUiSmoke.cs");
@@ -256,9 +363,9 @@ public sealed class AotStage5B4B2B2AContractTests
         string baseline = ReadRepositoryFile(
             "tests/DeskBox.Tests/JsonSerializationBaselineContractTests.cs");
 
-        Assert.Contains("Assert.Equal(36, actual.Count);", baseline, StringComparison.Ordinal);
-        Assert.Contains("Assert.Equal(86, actual.Values.Sum());", baseline, StringComparison.Ordinal);
-        Assert.Contains("Assert.Equal(33, actualContextOwners.Length);", baseline, StringComparison.Ordinal);
+        Assert.Contains("Assert.Equal(44, actual.Count);", baseline, StringComparison.Ordinal);
+        Assert.Contains("Assert.Equal(105, actual.Values.Sum());", baseline, StringComparison.Ordinal);
+        Assert.Contains("Assert.Equal(40, actualContextOwners.Length);", baseline, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -268,10 +375,10 @@ public sealed class AotStage5B4B2B2AContractTests
         string launcher = ReadRepositoryFile("scripts/start-aot-preview.ps1");
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
 
-        Assert.Contains("$auditProfileVersion = 63", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 65", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B2B2A", audit, StringComparison.Ordinal);
-        Assert.Contains("$RequiredAuditProfileVersion = 63", launcher, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 65", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("Todo", project, StringComparison.Ordinal);
@@ -290,7 +397,7 @@ public sealed class AotStage5B4B2B2AContractTests
         Assert.Contains("stage5B4B2B2AForbiddenScopePatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B2B2AJsonSerializeCallCount", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B2B2ASourceWarningMessages", audit, StringComparison.Ordinal);
-        Assert.Contains("stage5B4B2B2AExpectedWmc1510Count = 742", audit, StringComparison.Ordinal);
+        Assert.Contains("stage5B4B2B2AExpectedWmc1510Count = 808", audit, StringComparison.Ordinal);
     }
 
     private static int CountOccurrences(string value, string token)

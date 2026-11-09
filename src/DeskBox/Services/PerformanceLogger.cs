@@ -63,6 +63,20 @@ public static partial class PerformanceLogger
         set => Interlocked.Exchange(ref s_thumbnailEstimatedBytes, value);
     }
 
+    /// <summary>Disk thumbnail cache entry count, updated by ThumbnailDiskCache.</summary>
+    public static int DiskThumbnailCacheCount
+    {
+        get => Volatile.Read(ref s_diskThumbnailCacheCount);
+        set => Interlocked.Exchange(ref s_diskThumbnailCacheCount, value);
+    }
+
+    /// <summary>Disk thumbnail cache payload size in bytes, updated by ThumbnailDiskCache.</summary>
+    public static long DiskThumbnailCacheBytes
+    {
+        get => Interlocked.Read(ref s_diskThumbnailCacheBytes);
+        set => Interlocked.Exchange(ref s_diskThumbnailCacheBytes, value);
+    }
+
     /// <summary>Icon cache entry count, updated by IconHelper.</summary>
     public static int IconCacheCount
     {
@@ -138,6 +152,8 @@ public static partial class PerformanceLogger
 
     private static int s_thumbnailCacheCount;
     private static long s_thumbnailEstimatedBytes;
+    private static int s_diskThumbnailCacheCount;
+    private static long s_diskThumbnailCacheBytes;
     private static int s_iconCacheCount;
     private static int s_decodedBitmapCacheCount;
     private static long s_decodedBitmapEstimatedBytes;
@@ -413,6 +429,8 @@ public static partial class PerformanceLogger
                 $"handles={LastHandleCount} " +
                 $"thumbCache={ThumbnailCacheCount} " +
                 $"thumbCacheMB={ThumbnailEstimatedBytes / (1024.0 * 1024):F1} " +
+                $"thumbDiskCache={DiskThumbnailCacheCount} " +
+                $"thumbDiskCacheMB={DiskThumbnailCacheBytes / (1024.0 * 1024):F1} " +
                 $"thumbLookupHits={cachePerformance.ThumbnailLookupHits} " +
                 $"thumbLookupMisses={cachePerformance.ThumbnailLookupMisses} " +
                 $"thumbHitRatePercent={CalculateHitRatePercent(cachePerformance.ThumbnailLookupHits, cachePerformance.ThumbnailLookupMisses):F1} " +

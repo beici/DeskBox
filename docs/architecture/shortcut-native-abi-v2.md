@@ -115,8 +115,10 @@ AOT 模式不得因这些错误回退到不受支持的旧 `ComImport` 路径。
 - 原生实现先按显式长度复制，再追加终止空字符。调用期间只读调用方内存，返回后不
   保留输入指针。
 
-写入请求中的描述、参数、工作目录和图标路径允许为空；空值仍是一个明确的写入值，
-用于覆盖已有快捷方式时清除旧字段，不能解释为“跳过此 setter”。
+写入请求中的描述、参数和工作目录允许为空；空值仍是一个明确的写入值，用于覆盖已有
+快捷方式时清除旧字段，不能解释为“跳过此 setter”。图标路径是唯一例外：空图标路径
+表示“无自定义图标”，实现跳过 `SetIconLocation` 且 `succeeded_fields` 不含 Icon 位
+（净效果上旧图标仍随新对象整体保存而被清除，见 §9）。
 
 ## 6. 两种读取模式
 
@@ -207,7 +209,7 @@ Resolve 在 Load 后无条件记录 `RESOLVE` phase 与原始 `resolve_hresult`�
 2. `SetDescription`；
 3. `SetArguments`；
 4. `SetWorkingDirectory`；
-5. `SetIconLocation`，图标索引按有符号 32 位整数原样传递；
+5. `SetIconLocation`（仅当图标路径非空时执行），图标索引按有符号 32 位整数原样传递；
 6. `IPersistFile::Save(shortcut_path, TRUE)`。
 
 五个 setter 都必须执行成功后才尝试 Save；首个失败 HRESULT 作为顶层
@@ -218,11 +220,14 @@ Resolve 在 Load 后无条件记录 `RESOLVE` phase 与原始 `resolve_hresult`�
 [`IPersistFile::Save`](https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-ipersistfile-save)
 规定的返回语义一致。
 
-覆盖已有路径依靠 Save 完成。由于每次都创建新对象且所有可选字段都会显式调用
-setter，空描述、空参数、空工作目录和空图标路径会清除旧值，不会继承旧 `.lnk` 的
-残留元数据。Rust 层不创建父目录、不做应用级路径规范化，也不管理缓存；文件夹快捷
-方式的 `Path.GetFullPath`、两类写入的父目录创建以及成功后的已存储元数据缓存失效仍
-由 C# 编排层负责。
+覆盖已有路径依靠 Save 完成。由于每次都创建新对象，空描述、空参数与空工作目录会通过
+显式 setter 清除旧值，不会继承旧 `.lnk` 的残留元数据。图标路径的例外只在调用形态：
+空图标路径表示“无自定义图标”，实现跳过 `SetIconLocation`（不依赖未文档化的空串重
+置语义），`succeeded_fields` 因此不含 Icon 位；由于新对象整体保存覆盖旧文件，净效果
+上旧图标位置同样被清除。C# 参考实现 `CreateOrUpdateShortcutWithCSharp` 遵循同一约
+定。Rust 层不创建父目录、不做应用级路径规范化，也不管理缓存；文件夹快捷方式的
+`Path.GetFullPath`、两类写入的父目录创建以及成功后的已存储元数据缓存失效仍由 C# 编
+排层负责。
 
 `DeskBoxShortcutWriteRequestV2` 固定为 144 字节，包含 shortcut 路径、五个元数据字段、
 图标索引以及保留位；`DeskBoxShortcutWriteResultV2` 固定为 96 字节，包含顶层状态、

@@ -617,9 +617,23 @@ public sealed partial class MarkdownSourceEditor : UserControl
 
         if (ShowFormattingToolbar && e.Key == VirtualKey.Tab)
         {
-            e.Handled = true;
-            IndentSelection(outdent: shift);
-            return;
+            if (TryIndentSelection(outdent: shift))
+            {
+                e.Handled = true;
+                return;
+            }
+
+            if (!shift)
+            {
+                // Plain Tab always indents (or at least never falls through
+                // to focus traversal from a multiline editor).
+                e.Handled = true;
+                return;
+            }
+
+            // Shift+Tab with nothing to outdent (first line, no indent):
+            // leave the key unhandled so focus traversal can move backward
+            // out of the editor instead of swallowing the keystroke.
         }
 
         if (ShowFormattingToolbar && !control && !shift &&
@@ -709,7 +723,7 @@ public sealed partial class MarkdownSourceEditor : UserControl
         EditorTextBox.SelectedText = replacement;
     }
 
-    private void IndentSelection(bool outdent)
+    private bool TryIndentSelection(bool outdent)
     {
         MarkdownEditCommand command = outdent
             ? MarkdownEditCommand.Outdent
@@ -722,7 +736,10 @@ public sealed partial class MarkdownSourceEditor : UserControl
                 out MarkdownTextEdit edit))
         {
             ApplyTextEdit(edit);
+            return true;
         }
+
+        return false;
     }
 
     private bool TryContinueMarkdownList()

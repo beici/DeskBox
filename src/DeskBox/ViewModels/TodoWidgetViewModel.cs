@@ -784,14 +784,21 @@ public sealed partial class TodoWidgetViewModel : ObservableObject, IDisposable
 
             match.Item.ReminderLastNotifiedAt = changedItem.ReminderLastNotifiedAt;
             match.Item.ReminderDismissedForDueDate = changedItem.ReminderDismissedForDueDate;
-            match.Item.SnoozedUntil = changedItem.SnoozedUntil;
             match.Item.SnoozeLastNotifiedAt = changedItem.SnoozeLastNotifiedAt;
-            match.Item.UpdatedAt = changedItem.UpdatedAt;
+
+            // The snooze clock and the completion/updated timestamps live in
+            // VM shadow fields that the bindings (DueStatusText, sorting)
+            // read; writing the model directly would leave an open widget
+            // showing a stale "snoozed until" badge after the reminder
+            // service consumes or sets a snooze. The internal setters mirror
+            // onto the model and raise the derived notifications.
+            match.SnoozedUntil = changedItem.SnoozedUntil;
+            match.UpdatedAt = changedItem.UpdatedAt;
 
             if (changedItem.IsCompleted && !match.Item.IsCompleted)
             {
                 match.Item.IsCompleted = true;
-                match.Item.CompletedAt = changedItem.CompletedAt;
+                match.CompletedAt = changedItem.CompletedAt;
                 match.Item.GeneratedNextItemId = changedItem.GeneratedNextItemId;
                 // The internal setter mirrors the flag onto the wrapped item
                 // and raises every completion-related UI notification.

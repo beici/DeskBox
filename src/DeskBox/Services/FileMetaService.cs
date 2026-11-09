@@ -433,7 +433,7 @@ public sealed class FileMetaService : IDisposable
     public static string FormatDate(DateTime date)
     {
         return date.Year == DateTime.Now.Year
-            ? date.ToString("M")
-            : date.ToString("d");
+            ? date.ToString("M", DisplayCulture.GregorianCurrent)
+            : date.ToString("d", DisplayCulture.GregorianCurrent);
     }
 }

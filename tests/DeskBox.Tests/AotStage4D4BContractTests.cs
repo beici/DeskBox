@@ -86,7 +86,14 @@ public sealed class AotStage4D4BContractTests
         Assert.Contains("ExtendedProperty", implementation, StringComparison.Ordinal);
         Assert.Contains("parent.ParseName", implementation, StringComparison.Ordinal);
         Assert.Contains("item.InvokeVerb", implementation, StringComparison.Ordinal);
-        Assert.Contains("CoInitializeEx", implementation, StringComparison.Ordinal);
+        // R1-054: the COM prelude moved into com_scaffold; the module now
+        // invokes it via the shared macro instead of calling CoInitializeEx
+        // directly, so pin both halves of that relationship.
+        Assert.Contains("com_shell_prelude!", implementation, StringComparison.Ordinal);
+        Assert.Contains(
+            "CoInitializeEx",
+            ReadRepositoryFile("native/deskbox-native/src/com_scaffold.rs"),
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -140,7 +147,7 @@ public sealed class AotStage4D4BContractTests
         Assert.Contains("deskbox_quick_access_v1", buildScript, StringComparison.Ordinal);
         Assert.Contains("Rust native Stage 5B-4C1B2B capability mismatch: expected 511", buildScript, StringComparison.Ordinal);
 
-        Assert.Contains("$auditProfileVersion = 63", auditScript, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 65", auditScript, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", auditScript, StringComparison.Ordinal);
         Assert.Contains("stage4D4BWarningMessages", auditScript, StringComparison.Ordinal);
         Assert.Contains("QuickAccessNativeBackend.cs", auditScript, StringComparison.Ordinal);

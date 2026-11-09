@@ -15,6 +15,30 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+function Assert-NoReparsePointPath {
+    param([Parameter(Mandatory)][string]$Path)
+
+    # Lexical containment cannot see a junction in any parent directory.
+    # Check every existing component, including the volume/install ancestors.
+    $current = [System.IO.Path]::GetFullPath($Path)
+    while (-not [string]::IsNullOrEmpty($current)) {
+        try {
+            $attributes = [System.IO.File]::GetAttributes($current)
+            if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Refusing install cleanup through a reparse point: '$current'."
+            }
+        }
+        catch [System.IO.FileNotFoundException] {
+            # A stale entry may already be gone; its ancestors still matter.
+        }
+        catch [System.IO.DirectoryNotFoundException] {
+            # Continue upward to validate any existing parent.
+        }
+
+        $current = [System.IO.Path]::GetDirectoryName($current)
+    }
+}
+
 function Resolve-SafeInstallRoot {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -22,6 +46,7 @@ function Resolve-SafeInstallRoot {
     if (-not (Test-Path -LiteralPath $resolved -PathType Container)) {
         throw "The DeskBox install root does not exist: '$resolved'."
     }
+    Assert-NoReparsePointPath -Path $resolved
 
     $normalized = $resolved.TrimEnd('\', '/')
     $volumeRoot = [System.IO.Path]::GetPathRoot($resolved).TrimEnd('\', '/')
@@ -102,6 +127,39 @@ function Resolve-InstallEntryPath {
     }
 }
 
+function Get-FileRemovalBlocker {
+    param([Parameter(Mandatory)][string]$Path)
+
+    # Deleting a file needs a free handle and write access. Opening it
+    # exclusively without modifying it probes both; a read-only attribute is
+    # not a blocker because Remove-Item -Force clears it, so that case only
+    # probes for open handles.
+    try {
+        $attributes = [System.IO.File]::GetAttributes($Path)
+        $access = if (($attributes -band [System.IO.FileAttributes]::ReadOnly) -ne 0) {
+            [System.IO.FileAccess]::Read
+        }
+        else {
+            [System.IO.FileAccess]::ReadWrite
+        }
+
+        $stream = [System.IO.File]::Open(
+            $Path,
+            [System.IO.FileMode]::Open,
+            $access,
+            [System.IO.FileShare]::None)
+        try {
+            return $null
+        }
+        finally {
+            $stream.Dispose()
+        }
+    }
+    catch {
+        return $_.Exception.Message
+    }
+}
+
 function Remove-StaleInstallEntries {
     param(
         [Parameter(Mandatory)][string]$Root,
@@ -109,7 +167,9 @@ function Remove-StaleInstallEntries {
         [Parameter(Mandatory)][System.Collections.Generic.HashSet[string]]$CurrentEntries
     )
 
-    $failures = [System.Collections.Generic.List[string]]::new()
+    # Resolve every candidate exactly once so the pre-check and the deletion
+    # below operate on the same relative/full path pairs.
+    $targets = [System.Collections.Generic.List[object]]::new()
     foreach ($candidate in $Candidates) {
         $resolved = Resolve-InstallEntryPath -Root $Root -RelativePath $candidate
         if ($null -eq $resolved) {
@@ -121,16 +181,40 @@ function Remove-StaleInstallEntries {
             continue
         }
 
+        Assert-NoReparsePointPath -Path $resolved.FullPath
         if (-not (Test-Path -LiteralPath $resolved.FullPath -PathType Leaf)) {
             continue
         }
 
+        $targets.Add($resolved)
+    }
+
+    # Pre-check every target before removing anything: when one file is locked
+    # or not writable, abort with the old installation intact instead of
+    # leaving it half-deleted while the new payload has not been written yet.
+    $blocked = [System.Collections.Generic.List[string]]::new()
+    foreach ($target in $targets) {
+        $blocker = Get-FileRemovalBlocker -Path $target.FullPath
+        if (-not [string]::IsNullOrEmpty($blocker)) {
+            $blocked.Add("$($target.RelativePath): $blocker")
+        }
+    }
+
+    if ($blocked.Count -gt 0) {
+        throw "DeskBox install cleanup pre-check could not verify $($blocked.Count) stale file(s) for removal; nothing was deleted and the existing installation is unchanged: $($blocked -join '; ')"
+    }
+
+    # The pre-check cannot cover races, so a deletion that fails here is still
+    # recorded and still aborts the installation.
+    $failures = [System.Collections.Generic.List[string]]::new()
+    foreach ($target in $targets) {
         try {
-            Remove-Item -LiteralPath $resolved.FullPath -Force -ErrorAction Stop
-            Write-Output "Removed stale DeskBox install file: $($resolved.RelativePath)"
+            Assert-NoReparsePointPath -Path $target.FullPath
+            Remove-Item -LiteralPath $target.FullPath -Force -ErrorAction Stop
+            Write-Output "Removed stale DeskBox install file: $($target.RelativePath)"
         }
         catch {
-            $failures.Add("$($resolved.RelativePath): $($_.Exception.Message)")
+            $failures.Add("$($target.RelativePath): $($_.Exception.Message)")
         }
     }
 
@@ -165,7 +249,16 @@ if (-not (Test-Path -LiteralPath $legacyManifest -PathType Leaf)) {
     throw "The DeskBox legacy install manifest is missing: '$legacyManifest'."
 }
 
-$hasPreviousManifest = -not [string]::IsNullOrWhiteSpace($PreviousManifestPath) -and
+$hasPreviousManifest = -not [string]::IsNullOrWhiteSpace($PreviousManifestPath)
+if ($hasPreviousManifest -and -not (Test-Path -LiteralPath $PreviousManifestPath -PathType Leaf)) {
+    # The caller-supplied previous manifest has gone missing. Cleanup still
+    # falls back to the exact legacy compatibility manifest — the migration
+    # flow relies on that fallback contract — but surface the miss on stderr
+    # so an operator can notice instead of it being fully silent.
+    [Console]::Error.WriteLine(
+        "WARNING: the previous DeskBox install manifest was specified but is missing: '$([System.IO.Path]::GetFullPath($PreviousManifestPath))'. Falling back to the exact legacy compatibility manifest.")
+}
+$hasPreviousManifest = $hasPreviousManifest -and
     (Test-Path -LiteralPath $PreviousManifestPath -PathType Leaf)
 if ($hasPreviousManifest) {
     $previousEntries = Read-ManifestEntries -Path $PreviousManifestPath

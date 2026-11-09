@@ -1,5 +1,6 @@
 // Copyright (c) DeskBox. All rights reserved.
 
+using System.Buffers;
 using System.Diagnostics;
 using DeskBox.Helpers;
 using DeskBox.Models;
@@ -39,6 +40,7 @@ internal static class WidgetCompactAnimationCoordinator
     private static readonly HashSet<long> BoundsTransitionRegistrations = [];
     private static readonly Dictionary<IntPtr, PendingBoundsMove> PendingBoundsMoves = [];
     private static readonly List<PendingBoundsMove> PendingBoundsMovesBuffer = [];
+    private const int StackAllocatedBoundsResultLimit = 128;
     private static long s_nextRegistrationId;
     private static bool s_isRenderingSubscribed;
     private static bool s_isDispatchingFrame;
@@ -185,6 +187,15 @@ internal static class WidgetCompactAnimationCoordinator
         if (s_preArmLingerTimer is null ||
             !ReferenceEquals(s_preArmLingerDispatcher, dispatcher))
         {
+            // A dispatcher change means the previous timer belongs to another
+            // thread's queue: stop it and detach before arming a new one, or
+            // its pending tick can fire on the old dispatcher and tear down
+            // the freshly pre-armed clock state below.
+            if (s_preArmLingerTimer is not null)
+            {
+                s_preArmLingerTimer.Tick -= OnPreArmLingerTick;
+                s_preArmLingerTimer.Stop();
+            }
             s_preArmLingerDispatcher = dispatcher;
             s_preArmLingerTimer = dispatcher.CreateTimer();
             s_preArmLingerTimer.IsRepeating = false;
@@ -198,6 +209,12 @@ internal static class WidgetCompactAnimationCoordinator
     private static void OnPreArmLingerTick(DispatcherQueueTimer sender, object args)
     {
         sender.Stop();
+        if (!ReferenceEquals(sender, s_preArmLingerTimer))
+        {
+            // Stale tick from a replaced timer: its teardown below must not
+            // consume the pre-arm state of the current clock owner.
+            return;
+        }
         if (!s_isClockPreArmed || FrameCallbacks.Count > 0 || !s_isRenderingSubscribed)
         {
             return;
@@ -595,60 +612,85 @@ internal static class WidgetCompactAnimationCoordinator
 
         // Reused buffer: this runs once per animation frame, so replacing
         // Values.ToArray() removes a per-frame list+enumerator allocation.
-        PendingBoundsMovesBuffer.Clear();
-        PendingBoundsMovesBuffer.AddRange(PendingBoundsMoves.Values);
         List<PendingBoundsMove> moves = PendingBoundsMovesBuffer;
-        PendingBoundsMoves.Clear();
-        long started = Stopwatch.GetTimestamp();
-        var succeeded = new bool[moves.Count];
-
+        moves.Clear();
+        bool[]? rentedResults = null;
         try
         {
-            foreach (PendingBoundsMove move in moves) move.BeforeCommit();
-            bool committed = TryCommitBatch(moves);
-            if (committed)
+            moves.AddRange(PendingBoundsMoves.Values);
+            PendingBoundsMoves.Clear();
+            long started = Stopwatch.GetTimestamp();
+            Span<bool> succeeded = moves.Count <= StackAllocatedBoundsResultLimit
+                ? stackalloc bool[moves.Count]
+                : (rentedResults = ArrayPool<bool>.Shared.Rent(moves.Count)).AsSpan(0, moves.Count);
+            // Stack and pooled storage are not initialized. A preparation or
+            // native failure must report false for every uncommitted move.
+            succeeded.Clear();
+
+            try
             {
-                Array.Fill(succeeded, true);
+                foreach (PendingBoundsMove move in moves) move.BeforeCommit();
+                bool committed = TryCommitBatch(moves);
+                if (committed)
+                {
+                    succeeded.Fill(true);
+                }
+                else
+                {
+                    for (int i = 0; i < moves.Count; i++)
+                    {
+                        PendingBoundsMove move = moves[i];
+                        try
+                        {
+                            bool moved = Win32Helper.SetWindowPos(
+                                move.WindowHandle, IntPtr.Zero, move.Bounds.X, move.Bounds.Y,
+                                move.Bounds.Width, move.Bounds.Height, move.Flags);
+                            if (!moved)
+                            {
+                                move.Fallback();
+                            }
+                            // Report the real outcome: a move that fell back to
+                            // Fallback() did not commit, and AfterCommit must
+                            // see that.
+                            succeeded[i] = moved;
+                        }
+                        catch (Exception ex)
+                        {
+                            App.Log(
+                                "[CompactBoundsBatch] Window commit failed: " + ex);
+                        }
+                    }
+                }
             }
-            else
+            finally
             {
                 for (int i = 0; i < moves.Count; i++)
                 {
-                    PendingBoundsMove move = moves[i];
-                    try
-                    {
-                        bool moved = Win32Helper.SetWindowPos(
-                            move.WindowHandle, IntPtr.Zero, move.Bounds.X, move.Bounds.Y,
-                            move.Bounds.Width, move.Bounds.Height, move.Flags);
-                        if (!moved) move.Fallback();
-                        succeeded[i] = true;
-                    }
+                    try { moves[i].AfterCommit(succeeded[i]); }
                     catch (Exception ex)
                     {
                         App.Log(
-                            "[CompactBoundsBatch] Window commit failed: " + ex);
+                            "[CompactBoundsBatch] Completion failed: " + ex);
                     }
+                }
+
+                double elapsedMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+                if (elapsedMs >= 8)
+                {
+                    string details = $"count={moves.Count} elapsedMs={elapsedMs:F1}";
+                    PerformanceLogger.Mark("CompactBoundsBatch", details);
+                    App.LogVerbose($"[CompactBoundsBatch] {details}");
                 }
             }
         }
         finally
         {
-            for (int i = 0; i < moves.Count; i++)
+            // Retain only capacity between frames: the final batch's delegates
+            // otherwise keep its widget windows alive after the clock stops.
+            moves.Clear();
+            if (rentedResults is not null)
             {
-                try { moves[i].AfterCommit(succeeded[i]); }
-                catch (Exception ex)
-                {
-                    App.Log(
-                        "[CompactBoundsBatch] Completion failed: " + ex);
-                }
-            }
-
-            double elapsedMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
-            if (elapsedMs >= 8)
-            {
-                string details = $"count={moves.Count} elapsedMs={elapsedMs:F1}";
-                PerformanceLogger.Mark("CompactBoundsBatch", details);
-                App.LogVerbose($"[CompactBoundsBatch] {details}");
+                ArrayPool<bool>.Shared.Return(rentedResults);
             }
         }
     }
@@ -674,8 +716,10 @@ internal static class WidgetCompactAnimationCoordinator
                 move.Flags);
             if (next == IntPtr.Zero)
             {
-                // A failed DeferWindowPos invalidates the transaction. The
-                // caller retries every real bounds update directly.
+                // DeferWindowPos destroys the transaction on failure.
+                // Submitting the previous, now-invalid handle to End is a
+                // use-after-free; a small leak is preferred, and the
+                // caller retries every real bounds update per window.
                 return false;
             }
 

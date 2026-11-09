@@ -18,6 +18,14 @@ public sealed partial class SearchHistoryService
     private readonly object _gate = new();
     private PersistedData _data = new();
 
+    // Serial write chain shared by every store instance (the default
+    // constructor path always points at the same file, and tests add
+    // more instances): each enqueued link awaits its predecessor, so
+    // snapshots reach the disk in mutation order and the file always
+    // settles on the newest state instead of interleaving writes.
+    private static readonly object s_chainLock = new();
+    private static Task s_writeChain = Task.CompletedTask;
+
     public SearchHistoryService()
         : this(Path.Combine(
             DeskBoxDataPathService.Current.DataDirectory,
@@ -229,24 +237,6 @@ public sealed partial class SearchHistoryService
         RecentQueriesChanged?.Invoke();
     }
 
-    /// <summary>
-    /// Clears recent search queries AND cached recent-result cards (the items shown
-    /// in the search widget body), while preserving user-pinned favorites. Used by
-    /// the search widget's clear button so the user can wipe auto-recorded data
-    /// without losing deliberately pinned queries.
-    /// </summary>
-    public void ClearHistoryAndResults()
-    {
-        lock (_gate)
-        {
-            _data.Recent.Clear();
-            _data.RecentResults.Clear();
-        }
-
-        Save();
-        RecentQueriesChanged?.Invoke();
-    }
-
     private void Load()
     {
         // Shared persistence path: primary read, corrupt-file quarantine and
@@ -291,21 +281,50 @@ public sealed partial class SearchHistoryService
                 SearchHistoryJsonContext.Default.PersistedData);
         }
 
-        // Atomic replace + backup through the shared resilient store instead
-        // of the bare write. The async pipeline is bridged on a pool thread so
-        // the save keeps its previous synchronous completion contract without
-        // ever deadlocking on the caller's (UI) context.
-        Task.Run(async () =>
+        // Atomic replace + backup through the shared resilient store, on
+        // the serial write chain. Persistence policy is per-write: the
+        // payload is tiny and every mutation is a discrete user action
+        // (a search executed, a result opened, a favorite toggled), so
+        // there is no burst to coalesce and no debounce layer sits on
+        // top of the chain. Enqueueing never blocks the caller — the
+        // previous Task.Run(...).GetAwaiter().GetResult() bridge froze
+        // the UI thread for a full disk write on every search — and the
+        // chain link swallows its own failures so the chain never faults.
+        lock (s_chainLock)
         {
-            try
+            Task predecessor = s_writeChain;
+            s_writeChain = Task.Run(async () =>
             {
-                await ResilientJsonStore.SaveAsync(_storePath, json);
-            }
-            catch (Exception ex)
-            {
-                App.Log($"[SearchHistory] Failed to save history: {ex.Message}");
-            }
-        }).GetAwaiter().GetResult();
+                try
+                {
+                    await predecessor;
+                    await ResilientJsonStore.SaveAsync(_storePath, json);
+                }
+                catch (Exception ex)
+                {
+                    App.Log($"[SearchHistory] Failed to save history: {ex.Message}");
+                }
+            });
+        }
+    }
+
+    /// <summary>
+    /// Blocks until every history write enqueued so far — by any store
+    /// instance — has finished. The chain runs on pool threads, so a
+    /// caller on any thread (including the UI thread during the shutdown
+    /// settings flush) waits without deadlock, and the chain never
+    /// faults, so this rethrows nothing. This is the drain the shutdown
+    /// sequence and the tests use to observe durable state.
+    /// </summary>
+    internal static void WaitForAllPendingPersists()
+    {
+        Task chain;
+        lock (s_chainLock)
+        {
+            chain = s_writeChain;
+        }
+
+        chain.GetAwaiter().GetResult();
     }
 
     private sealed class PersistedData

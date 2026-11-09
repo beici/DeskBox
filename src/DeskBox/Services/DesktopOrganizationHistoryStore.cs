@@ -172,6 +172,15 @@ public sealed class DesktopOrganizationHistoryStore
                 : SettingsService.ManagedDropActionMove;
             entry.Items ??= [];
             entry.Targets ??= [];
+            // R20-S8-02: an explicit JSON null inside "items" used to reach the
+            // loop below and throw, and because Normalize runs outside the
+            // resilient-store callback the exception escaped the corruption
+            // protocol entirely and reset every setting to defaults.
+            if (entry.Items.RemoveAll(item => item is null) > 0)
+            {
+                changed = true;
+            }
+
             foreach (OrganizationHistoryItem item in entry.Items)
             {
                 item.TargetWidgetId ??= string.Empty;

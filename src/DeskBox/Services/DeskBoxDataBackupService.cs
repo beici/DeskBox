@@ -8,11 +8,17 @@ using DeskBox.Core.Persistence;
 using DeskBox.FileSafety;
 using DeskBox.Models;
 
+using DeskBox.Contracts;
+using System.Globalization;
+
 namespace DeskBox.Services;
 
 public sealed partial class DeskBoxDataBackupService
 {
     private const int BackupSchemaVersion = 2;
+    // Upper bound the wipe-recovery peek shares so its offer never proposes
+    // an archive the restore validator's schema gate would refuse.
+    internal const int CurrentBackupSchemaVersion = BackupSchemaVersion;
     private const int MinimumSupportedBackupSchemaVersion = 1;
     private const int MaxPreRestoreBackupCount = 5;
     private const int MaxRestoreFileCount = 100_000;
@@ -40,6 +46,12 @@ public sealed partial class DeskBoxDataBackupService
         new(CreateDataJsonOptions());
 
     private readonly SemaphoreSlim _gate = new(1, 1);
+
+    // Set by CancelPendingRestoreAsync so a restore that is already applying
+    // can stop at its next domain boundary. It cannot rely on the cancel
+    // token: the apply runs on its own token, and waiting for _gate to be free
+    // would only deliver the cancel after the swap had already happened.
+    private volatile bool _restoreCancelRequested;
     private readonly string _rootPath;
     private readonly string _recoveryRootPath;
     private volatile AutomaticBackupOptions _automaticBackupOptions = AutomaticBackupOptions.Default;
@@ -92,11 +104,44 @@ public sealed partial class DeskBoxDataBackupService
                 : recoveryRootPath);
     }
 
+    private Func<bool>? _isRecoveryOfferPending;
+
+    /// <summary>
+    /// Wires the wipe-recovery pending probe. While a recovery decision is
+    /// pending (its marker exists), scheduled automatic snapshots stay paused:
+    /// every snapshot of the fresh-default profile would occupy a retention
+    /// slot and evict the pre-wipe snapshots the recovery offer exists to
+    /// serve. Manual "back up now" (forced) snapshots stay available — the
+    /// user is already looking at the backup page.
+    /// </summary>
+    public void SetRecoveryOfferPauseProbe(Func<bool>? isPending) => _isRecoveryOfferPending = isPending;
+
+    private Func<string?>? _recoverySnapshotRetentionPin;
+
+    /// <summary>
+    /// Wires the pending-recovery snapshot pin. While a wipe-recovery
+    /// decision is pending, the marker-referenced archive is exempt from
+    /// retention pruning (it does not consume a retention slot), so manual
+    /// "back up now" runs during the pending window cannot evict the
+    /// snapshot the offer restores from. The pin ends with the marker, the
+    /// same lifecycle <see cref="PrunePreRestoreBackups"/> gives its
+    /// safety-archive pin.
+    /// </summary>
+    public void SetRecoverySnapshotRetentionPin(Func<string?>? pinProvider) =>
+        _recoverySnapshotRetentionPin = pinProvider;
+
+    private bool IsRecoveryOfferPauseActive =>
+        _isRecoveryOfferPending?.Invoke() == true;
+
     internal string DataDirectory => Path.Combine(_rootPath, "data");
 
     /// <summary>
     /// Automatic snapshots are retained outside the app-data root so they
-    /// survive normal uninstall and can be restored after reinstall.
+    /// survive a normal direct-install uninstall and can be restored after
+    /// reinstall. On the store channel, MSIX AppData write virtualization
+    /// places them under Packages/[PFN]/LocalCache instead: they are
+    /// deleted with the package on uninstall but kept across updates over
+    /// the same PackageFamilyName.
     /// </summary>
     internal string AutomaticSnapshotDirectory => Path.Combine(_recoveryRootPath, "automatic");
 
@@ -230,19 +275,33 @@ public sealed partial class DeskBoxDataBackupService
         bool force,
         CancellationToken cancellationToken)
     {
+        return (await CreateAutomaticSnapshotResultAsync(force, cancellationToken)).ArchivePath;
+    }
+
+    public async Task<LocalBackupResult> CreateAutomaticSnapshotResultAsync(
+        bool force,
+        CancellationToken cancellationToken = default)
+    {
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            if (!force && IsRecoveryOfferPauseActive)
+            {
+                App.Log("[DataBackup] Skipped the scheduled snapshot: a recovery decision is pending; " +
+                        "automatic snapshots stay paused until the user answers the recovery offer.");
+                return new(BackupOutcome.Skipped);
+            }
+
             AutomaticBackupOptions options = _automaticBackupOptions;
             // "Back up now" (force) stays available even when the schedule is off.
             if (!options.IsEnabled && !force)
             {
-                return null;
+                return new(BackupOutcome.Skipped);
             }
 
             if (!HasBackupSourceData())
             {
-                return null;
+                return new(BackupOutcome.Skipped);
             }
 
             AutomaticSnapshotTarget target = ResolveAutomaticSnapshotTarget(probeWriteAccess: true);
@@ -255,14 +314,17 @@ public sealed partial class DeskBoxDataBackupService
                 DateTime.UtcNow - File.GetLastWriteTimeUtc(latestSnapshot) <
                     TimeSpan.FromMinutes(Math.Max(1, options.IntervalMinutes)))
             {
-                return null;
+                return new(BackupOutcome.Skipped);
             }
 
             string snapshotPath = GetAvailableArchivePath(
                 target.Directory,
-                $"DeskBox-Auto-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
+                string.Create(CultureInfo.InvariantCulture, $"DeskBox-Auto-{DateTime.Now:yyyyMMdd-HHmmss}.zip"));
             await CreateArchiveCoreAsync(snapshotPath, "automatic", cancellationToken);
-            PruneAutomaticSnapshots(target.Directory, options.RetentionCount);
+            PruneAutomaticSnapshots(
+                target.Directory,
+                options.RetentionCount,
+                _recoverySnapshotRetentionPin?.Invoke());
             if (target.UsedFallback)
             {
                 string fallbackMessage =
@@ -281,7 +343,7 @@ public sealed partial class DeskBoxDataBackupService
             }
 
             App.Log($"[DataBackup] Created automatic snapshot '{snapshotPath}'.");
-            return snapshotPath;
+            return new(BackupOutcome.Succeeded, snapshotPath);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -290,7 +352,7 @@ public sealed partial class DeskBoxDataBackupService
         catch (Exception ex)
         {
             App.Log($"[DataBackup] Automatic snapshot failed: {ex}");
-            return null;
+            return new(BackupOutcome.Failed, Error: ex.Message);
         }
         finally
         {
@@ -316,7 +378,7 @@ public sealed partial class DeskBoxDataBackupService
             Directory.CreateDirectory(destinationDirectory);
             string backupPath = GetAvailableArchivePath(
                 destinationDirectory,
-                $"DeskBox-Backup-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
+                string.Create(CultureInfo.InvariantCulture, $"DeskBox-Backup-{DateTime.Now:yyyyMMdd-HHmmss}.zip"));
             await CreateArchiveCoreAsync(backupPath, "manual", cancellationToken);
             App.Log($"[DataBackup] Exported backup '{backupPath}'.");
             return backupPath;
@@ -377,7 +439,7 @@ public sealed partial class DeskBoxDataBackupService
 
             string backupPath = GetAvailableArchivePath(
                 destinationDirectory,
-                $"DeskBox-CloudBackup-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
+                string.Create(CultureInfo.InvariantCulture, $"DeskBox-CloudBackup-{DateTime.Now:yyyyMMdd-HHmmss}.zip"));
             // The manifest must only claim domains that actually shipped —
             // WidgetStyle without a produced document does not count.
             CloudBackupDomain shippedScope = rootEntries is null
@@ -486,7 +548,6 @@ public sealed partial class DeskBoxDataBackupService
         string? stagingRoot = null;
         try
         {
-            DeletePendingRestoreCore();
             stagingRoot = Path.Combine(RestoreStagingDirectory, Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(stagingRoot);
 
@@ -524,11 +585,23 @@ public sealed partial class DeskBoxDataBackupService
                 archiveInfo.Manifest.CreatedAtUtc,
                 archiveInfo.Manifest.AppVersion,
                 Domains: null,
-                AllowMissingSettings: allowMissingSettings);
+                AllowMissingSettings: allowMissingSettings,
+                SourceDataPath: archiveInfo.Manifest.SourceDataPath);
+            // R21-S1-02: drop the previous pending restore only now, after the
+            // new archive has been extracted and validated. Doing it up front
+            // meant a rejected archive silently cancelled the restore the user
+            // had already prepared.
+            // R21-V6-04: record what the old marker pointed at, publish the new
+            // marker first, and only then delete the old staging tree. Deleting
+            // the marker first left a window where a crash (or a failed marker
+            // write) cancelled the prepared restore without recording its
+            // replacement.
+            string? previousStagingRoot = TryReadPendingRestoreMarker()?.StagingRoot;
             await WritePendingRestoreMarkerAtomicallyAsync(
                 PendingRestoreMarkerPath,
                 marker,
                 cancellationToken);
+            DeletePreviousPendingRestore(stagingRoot, previousStagingRoot);
             App.Log($"[DataBackup] Prepared restore from '{archivePath}'.");
             return new DeskBoxRestorePreparation(
                 archiveInfo.Manifest.CreatedAtUtc,
@@ -537,7 +610,9 @@ public sealed partial class DeskBoxDataBackupService
                 archiveInfo.TotalUncompressedBytes,
                 archiveInfo.Manifest.SchemaVersion,
                 archiveInfo.Manifest.SchemaVersion >= 2,
-                IsFromNewerAppVersion: IsBackupFromNewerApp(archiveInfo.Manifest.AppVersion));
+                IsFromNewerAppVersion: IsBackupFromNewerApp(archiveInfo.Manifest.AppVersion),
+                ArchivePath: archivePath,
+                PreparedAtUtc: marker.PreparedAtUtc);
         }
         catch
         {
@@ -581,7 +656,6 @@ public sealed partial class DeskBoxDataBackupService
         string? stagingRoot = null;
         try
         {
-            DeletePendingRestoreCore();
             stagingRoot = Path.Combine(RestoreStagingDirectory, Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(stagingRoot);
 
@@ -669,11 +743,18 @@ public sealed partial class DeskBoxDataBackupService
                 DateTimeOffset.UtcNow,
                 archiveInfo.Manifest.CreatedAtUtc,
                 archiveInfo.Manifest.AppVersion,
-                CloudBackupDomains.ToManifestNames(appliedScope));
+                CloudBackupDomains.ToManifestNames(appliedScope),
+                ScopedRestoreConfirmed: false);
+            // R21-S1-02: same ordering rule as PrepareRestoreAsync - the
+            // previous pending restore survives a rejected archive.
+            // R21-V6-04: publish the replacement marker before deleting what the
+            // old one pointed at.
+            string? previousStagingRoot = TryReadPendingRestoreMarker()?.StagingRoot;
             await WritePendingRestoreMarkerAtomicallyAsync(
                 PendingRestoreMarkerPath,
                 marker,
                 cancellationToken);
+            DeletePreviousPendingRestore(stagingRoot, previousStagingRoot);
             App.Log($"[DataBackup] Prepared scoped restore from '{archivePath}' (domains: {appliedScope}).");
             return new DeskBoxRestorePreparation(
                 archiveInfo.Manifest.CreatedAtUtc,
@@ -1196,10 +1277,42 @@ public sealed partial class DeskBoxDataBackupService
 
     public async Task CancelPendingRestoreAsync(CancellationToken cancellationToken = default)
     {
-        await _gate.WaitAsync(cancellationToken);
+        // Signal the abort before touching _gate. ApplyPendingRestoreAsync
+        // holds the gate for its whole run, so waiting on it here only
+        // delivered the cancel after the live data had already been replaced,
+        // and a token that fired during the wait threw out of this method
+        // while the restore carried on to completion.
+        //
+        // A token that is already cancelled would throw out of the wait below
+        // before any apply could observe the flag, and nothing would clear it:
+        // the next apply would then discard a payload the user never
+        // cancelled. Check it first, and undo the flag if the wait still
+        // throws.
+        cancellationToken.ThrowIfCancellationRequested();
+
+        _restoreCancelRequested = true;
+        bool gateAcquired;
+        try
+        {
+            gateAcquired = await _gate.WaitAsync(TimeSpan.Zero, cancellationToken);
+        }
+        catch
+        {
+            _restoreCancelRequested = false;
+            throw;
+        }
+
+        if (!gateAcquired)
+        {
+            // An apply owns the gate; it observes the flag at its next domain
+            // boundary and discards the staging payload itself.
+            return;
+        }
+
         try
         {
             DeletePendingRestoreCore();
+            _restoreCancelRequested = false;
         }
         finally
         {
@@ -1212,8 +1325,28 @@ public sealed partial class DeskBoxDataBackupService
     {
         await _gate.WaitAsync(cancellationToken);
         string? rollbackRoot = null;
+        bool swapCompleted = false;
         try
         {
+            if (_restoreCancelRequested)
+            {
+                // The cancel arrived while this apply was queued behind another
+                // gate holder. Discard the payload instead of swapping it in.
+                DeletePendingRestoreCore();
+                App.Log("[DataBackup] Discarded a pending restore the user cancelled.");
+                return DeskBoxRestoreApplyResult.NoPendingRestore;
+            }
+
+            // A full restore moves the live data aside before it swaps the
+            // staged copy in. When the swap and its move-back both fail — or
+            // the process dies between them — the live directory is left
+            // missing while the only copy sits in restore-rollback/<id>/data.
+            // Nothing else in the app reads that directory, so the user's
+            // data used to be unreachable: the app just started empty. Put it
+            // back before anything else looks at the data.
+            TryRecoverStrandedRollback();
+            PruneStalePreRecoveryParkedDirectories();
+
             if (!File.Exists(PendingRestoreMarkerPath))
             {
                 return DeskBoxRestoreApplyResult.NoPendingRestore;
@@ -1224,6 +1357,28 @@ public sealed partial class DeskBoxDataBackupService
             if (!IsPathInsideDirectory(stagingRoot, RestoreStagingDirectory))
             {
                 throw new InvalidDataException("The pending restore staging path is invalid.");
+            }
+
+            if (marker.Domains is { Count: > 0 } &&
+                marker.ScopedRestoreConfirmed == false)
+            {
+                // A crash or timed-out shutdown must never apply a cloud
+                // restore while its confirmation dialog was still open.
+                DeletePendingRestoreCore();
+                App.Log("[DataBackup] Discarded an unconfirmed scoped restore.");
+                return DeskBoxRestoreApplyResult.NoPendingRestore;
+            }
+
+            if (marker.Domains is not { Count: > 0 } && !marker.FullRestoreConfirmed)
+            {
+                // Same defense for full restores: the marker predates its
+                // confirmation dialog, so an unanswered dialog (hidden
+                // settings window, exit, crash) must discard the restore
+                // instead of swapping the whole data directory on the next
+                // launch.
+                DeletePendingRestoreCore();
+                App.Log("[DataBackup] Discarded an unconfirmed full restore.");
+                return DeskBoxRestoreApplyResult.NoPendingRestore;
             }
 
             if (marker.Domains is { Count: > 0 } markerDomains)
@@ -1242,6 +1397,16 @@ public sealed partial class DeskBoxDataBackupService
 
             marker = await EnsurePreRestoreSafetyBackupAsync(marker, cancellationToken);
 
+            if (_restoreCancelRequested)
+            {
+                // The safety backup can take a while on a large data set, so
+                // re-check before the swap: past this point the live directory
+                // is moved aside and a cancel could no longer be honoured
+                // without a rollback.
+                throw new OperationCanceledException(
+                    "The restore was cancelled by the user.");
+            }
+
             rollbackRoot = Path.Combine(_rootPath, "restore-rollback", Guid.NewGuid().ToString("N"));
             string rollbackDataDirectory = Path.Combine(rollbackRoot, "data");
             Directory.CreateDirectory(rollbackRoot);
@@ -1253,6 +1418,7 @@ public sealed partial class DeskBoxDataBackupService
             try
             {
                 Directory.Move(stagedDataDirectory, DataDirectory);
+                swapCompleted = true;
             }
             catch
             {
@@ -1268,7 +1434,12 @@ public sealed partial class DeskBoxDataBackupService
             TryDeleteDirectory(stagingRoot);
             TryDeleteDirectory(rollbackRoot);
             App.Log($"[DataBackup] Applied pending restore from '{marker.ArchivePath}'.");
-            return new DeskBoxRestoreApplyResult(true, true, null);
+            return new DeskBoxRestoreApplyResult(
+                true,
+                true,
+                null,
+                DeskBoxRestoreApplyKind.Full,
+                marker.SourceDataPath);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -1278,17 +1449,31 @@ public sealed partial class DeskBoxDataBackupService
         {
             App.Log($"[DataBackup] Pending restore failed: {ex}");
             DeletePendingRestoreCore();
-            return new DeskBoxRestoreApplyResult(true, false, ex.Message);
+            return new DeskBoxRestoreApplyResult(true, false, ex.Message, DeskBoxRestoreApplyKind.Full);
         }
         finally
         {
+            // Only drop the rollback copy when it can no longer be the user's
+            // only data: a completed swap makes it redundant, and an empty
+            // shell has nothing to preserve. When the swap failed and the old
+            // copy is still in there, leave it for
+            // TryRecoverStrandedRollback() on the next launch — testing
+            // "DataDirectory exists" instead used to delete that copy whenever
+            // a concurrent writer re-created the live directory (R16-M2-03).
             if (!string.IsNullOrWhiteSpace(rollbackRoot) &&
-                Directory.Exists(rollbackRoot) &&
-                Directory.Exists(DataDirectory))
+                Directory.Exists(rollbackRoot))
             {
-                TryDeleteDirectory(rollbackRoot);
+                bool holdsOldData = Directory.Exists(Path.Combine(rollbackRoot, "data"));
+                if (swapCompleted || !holdsOldData)
+                {
+                    TryDeleteDirectory(rollbackRoot);
+                }
             }
 
+            // Every abort path above has consumed the flag; clearing it here
+            // keeps a cancel that raced the final boundary check from leaking
+            // into the next restore.
+            _restoreCancelRequested = false;
             _gate.Release();
         }
     }
@@ -1322,6 +1507,17 @@ public sealed partial class DeskBoxDataBackupService
                     continue;
                 }
 
+                if (_restoreCancelRequested)
+                {
+                    // Each file replacement is atomic, so stopping here leaves
+                    // every live file either untouched or fully replaced. The
+                    // flag-only cancel handler below deletes the marker and
+                    // staging payload, which turns the cancel into a real abort
+                    // instead of a request that the restore outruns.
+                    throw new OperationCanceledException(
+                        "The restore was cancelled by the user.");
+                }
+
                 if (!marker.ReplaceItemData)
                 {
                     // Additive merge: staged items fold into the live stores
@@ -1347,6 +1543,84 @@ public sealed partial class DeskBoxDataBackupService
                 // Snapshot-faithful domain replace: live domain files absent
                 // from the staged snapshot are deleted, then staged files
                 // are copied in. Non-domain paths are never enumerated.
+                //
+                // Nothing may be deleted until the staged payload for THIS
+                // domain is proven to exist. A wiped or half-extracted
+                // staging directory — or a marker whose staging was cleaned
+                // up after an abandoned attempt while the marker survived —
+                // used to take the live store with it and then report
+                // success, because the copy phase silently skipped the
+                // missing directory.
+                string[] stagedFiles = Directory.Exists(stagedDataDirectory)
+                    ? Directory
+                        .EnumerateFiles(stagedDataDirectory, "*", SearchOption.AllDirectories)
+                        .Where(stagedFile => CloudBackupDomains.IsInDomain(
+                            domain,
+                            Path.GetRelativePath(stagedDataDirectory, stagedFile)
+                                .Replace(Path.DirectorySeparatorChar, '/')))
+                        .ToArray()
+                    : [];
+                if (!Directory.Exists(stagedDataDirectory))
+                {
+                    // The marker outlived its staging payload: nothing can be
+                    // restored, so fail loudly (the retry/abandon budget
+                    // handles the marker) instead of reporting a restore that
+                    // silently removed the live domain files.
+                    throw new InvalidDataException(
+                        "The staged restore payload is missing; the live data was left untouched.");
+                }
+
+                if (stagedFiles.Length == 0)
+                {
+                    // A manifest domain can legally ship zero files (the
+                    // backup was taken before any data existed). Overwrite
+                    // mode promises to replace the domain with the
+                    // snapshot's content, so the live domain must be
+                    // emptied — skipping it left stale local data behind
+                    // while the restore reported success. Falling through
+                    // with an empty staged set does exactly that: the
+                    // delete loop below removes every live file the
+                    // snapshot does not carry, and no staged file is
+                    // written.
+                    App.Log(
+                        $"[DataBackup] Scoped restore empties domain {domain}: the staged " +
+                        "snapshot carries no files for it.");
+                }
+
+                // R20-S1-02: stage every file next to its destination and move it
+                // into place, then delete only the live files the snapshot does
+                // not carry. The previous order (delete the whole live domain,
+                // then copy) could be interrupted between the two loops — by the
+                // apply-token cancellation or by an IO failure — leaving the live
+                // store with files deleted and not yet copied, and the retry
+                // budget could not undo that. Each individual replacement is now
+                // atomic, so any interruption leaves every live file either
+                // untouched or fully replaced.
+                var stagedRelativePaths = new HashSet<string>(
+                    stagedFiles.Select(stagedFile => Path
+                        .GetRelativePath(stagedDataDirectory, stagedFile)
+                        .Replace(Path.DirectorySeparatorChar, '/')),
+                    StringComparer.OrdinalIgnoreCase);
+
+                foreach (string stagedFile in stagedFiles)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    string stagedRelative = Path
+                        .GetRelativePath(stagedDataDirectory, stagedFile)
+                        .Replace(Path.DirectorySeparatorChar, '/');
+                    string destinationPath = Path.Combine(
+                        DataDirectory,
+                        stagedRelative.Replace('/', Path.DirectorySeparatorChar));
+                    Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+                    // V1-08: keep the ".tmp" tail so the backup/domain filters
+            // (ShouldIncludeInBackup) already exclude a staged file left behind
+            // by an interrupted restore instead of shipping it in the next
+            // snapshot.
+            string temporaryPath = destinationPath + ".restore.tmp";
+                    File.Copy(stagedFile, temporaryPath, overwrite: true);
+                    File.Move(temporaryPath, destinationPath, overwrite: true);
+                }
+
                 foreach (string liveFile in Directory
                              .EnumerateFiles(DataDirectory, "*", SearchOption.AllDirectories)
                              .ToArray())
@@ -1354,34 +1628,11 @@ public sealed partial class DeskBoxDataBackupService
                     string liveRelative = Path
                         .GetRelativePath(DataDirectory, liveFile)
                         .Replace(Path.DirectorySeparatorChar, '/');
-                    if (CloudBackupDomains.IsInDomain(domain, liveRelative))
+                    if (CloudBackupDomains.IsInDomain(domain, liveRelative) &&
+                        !stagedRelativePaths.Contains(liveRelative))
                     {
                         File.Delete(liveFile);
                     }
-                }
-
-                if (!Directory.Exists(stagedDataDirectory))
-                {
-                    continue;
-                }
-
-                foreach (string stagedFile in Directory.EnumerateFiles(
-                             stagedDataDirectory, "*", SearchOption.AllDirectories))
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    string stagedRelative = Path
-                        .GetRelativePath(stagedDataDirectory, stagedFile)
-                        .Replace(Path.DirectorySeparatorChar, '/');
-                    if (!CloudBackupDomains.IsInDomain(domain, stagedRelative))
-                    {
-                        continue;
-                    }
-
-                    string destinationPath = Path.Combine(
-                        DataDirectory,
-                        stagedRelative.Replace('/', Path.DirectorySeparatorChar));
-                    Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
-                    File.Copy(stagedFile, destinationPath, overwrite: true);
                 }
             }
 
@@ -1411,11 +1662,27 @@ public sealed partial class DeskBoxDataBackupService
             TryDeleteFile(PendingRestoreMarkerPath);
             TryDeleteDirectory(stagingRoot);
             App.Log($"[DataBackup] Applied scoped restore from '{marker.ArchivePath}' (domains: {scope}).");
-            return new DeskBoxRestoreApplyResult(true, true, null);
+            return new DeskBoxRestoreApplyResult(true, true, null, DeskBoxRestoreApplyKind.Scoped);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
+        }
+        catch (OperationCanceledException) when (_restoreCancelRequested)
+        {
+            // A mid-apply cancel arrives as a flag, not a token, so the OCE the
+            // domain boundary throws lands here instead of the rethrow above.
+            // The retry handler below would count it as a failed attempt and keep
+            // the marker, so the next launch would happily apply what the user
+            // just cancelled. Drop the payload like the full path does.
+            TryDeleteFile(PendingRestoreMarkerPath);
+            TryDeleteDirectory(stagingRoot);
+            App.Log("[DataBackup] Discarded the scoped restore the user cancelled.");
+            return new DeskBoxRestoreApplyResult(
+                true,
+                false,
+                null,
+                DeskBoxRestoreApplyKind.Scoped);
         }
         catch (Exception ex)
         {
@@ -1433,7 +1700,8 @@ public sealed partial class DeskBoxDataBackupService
                 return new DeskBoxRestoreApplyResult(
                     true,
                     false,
-                    $"Restore failed on {attempts} launches and was abandoned: {ex.Message}");
+                    $"Restore failed on {attempts} launches and was abandoned: {ex.Message}",
+                    DeskBoxRestoreApplyKind.Scoped);
             }
 
             App.Log(
@@ -1453,7 +1721,7 @@ public sealed partial class DeskBoxDataBackupService
                 App.Log($"[DataBackup] Failed to persist restore attempt count: {writeEx.Message}");
             }
 
-            return new DeskBoxRestoreApplyResult(true, false, ex.Message);
+            return new DeskBoxRestoreApplyResult(true, false, ex.Message, DeskBoxRestoreApplyKind.Scoped);
         }
     }
 
@@ -1479,7 +1747,79 @@ public sealed partial class DeskBoxDataBackupService
             PendingRestoreMarker marker = await ReadPendingRestoreMarkerAsync(cancellationToken);
             await WritePendingRestoreMarkerAtomicallyAsync(
                 PendingRestoreMarkerPath,
-                marker with { ReplaceItemData = replaceItemData },
+                marker with
+                {
+                    ReplaceItemData = replaceItemData,
+                    ScopedRestoreConfirmed = marker.Domains is { Count: > 0 }
+                        ? true
+                        : marker.ScopedRestoreConfirmed
+                },
+                cancellationToken);
+            return true;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Persists the user's "restore" answer onto a pending FULL restore
+    /// marker. The marker is written before its confirmation dialog opens,
+    /// so this call is what authorizes the next launch to apply it; until
+    /// then the startup gate discards the marker. Returns false when
+    /// nothing is pending or the pending restore is scoped (scoped
+    /// restores confirm through their own item-mode call).
+    /// </summary>
+    internal async Task<bool> ConfirmPendingFullRestoreAsync(
+        string? expectedArchivePath = null,
+        DateTimeOffset? expectedPreparedAtUtc = null,
+        CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            if (!File.Exists(PendingRestoreMarkerPath))
+            {
+                return false;
+            }
+
+            PendingRestoreMarker marker = await ReadPendingRestoreMarkerAsync(cancellationToken);
+            if (marker.Domains is { Count: > 0 })
+            {
+                return false;
+            }
+
+            // R20-S3-03: refuse to confirm a transaction the caller did not
+            // prepare. The marker is shared state; without this check a second
+            // prepare (another snapshot row, a double click) could swap the
+            // archive between "the user read the dialog" and "the user clicked
+            // restore", and the confirmed restore would replace live data with
+            // an archive nobody was warned about.
+            if (!string.IsNullOrWhiteSpace(expectedArchivePath) &&
+                !string.Equals(
+                    Path.GetFullPath(marker.ArchivePath),
+                    Path.GetFullPath(expectedArchivePath),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                App.Log(
+                    $"[DataBackup] Refusing to confirm a restore prepared for '{marker.ArchivePath}' " +
+                    $"when the caller expected '{expectedArchivePath}'.");
+                return false;
+            }
+
+            if (expectedPreparedAtUtc is { } expectedPreparedAt &&
+                marker.PreparedAtUtc != expectedPreparedAt)
+            {
+                App.Log(
+                    $"[DataBackup] Refusing to confirm a restore prepared at {marker.PreparedAtUtc:O} " +
+                    $"when the caller expected {expectedPreparedAt:O}.");
+                return false;
+            }
+
+            await WritePendingRestoreMarkerAtomicallyAsync(
+                PendingRestoreMarkerPath,
+                marker with { FullRestoreConfirmed = true },
                 cancellationToken);
             return true;
         }
@@ -1918,14 +2258,28 @@ public sealed partial class DeskBoxDataBackupService
             }
         }
 
+        // A scoped snapshot can legally carry zero data entries (the domain
+        // existed in the manifest but held no files when the backup was
+        // taken). Materialize the data root unconditionally so the apply
+        // stage can tell "this payload is empty" apart from "the staging
+        // tree was wiped after the marker survived" — the latter must keep
+        // failing loudly instead of emptying the live domain.
+        Directory.CreateDirectory(destinationRoot);
+
         bool isScopedArchive = manifest.Domains is { Count: > 0 };
         if (fileCount == 0 && !isScopedArchive)
         {
             throw new InvalidDataException("The backup contains no DeskBox data files.");
         }
 
+        // Validate whenever the manifest actually declares files: a scoped
+        // archive whose manifest lists entries but whose data/ tree yielded
+        // nothing is corrupt, and skipping the check there would let the apply
+        // stage empty the live domain on the strength of a truncated payload.
+        // Only a scoped archive that legitimately declares no files may skip.
+        bool hasDeclaredFiles = manifest.Files is { Count: > 0 };
         if (manifest.SchemaVersion >= 2 &&
-            (extractedFiles.Count > 0 || !isScopedArchive))
+            (extractedFiles.Count > 0 || hasDeclaredFiles || !isScopedArchive))
         {
             ValidateIntegrityManifest(manifest.Files, extractedFiles);
         }
@@ -2322,30 +2676,250 @@ public sealed partial class DeskBoxDataBackupService
         }
     }
 
-    private void DeletePendingRestoreCore()
+    /// <summary>
+    /// Restores a live data directory that a failed or interrupted full
+    /// restore moved into <c>restore-rollback</c> and never moved back. The
+    /// rollback copy is the user's only remaining data at that point and
+    /// nothing else in the app reads it, so without this the next launch
+    /// simply starts with an empty data directory.
+    ///
+    /// Acts only while the live directory holds no user documents (the
+    /// stores create their own empty subdirectories long before this runs),
+    /// and parks such a directory instead of deleting it, so it can never
+    /// destroy data the app is actually using.
+    /// </summary>
+    private void TryRecoverStrandedRollback()
     {
-        if (File.Exists(PendingRestoreMarkerPath))
+        string rollbackRoot = Path.Combine(_rootPath, "restore-rollback");
+        if (!Directory.Exists(rollbackRoot))
         {
-            try
+            return;
+        }
+
+        if (HasUserDocuments(DataDirectory))
+        {
+            return;
+        }
+
+        try
+        {
+            string? candidate = Directory
+                .EnumerateDirectories(rollbackRoot)
+                .Where(root => Directory.Exists(Path.Combine(root, "data")))
+                .OrderByDescending(Directory.GetLastWriteTimeUtc)
+                .FirstOrDefault();
+            if (candidate is null)
             {
-                string json = File.ReadAllText(PendingRestoreMarkerPath);
-                PendingRestoreMarker? marker = JsonSerializer.Deserialize(
-                    json,
-                    BackupJsonContext.Default.PendingRestoreMarker);
-                if (marker is not null &&
-                    IsPathInsideDirectory(marker.StagingRoot, RestoreStagingDirectory))
+                return;
+            }
+
+            App.LogVerbose(
+                $"[DataBackup] Interrupted-restore rollback found at '{candidate}'; " +
+                $"live data has no user documents, recovering.");
+
+            if (Directory.Exists(DataDirectory))
+            {
+                // The stores created their empty folders already; keep them
+                // out of the way instead of deleting anything.
+                string parked = string.Create(CultureInfo.InvariantCulture, $"{DataDirectory}-pre-recovery-{DateTime.Now:yyyyMMdd-HHmmss}");
+                PersistenceFileMutations.MoveDirectory(DataDirectory, parked);
+                App.Log(
+                    $"[DataBackup] Moved the app-created empty data directory aside: '{parked}'.");
+            }
+
+            Directory.CreateDirectory(_rootPath);
+            PersistenceFileMutations.MoveDirectory(Path.Combine(candidate, "data"), DataDirectory);
+            TryDeleteDirectory(candidate);
+            App.Log(
+                $"[DataBackup] Recovered live data left behind by an interrupted restore: " +
+                $"'{candidate}' → '{DataDirectory}'.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            App.Log(
+                $"[DataBackup] Could not recover data left behind by an interrupted restore: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Interrupted-revert parking directories (`&lt;data&gt;-pre-recovery-*`) are
+    /// only ever created for a data directory that held no user documents
+    /// (the app-created scaffolding moved aside before a rollback recovery),
+    /// and nothing ever reads them again. Prune stale ones so they cannot
+    /// accumulate forever; anything that has somehow gained user documents
+    /// is kept — deletion requires that the payload is provably worthless.
+    /// </summary>
+    private void PruneStalePreRecoveryParkedDirectories()
+    {
+        try
+        {
+            string? parent = Path.GetDirectoryName(DataDirectory);
+            if (parent is null || !Directory.Exists(parent))
+            {
+                return;
+            }
+
+            foreach (string parked in Directory.EnumerateDirectories(
+                         parent,
+                         Path.GetFileName(DataDirectory) + "-pre-recovery-*"))
+            {
+                if ((DateTimeOffset.UtcNow - Directory.GetLastWriteTimeUtc(parked)).TotalDays < 7)
                 {
-                    TryDeleteDirectory(marker.StagingRoot);
+                    continue;
+                }
+
+                if (HasUserDocuments(parked))
+                {
+                    App.LogVerbose(
+                        $"[DataBackup] Keeping a pre-recovery parked directory that now holds user documents: '{parked}'.");
+                    continue;
+                }
+
+                TryDeleteDirectory(parked);
+                App.Log($"[DataBackup] Pruned a stale empty pre-recovery parked directory: '{parked}'.");
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            App.Log($"[DataBackup] Pre-recovery parked directory pruning failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// True when the data directory holds something a restore could destroy:
+    /// any file the backup pipeline would carry, i.e. anything
+    /// <see cref="ShouldIncludeInBackup"/> does not classify as a disposable or
+    /// machine-local artifact. Empty store folders do not count.
+    /// </summary>
+    /// <remarks>
+    /// R18-S1-003: the previous hand-written list (settings.json,
+    /// widget-layout.json, widgets/**, quick-capture/attachments/**) missed
+    /// quick-capture.json, the desktop-organization history / suppressions /
+    /// recovery journals, glance|music|pomodoro|screenshot settings and
+    /// search-history.json — a data directory whose only user documents were
+    /// those files was reported as empty, parked aside by an interrupted-restore
+    /// recovery and pruned seven days later. Backup inclusion is this repo's
+    /// single definition of "user data", so reuse it instead of maintaining a
+    /// second list that can drift again.
+    ///
+    /// Enumeration failures answer "yes" (conservative): both callers use a
+    /// true result to avoid touching the directory at all.
+    /// </remarks>
+    private static bool HasUserDocuments(string dataDirectory)
+    {
+        if (!Directory.Exists(dataDirectory))
+        {
+            return false;
+        }
+
+        try
+        {
+            foreach (string file in Directory.EnumerateFiles(
+                         dataDirectory,
+                         "*",
+                         SearchOption.AllDirectories))
+            {
+                string relative = Path
+                    .GetRelativePath(dataDirectory, file)
+                    .Replace('\\', '/');
+                if (ShouldIncludeInBackup(relative))
+                {
+                    return true;
                 }
             }
-            catch (Exception ex)
-            {
-                App.Log($"[DataBackup] Failed to read pending restore while cancelling: {ex.Message}");
-            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            App.LogVerbose(
+                $"[DataBackup] Could not enumerate '{dataDirectory}' while checking for user documents: {ex.Message}");
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Reads the pending-restore marker once, for both cancellation paths.
+    /// Keeping a single read site matters: the JSON serialization inventory
+    /// contract freezes the number of <see cref="JsonSerializer"/> call sites
+    /// in this file (R21-S1-02 follow-up).
+    /// </summary>
+    private PendingRestoreMarker? TryReadPendingRestoreMarker()
+    {
+        if (!File.Exists(PendingRestoreMarkerPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            string json = File.ReadAllText(PendingRestoreMarkerPath);
+            return JsonSerializer.Deserialize(
+                json,
+                BackupJsonContext.Default.PendingRestoreMarker);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[DataBackup] Failed to read pending restore while cancelling: {ex.Message}");
+            return null;
+        }
+    }
+
+    private void DeletePendingRestoreCore()
+    {
+        PendingRestoreMarker? marker = TryReadPendingRestoreMarker();
+        if (marker is not null &&
+            IsPathInsideDirectory(marker.StagingRoot, RestoreStagingDirectory))
+        {
+            TryDeleteDirectory(marker.StagingRoot);
         }
 
         TryDeleteFile(PendingRestoreMarkerPath);
         TryDeleteDirectory(RestoreStagingDirectory);
+    }
+
+    /// <summary>
+    /// Cancels the previously prepared restore without touching the staging
+    /// directory the current preparation just extracted into (R21-S1-02):
+    /// <see cref="DeletePendingRestoreCore"/> wipes the whole staging root,
+    /// which would delete the new payload it is about to be replaced by.
+    /// </summary>
+    private void DeletePreviousPendingRestore(
+        string keepStagingRoot,
+        string? previousStagingRoot)
+    {
+        // R21-V6-04: the replacement marker is already published at this point,
+        // so only the old staging tree is removed - deleting the marker file here
+        // would throw away the restore this preparation just recorded.
+        if (previousStagingRoot is not null &&
+            IsPathInsideDirectory(previousStagingRoot, RestoreStagingDirectory))
+        {
+            TryDeleteDirectory(previousStagingRoot);
+        }
+
+        // Sweep orphaned staging directories left by earlier crashes, keeping
+        // only the one this preparation owns.
+        try
+        {
+            if (Directory.Exists(RestoreStagingDirectory))
+            {
+                string keep = Path.GetFullPath(keepStagingRoot);
+                foreach (string directory in Directory.EnumerateDirectories(RestoreStagingDirectory))
+                {
+                    if (!string.Equals(
+                        Path.GetFullPath(directory),
+                        keep,
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        TryDeleteDirectory(directory);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[DataBackup] Failed to sweep staging directories: {ex.Message}");
+        }
     }
 
     private static async Task WritePendingRestoreMarkerAtomicallyAsync(
@@ -2412,6 +2986,18 @@ public sealed partial class DeskBoxDataBackupService
         }
     }
 
+    /// <summary>
+    /// R01-S1-01: the snapshot directories are visible in Explorer and the
+    /// automatic one can be a user-chosen folder, so matching "*.zip" alone
+    /// treated a user's own archive as a DeskBox snapshot — and "delete
+    /// snapshot" removed it permanently. Only DeskBox-written archive names
+    /// qualify for listing and deletion.
+    /// </summary>
+    internal static bool IsManagedSnapshotFileName(string? fileName) =>
+        !string.IsNullOrWhiteSpace(fileName) &&
+        fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) &&
+        fileName.StartsWith("DeskBox-", StringComparison.OrdinalIgnoreCase);
+
     public async Task<IReadOnlyList<DeskBoxBackupSnapshotInfo>> GetSnapshotInventoryAsync(
         CancellationToken cancellationToken = default)
     {
@@ -2431,6 +3017,7 @@ public sealed partial class DeskBoxDataBackupService
                 .Where(item => Directory.Exists(item.Directory))
                 .DistinctBy(item => item.Directory, StringComparer.OrdinalIgnoreCase)
                 .SelectMany(item => Directory.EnumerateFiles(item.Directory, "*.zip")
+                    .Where(path => IsManagedSnapshotFileName(Path.GetFileName(path)))
                     .Select(path => (path, item.Kind)))
                 .OrderByDescending(item => File.GetLastWriteTimeUtc(item.path))
                 .ToList();
@@ -2505,6 +3092,113 @@ public sealed partial class DeskBoxDataBackupService
         }
     }
 
+    /// <summary>
+    /// True when any automatic recovery snapshot predates
+    /// <paramref name="notAfterUtc"/> — the cheap existence probe the
+    /// wipe-recovery detection uses before suppressing the startup snapshot
+    /// on a fresh-default launch.
+    /// </summary>
+    internal async Task<bool> HasRecoverySnapshotNotAfterAsync(
+        DateTimeOffset notAfterUtc,
+        CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            return EnumerateRecoverySnapshotFiles()
+                .Any(path => File.GetLastWriteTimeUtc(path) <= notAfterUtc);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Newest automatic recovery snapshot that predates this process and
+    /// passes the wipe-recovery content gates (readable manifest and settings,
+    /// resolved initial setup, live widgets, a settings schema this build can
+    /// own). Newest-first with per-archive peek validation: the archive
+    /// created moments after a wipe captures fresh defaults rather than the
+    /// lost profile, so file time alone must never pick the candidate.
+    /// </summary>
+    internal async Task<RecoverySnapshotCandidate?> GetLatestValidRecoverySnapshotAsync(
+        DateTimeOffset notAfterUtc,
+        CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            foreach (string path in EnumerateRecoverySnapshotFiles()
+                         .Where(path => File.GetLastWriteTimeUtc(path) <= notAfterUtc)
+                         .OrderByDescending(File.GetLastWriteTimeUtc))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                RecoverySnapshotPeek peek = await PeekRecoverySnapshotAsync(path, cancellationToken);
+                if (RecoverySnapshotCandidatePolicy.Evaluate(peek) !=
+                    RecoverySnapshotCandidateVerdict.Valid)
+                {
+                    continue;
+                }
+
+                return new RecoverySnapshotCandidate(
+                    path,
+                    peek.CreatedAtUtc ?? File.GetLastWriteTimeUtc(path),
+                    peek.AppVersion,
+                    peek.BackupSchemaVersion,
+                    peek.LiveWidgetCount,
+                    IsBackupFromNewerApp(peek.AppVersion));
+            }
+
+            return null;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private IEnumerable<string> EnumerateRecoverySnapshotFiles()
+    {
+        string[] directories =
+        [
+            EffectiveAutomaticSnapshotDirectory,
+            AutomaticSnapshotDirectory,
+            LegacyAutomaticSnapshotDirectory
+        ];
+        foreach (string directory in directories
+                     .Distinct(StringComparer.OrdinalIgnoreCase)
+                     .Where(Directory.Exists))
+        {
+            foreach (string path in Directory.EnumerateFiles(directory, "DeskBox-Auto-*.zip"))
+            {
+                yield return path;
+            }
+        }
+    }
+
+    private static async Task<RecoverySnapshotPeek> PeekRecoverySnapshotAsync(
+        string snapshotPath,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var input = new FileStream(
+                snapshotPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete,
+                bufferSize: 81920,
+                useAsync: true);
+            using var archive = new ZipArchive(input, ZipArchiveMode.Read, leaveOpen: false);
+            return RecoverySnapshotPeekReader.Read(archive);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            return RecoverySnapshotPeek.Unreadable;
+        }
+    }
+
     public async Task<bool> DeleteSnapshotAsync(
         string snapshotPath,
         CancellationToken cancellationToken = default)
@@ -2512,7 +3206,7 @@ public sealed partial class DeskBoxDataBackupService
         ArgumentException.ThrowIfNullOrWhiteSpace(snapshotPath);
         snapshotPath = Path.GetFullPath(snapshotPath);
 
-        if (!snapshotPath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ||
+        if (!IsManagedSnapshotFileName(Path.GetFileName(snapshotPath)) ||
             (!IsPathInsideDirectory(snapshotPath, EffectiveAutomaticSnapshotDirectory) &&
              !IsPathInsideDirectory(snapshotPath, AutomaticSnapshotDirectory) &&
              !IsPathInsideDirectory(snapshotPath, LegacyAutomaticSnapshotDirectory) &&
@@ -2553,8 +3247,19 @@ public sealed partial class DeskBoxDataBackupService
                 bufferSize: 81920,
                 useAsync: true);
             using var archive = new ZipArchive(input, ZipArchiveMode.Read, leaveOpen: false);
-            ZipArchiveEntry? manifestEntry = archive.Entries.SingleOrDefault(entry =>
-                string.Equals(entry.FullName, "manifest.json", StringComparison.Ordinal));
+            // R19-S1-02: a duplicated manifest.json entry used to throw
+            // InvalidOperationException out of SingleOrDefault and fail the whole
+            // backup inventory page; keep the first entry and record the anomaly.
+            List<ZipArchiveEntry> manifestEntries = archive.Entries
+                .Where(entry => string.Equals(entry.FullName, "manifest.json", StringComparison.Ordinal))
+                .ToList();
+            if (manifestEntries.Count > 1)
+            {
+                App.Log(
+                    $"[DataBackup] Archive '{snapshotPath}' contains {manifestEntries.Count} manifest.json entries; using the first.");
+            }
+
+            ZipArchiveEntry? manifestEntry = manifestEntries.Count == 0 ? null : manifestEntries[0];
             if (manifestEntry is null || manifestEntry.Length > 1024 * 1024)
             {
                 return SnapshotManifestSummary.Unreadable;
@@ -2780,6 +3485,9 @@ public sealed partial class DeskBoxDataBackupService
                 await output.FlushAsync(cancellationToken);
             }
 
+            // The final rename commits the archive. Cancellation is accepted
+            // before it; after it succeeds the completed backup is retained.
+            cancellationToken.ThrowIfCancellationRequested();
             File.Move(tempArchivePath, archivePath, overwrite: false);
         }
         finally
@@ -2851,19 +3559,31 @@ public sealed partial class DeskBoxDataBackupService
         throw new IOException($"DeskBox data file changed while creating a backup snapshot: '{sourcePath}'.");
     }
 
-    private void PruneAutomaticSnapshots(string directory, int retentionCount)
+    private void PruneAutomaticSnapshots(
+        string directory,
+        int retentionCount,
+        string? pinnedPath = null)
     {
         if (!Directory.Exists(directory))
         {
             return;
         }
 
-        foreach (string obsoletePath in Directory
+        int kept = 0;
+        foreach (string candidatePath in Directory
                      .EnumerateFiles(directory, "DeskBox-Auto-*.zip")
-                     .OrderByDescending(File.GetLastWriteTimeUtc)
-                     .Skip(Math.Max(1, retentionCount)))
+                     .OrderByDescending(File.GetLastWriteTimeUtc))
         {
-            TryDeleteFile(obsoletePath);
+            if (pinnedPath is not null &&
+                string.Equals(candidatePath, pinnedPath, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (++kept > Math.Max(1, retentionCount))
+            {
+                TryDeleteFile(candidatePath);
+            }
         }
     }
 
@@ -2894,7 +3614,7 @@ public sealed partial class DeskBoxDataBackupService
         Directory.CreateDirectory(PreRestoreBackupDirectory);
         string preRestorePath = GetAvailableArchivePath(
             PreRestoreBackupDirectory,
-            $"DeskBox-PreRestore-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
+            string.Create(CultureInfo.InvariantCulture, $"DeskBox-PreRestore-{DateTime.Now:yyyyMMdd-HHmmss}.zip"));
         await WritePendingRestoreMarkerAtomicallyAsync(
             PendingRestoreMarkerPath,
             marker with { SafetyBackupPath = preRestorePath },
@@ -3066,8 +3786,13 @@ public sealed partial class DeskBoxDataBackupService
         // data: carrying pending/committed/orig files into a backup would
         // land a half-applied restore on the target machine and let a stale
         // journal fire the first time a style restore runs there.
+        // The wipe-recovery offer marker is machine-local session state for
+        // an in-flight decision: restoring it onto a machine (or back onto
+        // this one through an old archive) would re-offer a restore right
+        // after the user finished one. Detection rewrites it when warranted.
         if (relativePath.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase) ||
             relativePath.Contains(".style-restore.", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(relativePath, RecoveryOfferStore.MarkerFileName, StringComparison.OrdinalIgnoreCase) ||
             IsInternalStoreRecoveryArtifact(relativePath))
         {
             return false;
@@ -3266,9 +3991,8 @@ public sealed partial class DeskBoxDataBackupService
         // Scoped restores only: the item-restore mode the user picked in
         // the confirm dialog. True = snapshot-faithful domain replace;
         // false/absent = additive merge (nothing local is deleted). The
-        // field is inverted on purpose: the marker is written BEFORE the
-        // user confirms, so an app exit while the dialog is still open
-        // must fall back to the non-destructive mode, never to replace.
+        // Existing markers without a confirmation field keep their original
+        // additive-merge fallback for compatibility.
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
         bool ReplaceItemData = false,
         // Bounded retries: a deterministically failing scoped restore
@@ -3276,7 +4000,30 @@ public sealed partial class DeskBoxDataBackupService
         // boot forever — the pending marker also blocks scheduled uploads.
         // Rewritten atomically on each failed apply.
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-        int ApplyAttemptCount = 0);
+        int ApplyAttemptCount = 0,
+        // New scoped markers are explicitly unconfirmed until the user
+        // chooses an item mode. Null means a pre-existing marker or full
+        // restore and retains its historical apply behavior.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        bool? ScopedRestoreConfirmed = null,
+        // Full restores are likewise unconfirmed until the user answers the
+        // restore dialog: the marker is written before that dialog opens, so
+        // a crash, hidden window, or exit in between must never let the next
+        // launch swap the whole data directory. Markers from versions
+        // without this field deserialize as false and are discarded — the
+        // safe direction, since the user simply re-runs the restore.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        bool FullRestoreConfirmed = false,
+        // Full restores only: the source machine's data directory recorded
+        // by the backup manifest. The apply swap moves only files, so after
+        // it lands this is the sole trace of where the archived settings'
+        // machine-local paths (managed storage root, custom snapshot
+        // folder) originally lived — the post-restore recovery step derives
+        // the source user profile from it. Null on scoped markers and on
+        // markers written before this field existed; those launches simply
+        // skip the rebase.
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        string? SourceDataPath = null);
 
     [JsonSourceGenerationOptions(
         GenerationMode = JsonSourceGenerationMode.Metadata,
@@ -3359,7 +4106,13 @@ public sealed record DeskBoxRestorePreparation(
     // is allowed — the schema version is the real compatibility gate — but
     // the confirm dialog warns that newer-version-only fields may not
     // survive being saved again by this older build.
-    bool IsFromNewerAppVersion = false);
+    bool IsFromNewerAppVersion = false,
+    // R20-S3-03: identity of the pending-restore transaction this preparation
+    // created. The caller must hand both values back to
+    // ConfirmPendingFullRestoreAsync so a confirmation can never authorize a
+    // marker that another prepare rewrote in the meantime.
+    string? ArchivePath = null,
+    DateTimeOffset? PreparedAtUtc = null);
 
 /// <summary>One todo-store directory remapped from source to target widget id.</summary>
 public sealed record DeskBoxTodoWidgetRemap(string SourceWidgetId, string TargetWidgetId);
@@ -3392,10 +4145,19 @@ internal sealed record TodoRestorePlan(
 /// </summary>
 public sealed record DeskBoxDomainItemCount(string Domain, int Items);
 
+internal enum DeskBoxRestoreApplyKind
+{
+    None = 0,
+    Full,
+    Scoped,
+}
+
 internal sealed record DeskBoxRestoreApplyResult(
     bool HadPendingRestore,
     bool Succeeded,
-    string? ErrorMessage)
+    string? ErrorMessage,
+    DeskBoxRestoreApplyKind Kind = DeskBoxRestoreApplyKind.None,
+    string? SourceDataPath = null)
 {
     public static DeskBoxRestoreApplyResult NoPendingRestore { get; } = new(false, true, null);
 }

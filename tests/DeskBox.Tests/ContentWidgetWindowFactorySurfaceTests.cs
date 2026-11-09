@@ -21,7 +21,7 @@ public sealed class ContentWidgetWindowFactorySurfaceTests
         };
         var factory = new ContentWidgetWindowFactory(
             TestServices.CreateWidgetContentFactory(),
-            new SettingsService(),
+            TestServices.CreateSettingsService(),
             quickCaptureContentFactory:
                 candidate => new StubContent(candidate),
             fileContentFactory:
@@ -44,7 +44,7 @@ public sealed class ContentWidgetWindowFactorySurfaceTests
         int quickCreations = 0;
         var factory = new ContentWidgetWindowFactory(
             TestServices.CreateWidgetContentFactory(),
-            new SettingsService(),
+            TestServices.CreateSettingsService(),
             quickCaptureContentFactory: config =>
             {
                 quickCreations++;
@@ -78,7 +78,7 @@ public sealed class ContentWidgetWindowFactorySurfaceTests
     {
         var factory = new ContentWidgetWindowFactory(
             TestServices.CreateWidgetContentFactory(),
-            new SettingsService(),
+            TestServices.CreateSettingsService(),
             quickCaptureContentFactory:
                 candidate => new StubContent(candidate),
             fileContentFactory:

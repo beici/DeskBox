@@ -1,16 +1,25 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using DeskBox.Helpers;
 using DeskBox.Models;
 using DeskBox.Services;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.UI;
 
 namespace DeskBox.ViewModels;
 
 public sealed partial class WeatherWidgetViewModel
 {
+    // The default city EnsureLocationAsync lands on when auto-location
+    // fails. The cache-restore fallback check must compare against the
+    // exact point that path fetches, so both share these constants.
+    private const double FallbackCityLatitude = 39.9042;
+    private const double FallbackCityLongitude = 116.4074;
+
     private async Task LoadCachedWeatherAsync()
     {
         WeatherCacheState state = await _weatherService.LoadCacheStateAsync();
@@ -47,6 +56,33 @@ public sealed partial class WeatherWidgetViewModel
                 StringComparison.Ordinal);
             _weatherData = forecast.Data;
             ApplyWeatherData(forecast.Data);
+            // The badge means "location fallback" (EnsureLocationAsync landed
+            // on the default city), not the data-source fallback recomputed
+            // above: a provider switch on the user's real location must not
+            // raise it. The cached coordinates are the persisted location
+            // state — a snapshot at the default city restores the badge
+            // unless it matches the last genuinely resolved location (IP
+            // geolocation commonly returns exactly the default point for
+            // Beijing) or the location is pinned in settings; neither raises
+            // it live either.
+            var weatherSettings = _settingsService?.Settings.Weather;
+            bool pinnedLocation = weatherSettings is not null &&
+                !weatherSettings.WeatherAutoLocation &&
+                (weatherSettings.WeatherLatitude != 0 ||
+                 weatherSettings.WeatherLongitude != 0);
+            bool matchesResolvedLocation = state.LastLocation?.IsValid == true &&
+                WeatherCacheStore.IsSameLocation(
+                    state.LastLocation.Latitude,
+                    state.LastLocation.Longitude,
+                    forecast.Latitude,
+                    forecast.Longitude);
+            IsUsingFallbackLocation = !pinnedLocation &&
+                !matchesResolvedLocation &&
+                WeatherCacheStore.IsSameLocation(
+                    forecast.Latitude,
+                    forecast.Longitude,
+                    FallbackCityLatitude,
+                    FallbackCityLongitude);
             HasData = true;
             _automaticRefreshNotBeforeUtc = isStale
                 ? DateTimeOffset.MinValue
@@ -124,9 +160,9 @@ public sealed partial class WeatherWidgetViewModel
             }
             else
             {
-                _latitude = 39.9042;
-                _longitude = 116.4074;
-                _locationName = _localizationService.ApiLanguageCode switch { "zh" => "北京", "ja" => "北京", "de" => "Peking", "pt" => "Pequim", _ => "Beijing" };
+                _latitude = FallbackCityLatitude;
+                _longitude = FallbackCityLongitude;
+                _locationName = _localizationService.T("Weather.LocationFallbackCity");
                 _locationInitialized = true;
                 _locationRetryNotBeforeUtc = now + WeatherRefreshBackoffPolicy.LocationFailureDelay;
                 IsUsingFallbackLocation = true;
@@ -196,9 +232,9 @@ public sealed partial class WeatherWidgetViewModel
             }
     
             // Last resort: use a neutral default so the widget renders something.
-            _latitude = 39.9042;
-            _longitude = 116.4074;
-            _locationName = _localizationService.ApiLanguageCode switch { "zh" => "北京", "ja" => "北京", "de" => "Peking", "pt" => "Pequim", _ => "Beijing" };
+            _latitude = FallbackCityLatitude;
+            _longitude = FallbackCityLongitude;
+            _locationName = _localizationService.T("Weather.LocationFallbackCity");
             _locationInitialized = true;
             IsUsingFallbackLocation = true;
         }
@@ -237,9 +273,9 @@ public sealed partial class WeatherWidgetViewModel
 
                 if (!_locationInitialized)
                 {
-                    _latitude = 39.9042;
-                    _longitude = 116.4074;
-                    _locationName = _localizationService.ApiLanguageCode switch { "zh" => "北京", "ja" => "北京", "de" => "Peking", "pt" => "Pequim", _ => "Beijing" };
+                    _latitude = FallbackCityLatitude;
+                    _longitude = FallbackCityLongitude;
+                    _locationName = _localizationService.T("Weather.LocationFallbackCity");
                     _locationInitialized = true;
                     IsUsingFallbackLocation = true;
                 }
@@ -270,9 +306,9 @@ public sealed partial class WeatherWidgetViewModel
         IsDay = current.IsDay == 1;
         CurrentWeatherCode = current.WeatherCode;
         CurrentCondition = WeatherCodeMapper.GetCondition(current.WeatherCode);
-        CurrentEmoji = WeatherCodeMapper.GetEmoji(current.WeatherCode, IsDay);
         CurrentIconGlyph = WeatherCodeMapper.GetGlyph(current.WeatherCode, IsDay);
-        CurrentDescription = WeatherCodeMapper.GetDescription(current.WeatherCode, _localizationService.CurrentCultureName);
+        CurrentIcon = CreateIcon(current.WeatherCode, IsDay);
+        CurrentDescription = WeatherCodeMapper.GetDescription(current.WeatherCode, _localizationService);
         CurrentTemperatureText = FormatTemperature(current.Temperature);
         
         ApparentTemperatureText = _localizationService.Format("Weather.FeelsLike", FormatTemperature(current.ApparentTemperature));
@@ -294,29 +330,34 @@ public sealed partial class WeatherWidgetViewModel
         if (data.Daily is not null)
         {
             PopulateDailyForecast(data.Daily);
-        
-            if (data.Daily.UvIndexMax.Count > 0)
+
+            // The daily arrays start at the first day the response covers, which is
+            // only "today" for a fresh response. A cached response starts in the past,
+            // so the "today" cards below must look the day up by its date.
+            int todayIndex = ResolveTodayIndex(data.Daily, DateOnly.FromDateTime(ResolveNowInLocation().DateTime));
+
+            if (data.Daily.UvIndexMax.Count > todayIndex)
             {
-                double uv = data.Daily.UvIndexMax[0];
+                double uv = data.Daily.UvIndexMax[todayIndex];
                 UvIndexValueText = $"{uv:0}";
                 UvIndexText = _localizationService.Format("Weather.UVLabel", UvIndexValueText);
             }
         
-            if (data.Daily.PrecipitationProbabilityMax.Count > 0)
+            if (data.Daily.PrecipitationProbabilityMax.Count > todayIndex)
             {
-                double precip = data.Daily.PrecipitationProbabilityMax[0];
+                double precip = data.Daily.PrecipitationProbabilityMax[todayIndex];
                 PrecipitationValueText = $"{(int)precip}%";
                 PrecipitationText = _localizationService.Format("Weather.PrecipChance", PrecipitationValueText);
             }
 
-            if (data.Daily.Sunrise.Count > 0)
+            if (data.Daily.Sunrise.Count > todayIndex)
             {
-                SunriseText = FormatTime(data.Daily.Sunrise[0]);
+                SunriseText = FormatTime(data.Daily.Sunrise[todayIndex]);
             }
 
-            if (data.Daily.Sunset.Count > 0)
+            if (data.Daily.Sunset.Count > todayIndex)
             {
-                SunsetText = FormatTime(data.Daily.Sunset[0]);
+                SunsetText = FormatTime(data.Daily.Sunset[todayIndex]);
             }
         }
         else
@@ -425,6 +466,7 @@ public sealed partial class WeatherWidgetViewModel
         if (weekRange < 1) weekRange = 1; // avoid division by zero
     
         string lang = _localizationService.CurrentCultureName;
+        DateOnly today = DateOnly.FromDateTime(ResolveNowInLocation().DateTime);
         for (int i = 0; i < count; i++)
         {
             string dateStr = i < daily.Time.Count ? daily.Time[i] : string.Empty;
@@ -433,19 +475,12 @@ public sealed partial class WeatherWidgetViewModel
             double tempMin = i < daily.TemperatureMin.Count ? daily.TemperatureMin[i] : 0;
             double precipProb = i < daily.PrecipitationProbabilityMax.Count ? daily.PrecipitationProbabilityMax[i] : 0;
     
-            string dayLabel;
-            if (i == 0)
+            string dayLabel = ClassifyDayLabel(dateStr, today) switch
             {
-                dayLabel = _localizationService.T("Weather.Today");
-            }
-            else if (i == 1)
-            {
-                dayLabel = _localizationService.T("Weather.Tomorrow");
-            }
-            else
-            {
-                dayLabel = ParseDateToDayLabel(dateStr, lang);
-            }
+                DayLabelKind.Today => _localizationService.T("Weather.Today"),
+                DayLabelKind.Tomorrow => _localizationService.T("Weather.Tomorrow"),
+                _ => ParseDateToDayLabel(dateStr, lang)
+            };
     
             double barOffset = (tempMin - weekMin) / weekRange;
             double barWidth = (tempMax - tempMin) / weekRange;
@@ -455,9 +490,9 @@ public sealed partial class WeatherWidgetViewModel
             DailyForecast.Add(new WeatherDayViewModel
             {
                 DayLabel = dayLabel,
-                Emoji = WeatherCodeMapper.GetEmoji(wmoCode, isDay: true),
                 IconGlyph = WeatherCodeMapper.GetGlyph(wmoCode, isDay: true),
-                Description = WeatherCodeMapper.GetDescription(wmoCode, lang),
+                Icon = CreateIcon(wmoCode, isDay: true),
+                Description = WeatherCodeMapper.GetDescription(wmoCode, _localizationService),
                 TempMaxText = FormatTemperature(tempMax),
                 TempMinText = FormatTemperature(tempMin),
                 PrecipitationText = $"{(int)precipProb}%",
@@ -469,10 +504,46 @@ public sealed partial class WeatherWidgetViewModel
         OnPropertyChanged(nameof(DailyForecastItemsSource));
     }
 
+    // Left unset, SvgImageSource rasterizes at whatever size the layout asks for. The forecast
+    // rows ask for 18 DIP, which at 125% scaling is 22.5 physical pixels, so the vector art lands
+    // on a half-pixel edge and gets resampled. Rasterizing once at a fixed generous size keeps the
+    // icons crisp at every layout size and matches how the widget title icons are decoded
+    // (WidgetTitleIconImageSourceFactory).
+    private const int WeatherIconRasterizePixels = 128;
+
+    private ImageSource? CreateIcon(int wmoCode, bool isDay)
+    {
+        try
+        {
+            return new SvgImageSource(WeatherCodeMapper.GetIconUri(
+                wmoCode, isDay, _iconStyle))
+            {
+                RasterizePixelWidth = WeatherIconRasterizePixels,
+                RasterizePixelHeight = WeatherIconRasterizePixels
+            };
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+            // Only reachable in hosts without a live XAML runtime (the
+            // headless test host): SvgImageSource construction needs one.
+            // The icon simply stays unmaterialized there.
+            return null;
+        }
+    }
+
     private void PopulateHourlyForecast(WeatherHourly hourly)
     {
         HourlyForecast.Clear();
-        int startIndex = FindCurrentHourIndex(hourly.Time);
+
+        // The hourly entries are in the location's timezone. Comparing them with the
+        // machine clock only works when the user sits in that timezone, so resolve
+        // "now" there; a stale cache has no matching hour, in which case the strip
+        // starts at the first upcoming hour and nothing is marked as current.
+        DateTimeOffset nowInLocation = ResolveNowInLocation();
+        int currentIndex = FindCurrentHourIndex(hourly.Time, nowInLocation);
+        int startIndex = currentIndex >= 0
+            ? currentIndex
+            : FindFirstHourAtOrAfter(hourly.Time, nowInLocation);
         int count = Math.Min(24, hourly.Time.Count - startIndex);
         for (int i = 0; i < count; i++)
         {
@@ -495,9 +566,9 @@ public sealed partial class WeatherWidgetViewModel
                 HourLabel = hourLabel,
                 TemperatureText = FormatTemperature(temp),
                 PrecipitationText = precip > 0 ? $"{(int)precip}%" : "",
-                Emoji = WeatherCodeMapper.GetEmoji(wmoCode, isDaytime),
                 IconGlyph = WeatherCodeMapper.GetGlyph(wmoCode, isDaytime),
-                IsCurrentHour = i == 0,
+                Icon = CreateIcon(wmoCode, isDaytime),
+                IsCurrentHour = idx == currentIndex,
                 ForecastHourTextSize = this.ForecastHourTextSize
             });
         }
@@ -505,17 +576,26 @@ public sealed partial class WeatherWidgetViewModel
         OnPropertyChanged(nameof(HourlyForecastItemsSource));
     }
 
-    private static int FindCurrentHourIndex(List<string> times)
+    internal static int FindCurrentHourIndex(List<string> times, DateTimeOffset now)
     {
-        if (times.Count == 0)
-        {
-            return 0;
-        }
-
-        string now = DateTimeOffset.Now.ToString("yyyy-MM-ddTHH");
+        string prefix = now.ToString("yyyy-MM-ddTHH", CultureInfo.InvariantCulture);
         for (int i = 0; i < times.Count; i++)
         {
-            if (times[i].StartsWith(now, StringComparison.OrdinalIgnoreCase))
+            if (times[i].StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    internal static int FindFirstHourAtOrAfter(List<string> times, DateTimeOffset now)
+    {
+        string prefix = now.ToString("yyyy-MM-ddTHH", CultureInfo.InvariantCulture);
+        for (int i = 0; i < times.Count; i++)
+        {
+            if (string.CompareOrdinal(times[i], prefix) >= 0)
             {
                 return i;
             }
@@ -524,11 +604,89 @@ public sealed partial class WeatherWidgetViewModel
         return 0;
     }
 
+    internal enum DayLabelKind
+    {
+        Date,
+        Today,
+        Tomorrow
+    }
+
+    /// <summary>
+    /// Decides whether a daily entry is today, tomorrow, or just a date. The daily
+    /// arrays are positional, so an entry is only "today" when its own date says so.
+    /// </summary>
+    internal static DayLabelKind ClassifyDayLabel(string dateStr, DateOnly today)
+    {
+        if (!TryParseIsoDate(dateStr, out DateOnly date))
+        {
+            return DayLabelKind.Date;
+        }
+
+        if (date == today)
+        {
+            return DayLabelKind.Today;
+        }
+
+        return date == today.AddDays(1) ? DayLabelKind.Tomorrow : DayLabelKind.Date;
+    }
+
+    internal static bool TryParseIsoDate(string dateStr, out DateOnly date)
+    {
+        return DateOnly.TryParseExact(
+            dateStr,
+            "yyyy-MM-dd",
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.None,
+            out date);
+    }
+
+    /// <summary>
+    /// Index of the entry that covers today, or 0 when the response does not cover
+    /// today at all (a cache older than its own forecast window).
+    /// </summary>
+    internal static int ResolveTodayIndex(WeatherDaily daily, DateOnly today)
+    {
+        for (int i = 0; i < daily.Time.Count; i++)
+        {
+            if (TryParseIsoDate(daily.Time[i], out DateOnly date) && date == today)
+            {
+                return i;
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// The forecast is expressed in the location's timezone. "Now" therefore has to be
+    /// resolved there, otherwise a location in another timezone is shown the wrong
+    /// hour, and a cached response is shown as if it were current.
+    /// </summary>
+    private DateTimeOffset ResolveNowInLocation()
+    {
+        try
+        {
+            string timezone = _weatherData?.Timezone ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(timezone)
+                && TimeZoneInfo.TryFindSystemTimeZoneById(timezone, out TimeZoneInfo? zone)
+                && zone is not null)
+            {
+                return TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, zone);
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[Weather] Could not resolve the location timezone: {ex.Message}");
+        }
+
+        return DateTimeOffset.Now;
+    }
+
     private static bool IsDaytimeHour(string isoTime)
     {
         try
         {
-            var dt = DateTimeOffset.Parse(isoTime);
+            var dt = DateTimeOffset.Parse(isoTime, CultureInfo.InvariantCulture, DateTimeStyles.None);
             return dt.Hour >= 6 && dt.Hour < 19;
         }
         catch
@@ -541,7 +699,7 @@ public sealed partial class WeatherWidgetViewModel
     {
         try
         {
-            var dt = DateTimeOffset.Parse(isoTime);
+            var dt = DateTimeOffset.Parse(isoTime, CultureInfo.InvariantCulture, DateTimeStyles.None);
             return dt.Hour == 0 ? "0:00" : $"{dt.Hour}:00";
         }
         catch
@@ -554,7 +712,7 @@ public sealed partial class WeatherWidgetViewModel
     {
         try
         {
-            var dt = DateTimeOffset.Parse(isoTime);
+            var dt = DateTimeOffset.Parse(isoTime, CultureInfo.InvariantCulture, DateTimeStyles.None);
             return dt.ToString("HH:mm");
         }
         catch
@@ -567,7 +725,7 @@ public sealed partial class WeatherWidgetViewModel
     {
         try
         {
-            var dt = DateTimeOffset.Parse(dateStr);
+            var dt = DateTimeOffset.Parse(dateStr, CultureInfo.InvariantCulture, DateTimeStyles.None);
             var culture = language switch
             {
                 "zh-CN" => new System.Globalization.CultureInfo("zh-CN"),
@@ -581,6 +739,7 @@ public sealed partial class WeatherWidgetViewModel
                 "ar-SA" => new System.Globalization.CultureInfo("ar-SA"),
                 "bn-BD" => new System.Globalization.CultureInfo("bn-BD"),
                 "ru-RU" => new System.Globalization.CultureInfo("ru-RU"),
+                "ko-KR" => new System.Globalization.CultureInfo("ko-KR"),
                 _ => new System.Globalization.CultureInfo("en-US")
             };
             return dt.ToString("ddd", culture);

@@ -106,7 +106,7 @@
 
 ## 六、本机环境备忘
 
-- **杀毒软件**：360 曾拦截 dotnet 测试宿主导致回归中断（已由你临时关闭）。请①重新开启杀毒，②给 `C:\Users\scrip\Tools\dotnet10` 和 `E:\DeskBox` 的测试目录加白名单，否则以后跑测试还会被打断。
+- **杀毒软件**：360 曾拦截 dotnet 测试宿主导致回归中断（已由你临时关闭）。请①重新开启杀毒，②给 `C:\Users\developer\Tools\dotnet10` 和 `E:\DeskBox` 的测试目录加白名单，否则以后跑测试还会被打断。
 - **应用当前未运行**：发布打包前停掉了 DeskBox.exe，之后没有重启。需要的话从规范路径 `src\DeskBox\bin\Debug\net10.0-windows10.0.22621.0\DeskBox.exe` 启动。
 - **数据备份残留**：`%LOCALAPPDATA%\DeskBox\data\settings.json.pre-def065-repair` 是修「下载」格子位置时留的配置备份。确认一切正常一周后可以删掉。
 

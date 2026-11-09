@@ -11,6 +11,9 @@ namespace DeskBox.Services;
 [JsonSerializable(
     typeof(DesktopOrganizationRecoveryJournal),
     TypeInfoPropertyName = "RecoveryJournal")]
+[JsonSerializable(
+    typeof(DesktopSuppressionLedger),
+    TypeInfoPropertyName = "SuppressionLedger")]
 internal sealed partial class DesktopRecoveryJsonContext : JsonSerializerContext
 {
 }
@@ -41,12 +44,31 @@ public sealed class DesktopOrganizationRecoveryStore
         ResilientJsonLoadResult<DesktopOrganizationRecoveryJournal?> result =
             await ResilientJsonStore.LoadWithResultAsync<DesktopOrganizationRecoveryJournal?>(
                 _journalPath,
-                static json => JsonSerializer.Deserialize(
+                static json => NormalizeJournal(JsonSerializer.Deserialize(
                     json,
-                    DesktopRecoveryJsonContext.Default.RecoveryJournal),
+                    DesktopRecoveryJsonContext.Default.RecoveryJournal)),
                 static () => null,
                 "DesktopOrganizationRecovery");
         return result.Value;
+    }
+
+    /// <summary>
+    /// R20-S8-03: an explicit JSON <c>null</c> for "items"/"createdWidgetIds"
+    /// bypasses the <c>= []</c> initializers, and recovery dereferences both
+    /// lists directly. Normalizing inside the resilient-store callback keeps
+    /// any such journal from throwing past the corruption protocol.
+    /// </summary>
+    private static DesktopOrganizationRecoveryJournal? NormalizeJournal(
+        DesktopOrganizationRecoveryJournal? journal)
+    {
+        if (journal is null)
+        {
+            return null;
+        }
+
+        journal.Items = journal.Items?.Where(item => item is not null).ToList() ?? [];
+        journal.CreatedWidgetIds = journal.CreatedWidgetIds?.Where(id => id is not null).ToList() ?? [];
+        return journal;
     }
 
     public Task SaveAsync(DesktopOrganizationRecoveryJournal journal) =>

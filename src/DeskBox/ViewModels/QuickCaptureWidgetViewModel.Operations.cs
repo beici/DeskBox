@@ -31,7 +31,7 @@ public sealed partial class QuickCaptureWidgetViewModel
             IsViewVisible(restoredView)
                 ? restoredView
                 : MapDefaultView(
-                    _settingsService.Settings.QuickCaptureDefaultView);
+                    _settingsService.Settings.QuickCapture.QuickCaptureDefaultView);
         _restoredViewForInitialization = null;
         OnPropertyChanged(nameof(SelectedView));
         OnPropertyChanged(nameof(IsRecordsView));
@@ -201,20 +201,50 @@ public sealed partial class QuickCaptureWidgetViewModel
     }
 
     public async Task<QuickCaptureItemViewModel?> AddItemWithAttachmentsAsync(
-        IReadOnlyList<DroppedFilePath> droppedFiles)
+        IReadOnlyList<DroppedFilePath> droppedFiles,
+        string? creationIntentId = null)
     {
         if (droppedFiles.Count == 0)
         {
             return null;
         }
 
+        DroppedFilePath[] uniqueFiles = DistinctAttachmentFiles(droppedFiles);
+        string fingerprint = CreateAttachmentSetFingerprint(uniqueFiles);
+
+        // Idempotency is keyed by the normalized attachment set inside the
+        // current creation intent, not by a batch id that reset whenever the
+        // set changed. A retry of the same set reuses the record already
+        // written; adding or removing an attachment only changes the
+        // fingerprint, so it still reuses that record and fills in whatever
+        // a partial previous attempt did not attach. Only a new creation
+        // intent (new note/clear) starts a second record.
+        if (creationIntentId is not null &&
+            _attachmentCreationItem is { } existing &&
+            string.Equals(creationIntentId, _attachmentCreationIntentId, StringComparison.Ordinal))
+        {
+            if (string.Equals(fingerprint, _attachmentCreationFingerprint, StringComparison.Ordinal))
+            {
+                // The same set was already applied in full to this record.
+                return ResolveCreatedItem(existing);
+            }
+
+            QuickCaptureItem reconciled = await AttachMissingFilesAsync(existing, uniqueFiles);
+            _attachmentCreationItem = reconciled;
+            if (FindMissingAttachments(reconciled, uniqueFiles).Length == 0)
+            {
+                _attachmentCreationFingerprint = fingerprint;
+            }
+            return ResolveCreatedItem(reconciled);
+        }
+
         bool copyLinkedFiles = SettingsService.NormalizeAttachmentStorageMode(
-            _settingsService.Settings.AttachmentStorageMode) == SettingsService.AttachmentStorageModeCopy;
-        string[] regularPaths = droppedFiles
+            _settingsService.Settings.QuickCapture.AttachmentStorageMode) == SettingsService.AttachmentStorageModeCopy;
+        string[] regularPaths = uniqueFiles
             .Where(file => !file.ForceManagedCopy)
             .Select(file => file.Path)
             .ToArray();
-        string[] managedPaths = droppedFiles
+        string[] managedPaths = uniqueFiles
             .Where(file => file.ForceManagedCopy)
             .Select(file => file.Path)
             .ToArray();
@@ -234,12 +264,27 @@ public sealed partial class QuickCaptureWidgetViewModel
             return null;
         }
 
+        // Remember the record before the mixed managed-copy pass below: a
+        // failure there must make the retry attach the rest to this record,
+        // not write a second one.
+        RememberAttachmentCreation(creationIntentId, created);
+
         if (regularPaths.Length > 0 && managedPaths.Length > 0)
         {
             created = await _quickCaptureService.AddAttachmentsAsync(
                 created.Id,
                 managedPaths,
                 copyToManagedStorage: true) ?? created;
+            RememberAttachmentCreation(creationIntentId, created);
+        }
+
+        // The fingerprint only means "this set was applied in full". A file
+        // that vanished before import leaves the record short, so a retry of
+        // the same set must still reconcile instead of short-circuiting.
+        if (creationIntentId is not null &&
+            FindMissingAttachments(created, uniqueFiles).Length == 0)
+        {
+            _attachmentCreationFingerprint = fingerprint;
         }
 
         if (SelectedView == QuickCaptureViewMode.Recent)
@@ -248,7 +293,172 @@ public sealed partial class QuickCaptureWidgetViewModel
         }
 
         await RefreshVisibleItemsAsync();
-        return Items.FirstOrDefault(entry => string.Equals(entry.Id, created.Id, StringComparison.Ordinal));
+        return ResolveCreatedItem(created);
+    }
+
+    private async Task<QuickCaptureItem> AttachMissingFilesAsync(
+        QuickCaptureItem item,
+        IReadOnlyList<DroppedFilePath> droppedFiles)
+    {
+        DroppedFilePath[] missing = FindMissingAttachments(item, droppedFiles);
+        if (missing.Length == 0)
+        {
+            return item;
+        }
+
+        bool copyLinkedFiles = SettingsService.NormalizeAttachmentStorageMode(
+            _settingsService.Settings.QuickCapture.AttachmentStorageMode) == SettingsService.AttachmentStorageModeCopy;
+        string[] regularPaths = missing
+            .Where(file => !file.ForceManagedCopy)
+            .Select(file => file.Path)
+            .ToArray();
+        string[] managedPaths = missing
+            .Where(file => file.ForceManagedCopy)
+            .Select(file => file.Path)
+            .ToArray();
+        QuickCaptureItem? updated = null;
+        if (regularPaths.Length > 0)
+        {
+            updated = await _quickCaptureService.AddAttachmentsAsync(
+                item.Id,
+                regularPaths,
+                copyLinkedFiles);
+        }
+        if (managedPaths.Length > 0)
+        {
+            updated = await _quickCaptureService.AddAttachmentsAsync(
+                item.Id,
+                managedPaths,
+                copyToManagedStorage: true) ?? updated;
+        }
+
+        if (updated is null)
+        {
+            return item;
+        }
+
+        await RefreshVisibleItemsAsync();
+        return updated;
+    }
+
+    /// <summary>
+    /// Desired files that the already-written record does not carry yet.
+    /// Linked attachments match on their source path; managed copies match on
+    /// the display name they were imported from. Each attachment is claimed
+    /// once, so a retry never re-imports a file the record already carries.
+    /// </summary>
+    private static DroppedFilePath[] FindMissingAttachments(
+        QuickCaptureItem item,
+        IReadOnlyList<DroppedFilePath> droppedFiles)
+    {
+        var unmatched = new List<TodoAttachment>(item.Attachments);
+        var missing = new List<DroppedFilePath>();
+        foreach (DroppedFilePath file in droppedFiles)
+        {
+            string normalizedPath = NormalizeAttachmentPath(file.Path);
+            int index = unmatched.FindIndex(attachment =>
+                attachment.IsManagedCopy
+                    ? string.Equals(
+                        attachment.DisplayName,
+                        Path.GetFileName(normalizedPath),
+                        StringComparison.OrdinalIgnoreCase)
+                    : string.Equals(
+                        attachment.FilePath,
+                        normalizedPath,
+                        StringComparison.OrdinalIgnoreCase));
+            if (index < 0)
+            {
+                missing.Add(file);
+                continue;
+            }
+
+            unmatched.RemoveAt(index);
+        }
+
+        return missing.ToArray();
+    }
+
+    private static DroppedFilePath[] DistinctAttachmentFiles(
+        IReadOnlyList<DroppedFilePath> droppedFiles)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var unique = new List<DroppedFilePath>(droppedFiles.Count);
+        foreach (DroppedFilePath file in droppedFiles)
+        {
+            if (seen.Add(CreateAttachmentKey(file)))
+            {
+                unique.Add(file);
+            }
+        }
+
+        return unique.ToArray();
+    }
+
+    private static string CreateAttachmentSetFingerprint(
+        IReadOnlyList<DroppedFilePath> droppedFiles)
+    {
+        // Ordered, normalized and exact: order drives the generated body and
+        // primary image, so it is part of the set identity.
+        return string.Join(
+            "\n",
+            droppedFiles.Select(CreateAttachmentKey));
+    }
+
+    private static string CreateAttachmentKey(DroppedFilePath file)
+    {
+        return (file.ForceManagedCopy ? "m:" : "l:") +
+            NormalizeAttachmentPath(file.Path).ToUpperInvariant();
+    }
+
+    private static string NormalizeAttachmentPath(string path)
+    {
+        try
+        {
+            return Path.GetFullPath(path);
+        }
+        catch (Exception)
+        {
+            return path;
+        }
+    }
+
+    private void RememberAttachmentCreation(
+        string? creationIntentId,
+        QuickCaptureItem item)
+    {
+        if (creationIntentId is null)
+        {
+            return;
+        }
+
+        _attachmentCreationIntentId = creationIntentId;
+        // Cleared until the whole set is verified as attached.
+        _attachmentCreationFingerprint = null;
+        _attachmentCreationItem = item;
+    }
+
+    private QuickCaptureItemViewModel ResolveCreatedItem(QuickCaptureItem created)
+    {
+        // The cache covers every live record the view model has projected,
+        // visible or not; the service-returned identity is what the record is.
+        if (_itemViewModelCache.TryGetValue(created.Id, out QuickCaptureItemViewModel? resolved))
+        {
+            resolved.Update(created);
+            return resolved;
+        }
+
+        var viewModel = new QuickCaptureItemViewModel(
+            created,
+            _localizationService,
+            TextSize,
+            IconSize,
+            SearchText,
+            contentTextSize: ContentTextSize,
+            showPinnedSortControls: false,
+            canMovePinnedUp: false,
+            canMovePinnedDown: false);
+        _itemViewModelCache[created.Id] = viewModel;
+        return viewModel;
     }
 
     public async Task<QuickCaptureItemViewModel?> AddAttachmentsAsync(
@@ -261,7 +471,7 @@ public sealed partial class QuickCaptureWidgetViewModel
         }
 
         bool copyLinkedFiles = SettingsService.NormalizeAttachmentStorageMode(
-            _settingsService.Settings.AttachmentStorageMode) == SettingsService.AttachmentStorageModeCopy;
+            _settingsService.Settings.QuickCapture.AttachmentStorageMode) == SettingsService.AttachmentStorageModeCopy;
         QuickCaptureItem? updated = null;
         string[] regularPaths = droppedFiles
             .Where(file => !file.ForceManagedCopy)
@@ -520,14 +730,16 @@ public sealed partial class QuickCaptureWidgetViewModel
         }
 
         int changedCount = 0;
-        foreach (QuickCaptureItemViewModel recentItem in actionableItems.Where(item => item.IsRecent))
+        string[] recentIds = actionableItems
+            .Where(item => item.IsRecent)
+            .Select(item => item.Id)
+            .ToArray();
+        if (recentIds.Length > 0)
         {
-            if (await _quickCaptureService.SaveRecentItemToRecordsAsync(
-                    recentItem.Id,
-                    pin: target == QuickCaptureViewMode.Pinned) is not null)
-            {
-                changedCount++;
-            }
+            // One gate acquisition and one save for the whole drop (R17-P3-04).
+            changedCount += await _quickCaptureService.SaveRecentItemsToRecordsAsync(
+                recentIds,
+                pin: target == QuickCaptureViewMode.Pinned);
         }
 
         string[] recordIds = actionableItems

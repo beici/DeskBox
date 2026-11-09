@@ -19,6 +19,8 @@ namespace DeskBox.Services;
 /// </summary>
 internal static class WidgetCompactTransitionProgressPolicy
 {
+    private const double DefaultFrameBudgetMilliseconds = 1000d / 60;
+
     /// <summary>
     /// Largest advance a single committed frame may contribute, expressed in
     /// commit intervals. Two keeps a genuine one-frame miss (the common case on
@@ -41,30 +43,60 @@ internal static class WidgetCompactTransitionProgressPolicy
     /// </summary>
     public static double ResolveMaximumStallMs(double durationMs)
     {
-        double duration = durationMs > 0 ? durationMs : 240;
+        double duration = double.IsFinite(durationMs) && durationMs > 0 ? durationMs : 240;
         return Math.Clamp(duration * 0.75, 60, 220);
     }
 
     public static double ResolveMaximumStepMs(double frameBudgetMs, int frameSkip)
     {
-        double budget = frameBudgetMs > 0 ? frameBudgetMs : 1000.0 / 60.0;
+        double budget = double.IsFinite(frameBudgetMs) && frameBudgetMs > 0
+            ? frameBudgetMs
+            : DefaultFrameBudgetMilliseconds;
         int skip = Math.Max(1, frameSkip);
-        return Math.Max(1.0, budget * skip * MaximumStepIntervals);
+        return Math.Clamp(budget * skip * MaximumStepIntervals, 1.0, double.MaxValue);
     }
 
     public static double ClampStepMs(double rawStepMs, double maximumStepMs)
     {
-        if (double.IsNaN(rawStepMs) || rawStepMs <= 0)
+        if (!double.IsFinite(rawStepMs) || rawStepMs <= 0)
         {
             return 0;
         }
 
-        double limit = maximumStepMs > 0 ? maximumStepMs : rawStepMs;
+        double limit = double.IsFinite(maximumStepMs) && maximumStepMs > 0
+            ? maximumStepMs
+            : rawStepMs;
         return Math.Min(rawStepMs, limit);
+    }
+
+    /// <summary>
+    /// Resolves one submitted frame against the pacing policy's current interval.
+    /// A deliberately reduced submission rate is normal motion, not a UI stall.
+    /// Only excess time beyond two current intervals may be absorbed, and the
+    /// final recovery step can never spend more than the remaining stall budget.
+    /// </summary>
+    public static (double ProgressMilliseconds, double AbsorbedStallMilliseconds) ResolveStep(
+        double rawStepMs,
+        double submissionIntervalMs,
+        double remainingStallBudgetMs)
+    {
+        if (!double.IsFinite(rawStepMs) || rawStepMs <= 0)
+        {
+            return (0, 0);
+        }
+
+        double maximumStepMs = ResolveMaximumStepMs(submissionIntervalMs, 1);
+        double clampedStepMs = ClampStepMs(rawStepMs, maximumStepMs);
+        // An invalid recovery budget must not extend the animation indefinitely.
+        double remainingBudgetMs = double.IsFinite(remainingStallBudgetMs)
+            ? Math.Max(0, remainingStallBudgetMs)
+            : 0;
+        double absorbedMs = Math.Min(rawStepMs - clampedStepMs, remainingBudgetMs);
+        return (rawStepMs - absorbedMs, absorbedMs);
     }
 
     public static bool ShouldReportStall(double stalledMs)
     {
-        return stalledMs >= StallRecoveryThresholdMs;
+        return double.IsFinite(stalledMs) && stalledMs >= StallRecoveryThresholdMs;
     }
 }

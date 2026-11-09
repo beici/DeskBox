@@ -9,10 +9,10 @@
 
 ```powershell
 Get-Process DeskBox | Where-Object { $_.Path -like 'E:\DeskBox*' } | Stop-Process -Force
-C:\Users\scrip\Tools\dotnet10\dotnet.exe build .\src\DeskBox\DeskBox.csproj -c Debug --no-restore -p:Platform=x64
-C:\Users\scrip\Tools\dotnet10\dotnet.exe test .\tests\DeskBox.Tests\DeskBox.Tests.csproj --no-restore -p:Platform=x64
+C:\Users\developer\Tools\dotnet10\dotnet.exe build .\src\DeskBox\DeskBox.csproj -c Debug --no-restore -p:Platform=x64
+C:\Users\developer\Tools\dotnet10\dotnet.exe test .\tests\DeskBox.Tests\DeskBox.Tests.csproj --no-restore -p:Platform=x64
 # 规范构建 + 重启（人工测试实例）
-C:\Users\scrip\Tools\dotnet10\dotnet.exe build .\src\DeskBox\DeskBox.csproj -c Debug --no-restore
+C:\Users\developer\Tools\dotnet10\dotnet.exe build .\src\DeskBox\DeskBox.csproj -c Debug --no-restore
 Start-Process E:\DeskBox\src\DeskBox\bin\Debug\net10.0-windows10.0.22621.0\DeskBox.exe
 # 身份核实：%LOCALAPPDATA%\DeskBox\DeskBox.log 的 [Build] buildTime 行；基线 x64 3011/3011
 ```

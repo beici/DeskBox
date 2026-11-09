@@ -10,8 +10,10 @@ public sealed class FileWidgetRevealRefreshContractTests
         string merge = File.ReadAllText(TestPaths.FromRepository(
             "src/DeskBox/ViewModels/WidgetViewModel.SortingAndWatchers.cs"));
 
+        // Manual and automatic ordering now share one identity-preserving merge.
+        Assert.Contains("WidgetItemCollectionReconciler.MergeSnapshot(", hydration, StringComparison.Ordinal);
         Assert.Equal(
-            2,
+            1,
             CountOccurrences(
                 hydration,
                 "preserveExistingIconWhenMissing: true"));

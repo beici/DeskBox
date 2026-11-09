@@ -38,7 +38,9 @@ public sealed record NativeAppNotificationActivation(
 
 public sealed record NativeAppNotificationOptions(
     string? Tag = null,
-    string? Group = null);
+    string? Group = null,
+    AppNotificationScenario? Scenario = null,
+    bool MuteAudio = false);
 
 public sealed record NativeAppNotificationSnapshot(
     uint Id,
@@ -193,9 +195,27 @@ public sealed class NativeAppNotificationService : IDisposable
 
         try
         {
+            // Showing while the platform has notifications turned off for
+            // this app (user setting, group policy, or manifest) does not
+            // throw — the toast is silently dropped. Probe the setting (the
+            // read itself is a WinRT COM call and must stay inside the try,
+            // like every other platform call here) so callers can fall back
+            // to their own surfaces instead of assuming it was displayed.
+            AppNotificationSetting setting = AppNotificationManager.Default.Setting;
+            if (setting != AppNotificationSetting.Enabled)
+            {
+                App.Log($"[Notification] Native app notifications unavailable (setting={setting}); not shown.");
+                return false;
+            }
+
             var builder = new AppNotificationBuilder()
                 .AddText(title)
                 .AddText(message);
+
+            if (options?.MuteAudio == true)
+            {
+                builder.MuteAudio();
+            }
 
             if (!string.IsNullOrWhiteSpace(options?.Group))
             {
@@ -205,6 +225,11 @@ public sealed class NativeAppNotificationService : IDisposable
             if (!string.IsNullOrWhiteSpace(options?.Tag))
             {
                 builder.SetTag(options.Tag);
+            }
+
+            if (options?.Scenario is { } scenario)
+            {
+                builder.SetScenario(scenario);
             }
 
             if (arguments is not null)
@@ -321,6 +346,14 @@ public sealed class NativeAppNotificationService : IDisposable
         if (string.IsNullOrWhiteSpace(group))
         {
             throw new ArgumentException("A notification group is required.", nameof(group));
+        }
+
+        // Removal targets notifications this process previously showed; an
+        // unregistered process owns none, and calling the platform API anyway
+        // would surface a COM failure the caller cannot act on.
+        if (!_isRegistered)
+        {
+            return;
         }
 
         await AppNotificationManager.Default.RemoveByTagAndGroupAsync(tag, group);

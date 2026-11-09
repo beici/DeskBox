@@ -51,8 +51,8 @@ public sealed class StackPopoverInteractionContractTests
             popover,
             StringComparison.Ordinal);
         Assert.Contains(
-            "_stackPopoverItemsView is { } stackPopoverItemsView",
-            scrollBars,
+            "RegisterScrollBarActivityTracking(view);",
+            popover,
             StringComparison.Ordinal);
     }
 

@@ -13,7 +13,7 @@ public sealed class JsonSerializationBaselineContractTests : IDisposable
         Guid.NewGuid().ToString("N"));
 
     [Fact]
-    public void ProductionInventory_IsFrozenAtThirtySixFilesAndEightySixCalls()
+    public void ProductionInventory_IsFrozenAtFortyFourFilesAndHundredFiveCalls()
     {
         var expected = new Dictionary<string, int>(StringComparer.Ordinal)
         {
@@ -29,30 +29,47 @@ public sealed class JsonSerializationBaselineContractTests : IDisposable
             ["src/DeskBox/App.AotTodoNotificationLifecycleSmoke.cs"] = 1,
             ["src/DeskBox/App.AotTodoNotificationActivationSmoke.cs"] = 1,
             ["src/DeskBox/App.AotTodoNotificationForwardingSmoke.cs"] = 1,
-            ["src/DeskBox/Services/AppUpdateService.cs"] = 2,
+            // 3: update-check manifest, GitHub release fallback, and the
+            // display-only content-manifest fetch (release-notes window).
+            ["src/DeskBox/Services/AppUpdateService.cs"] = 3,
             ["src/DeskBox/Services/CitySearchService.cs"] = 1,
             ["src/DeskBox/Services/DeskBoxAttachmentHealthService.cs"] = 1,
             ["src/DeskBox/Services/DeskBoxDataBackupService.cs"] = 12,
             ["src/DeskBox/Services/DeskBoxDiagnosticsBundleService.cs"] = 1,
+            ["src/DeskBox/Services/DesktopAutoOrganizationSuppressionRegistry.cs"] = 2,
             ["src/DeskBox/Services/DesktopOrganizationHistoryStore.cs"] = 2,
             ["src/DeskBox/Services/DesktopOrganizationRecoveryStore.cs"] = 2,
             ["src/DeskBox/Services/FeedbackService.cs"] = 4,
             ["src/DeskBox/Services/GlanceImageService.cs"] = 2,
             ["src/DeskBox/Services/GlanceWidgetStore.cs"] = 7,
             ["src/DeskBox/Services/LocalizationService.cs"] = 1,
+            ["src/DeskBox/Services/ManagedStorageMigrationService.cs"] = 2,
             ["src/DeskBox/Services/MusicSettingsStore.cs"] = 3,
             ["src/DeskBox/Services/NativeNotificationActivationEnvelopeStore.cs"] = 2,
+            // 3: pomodoro settings (load deserialize x2 fallback chain, save serialize).
+            ["src/DeskBox/Services/PomodoroSettingsStore.cs"] = 3,
+            // 3: screenshot hotkey settings (load deserialize x2 fallback chain, save serialize).
+            ["src/DeskBox/Services/ScreenshotSettingsStore.cs"] = 3,
             ["src/DeskBox/Services/QuickCaptureStore.cs"] = 2,
+            // 2: the wipe-recovery offer marker (read deserialize, atomic save serialize).
+            ["src/DeskBox/Services/RecoveryOfferStore.cs"] = 2,
             ["src/DeskBox/Services/SearchHistoryService.cs"] = 2,
             ["src/DeskBox/Services/SettingsMigrationService.cs"] = 2,
             ["src/DeskBox/Services/SettingsService.cs"] = 3,
+            // Startup session ledger: read-previous + write-current breadcrumb.
+            ["src/DeskBox/Services/StartupSessionLedger.cs"] = 2,
+            // Crash event report serialization for the support package.
+            ["src/DeskBox/Services/WindowsCrashEventCollector.cs"] = 1,
             ["src/DeskBox/Services/SyncOutboxStore.cs"] = 2,
             ["src/DeskBox/Services/SyncRevisionsStore.cs"] = 2,
             ["src/DeskBox/Services/SyncStateStore.cs"] = 2,
             ["src/DeskBox/Services/TodoWidgetStore.cs"] = 3,
             ["src/DeskBox/Services/WeatherService.cs"] = 5,
             ["src/DeskBox/Services/WidgetFileStackSettings.cs"] = 7,
-            ["src/DeskBox/Services/WidgetLayoutStore.cs"] = 2
+            ["src/DeskBox/Services/WidgetLayoutStore.cs"] = 2,
+            // 3: the title-icon asset store's recent-emoji state file
+            // (load deserialize, add deserialize, atomic save serialize).
+            ["src/DeskBox/Services/WidgetTitleIconAssetStore.cs"] = 3
         };
 
         Dictionary<string, int> actual = ProductionSourceFiles()
@@ -72,8 +89,8 @@ public sealed class JsonSerializationBaselineContractTests : IDisposable
             Assert.Equal(expectedCount, actual[path]);
         }
 
-        Assert.Equal(36, actual.Count);
-        Assert.Equal(86, actual.Values.Sum());
+        Assert.Equal(44, actual.Count);
+        Assert.Equal(105, actual.Values.Sum());
 
         string[] expectedContextOwners =
         [
@@ -98,17 +115,24 @@ public sealed class JsonSerializationBaselineContractTests : IDisposable
             "src/DeskBox/Services/GlanceImageService.cs",
             "src/DeskBox/Services/GlanceWidgetStore.cs",
             "src/DeskBox/Services/LocalizationService.cs",
+            "src/DeskBox/Services/ManagedStorageMigrationModels.cs",
             "src/DeskBox/Services/MusicSettingsStore.cs",
             "src/DeskBox/Services/NativeNotificationActivationEnvelopeStore.cs",
+            "src/DeskBox/Services/PomodoroSettingsStore.cs",
             "src/DeskBox/Services/QuickCaptureStore.cs",
+            "src/DeskBox/Services/RecoveryOfferStore.cs",
+            "src/DeskBox/Services/ScreenshotSettingsStore.cs",
             "src/DeskBox/Services/SearchHistoryService.cs",
             "src/DeskBox/Services/SettingsService.cs",
+            "src/DeskBox/Services/StartupSessionLedger.cs",
             "src/DeskBox/Services/SyncRevisionsStore.cs",
             "src/DeskBox/Services/SyncStateStore.cs",
             "src/DeskBox/Services/TodoWidgetStore.cs",
             "src/DeskBox/Services/WeatherService.cs",
             "src/DeskBox/Services/WidgetFileStackSettings.cs",
             "src/DeskBox/Services/WidgetLayoutStore.cs",
+            "src/DeskBox/Services/WidgetTitleIconAssetStore.cs",
+            "src/DeskBox/Services/WindowsCrashEventCollector.cs",
             "src/DeskBox/Sync/SyncJsonContext.cs"
         ];
         string[] actualContextOwners = ProductionSourceFiles()
@@ -119,7 +143,7 @@ public sealed class JsonSerializationBaselineContractTests : IDisposable
             .Order()
             .ToArray();
 
-        Assert.Equal(33, actualContextOwners.Length);
+        Assert.Equal(40, actualContextOwners.Length);
         Assert.Equal(expectedContextOwners, actualContextOwners);
     }
 
@@ -154,7 +178,6 @@ public sealed class JsonSerializationBaselineContractTests : IDisposable
 
         string[] expectedTypeInfoReferences =
         [
-            "AppUpdateJsonContext.Default.UpdateManifest",
             "AppUpdateJsonContext.Default.GitHubRelease",
             "WeatherJsonContext.Default.PredefinedCityList",
             "WeatherJsonContext.Default.GeocodingResult",
@@ -176,6 +199,12 @@ public sealed class JsonSerializationBaselineContractTests : IDisposable
             Assert.Single(
                 Regex.Matches(allPhaseOneSources, Regex.Escape(reference)).Cast<Match>());
         }
+
+        // The update manifest deserializes twice: once for the installer
+        // check and once for the display-only content fetch.
+        Assert.Equal(
+            2,
+            Regex.Matches(allPhaseOneSources, Regex.Escape("AppUpdateJsonContext.Default.UpdateManifest")).Count);
 
         Assert.DoesNotContain("JsonSerializerOptions", allPhaseOneSources, StringComparison.Ordinal);
         Assert.DoesNotContain(
@@ -456,13 +485,14 @@ public sealed class JsonSerializationBaselineContractTests : IDisposable
             backup.ReplaceLineEndings("\r\n"),
             StringComparison.Ordinal);
 
-        // Five call sites: classic prepare + scoped cloud prepare + the
+        // Six call sites: classic prepare + scoped cloud prepare + the
         // pre-restore safety backup pin + the confirm-dialog item-merge
-        // mode update + the scoped-restore attempt-count persistence
-        // (part of the bounded-retry abandon cap). All must still go
-        // through the same atomic-write helper.
+        // mode update + the full-restore confirmation update + the
+        // scoped-restore attempt-count persistence (part of the
+        // bounded-retry abandon cap). All must still go through the same
+        // atomic-write helper.
         Assert.Equal(
-            5,
+            6,
             Regex.Matches(
                 backup,
                 @"await\s+WritePendingRestoreMarkerAtomicallyAsync\s*\(").Cast<Match>().Count());
@@ -487,6 +517,7 @@ public sealed class JsonSerializationBaselineContractTests : IDisposable
             Title = "Saved folder",
             DetailPath = @"C:\Saved"
         });
+        SearchHistoryService.WaitForAllPendingPersists();
 
         using (JsonDocument saved = JsonDocument.Parse(File.ReadAllText(storePath)))
         {

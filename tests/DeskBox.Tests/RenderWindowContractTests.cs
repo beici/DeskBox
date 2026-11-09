@@ -35,7 +35,9 @@ public sealed class RenderWindowContractTests
     /// <summary>
     /// Icons, folder counts, shortcut targets, and shell kinds must all draw
     /// from the windowed hydration universe so metadata work stays proportional
-    /// to what the user can see.
+    /// to what the user can see. The fifth universe read is the
+    /// HealReleasedItemIconsIfIdle predicate: release/acquire pairing needs
+    /// the same universe to decide whether a heal pass has work to do.
     /// </summary>
     [Fact]
     public void ItemHydration_UsesTheRenderWindowUniverse()
@@ -43,7 +45,7 @@ public sealed class RenderWindowContractTests
         string source = File.ReadAllText(GetRepoFile(
             "src/DeskBox/ViewModels/WidgetViewModel.ItemHydration.cs"));
 
-        Assert.Equal(4, CountOccurrences(source, "HydrationUniverseItems"));
+        Assert.Equal(5, CountOccurrences(source, "HydrationUniverseItems"));
     }
 
     [Fact]
@@ -95,11 +97,11 @@ public sealed class RenderWindowContractTests
             "src/DeskBox/Controls/WidgetContents/FileSurfaceContent.RenderWindow.cs"));
 
         Assert.Contains(
-            "ItemsGrid.LayoutUpdated += ItemsView_LayoutUpdatedForRenderWindow",
+            "FileItemsViewport.LayoutUpdated += ItemsView_LayoutUpdatedForRenderWindow",
             renderWindow,
             StringComparison.Ordinal);
-        Assert.Contains(
-            "ItemsList.LayoutUpdated += ItemsView_LayoutUpdatedForRenderWindow",
+        Assert.DoesNotContain(
+            "sender is not ListViewBase itemsView",
             renderWindow,
             StringComparison.Ordinal);
         Assert.Contains(

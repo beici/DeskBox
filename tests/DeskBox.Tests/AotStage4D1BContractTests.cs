@@ -27,12 +27,12 @@ public sealed class AotStage4D1BContractTests
         Assert.Contains("using CommunityToolkit.WinUI.Controls;", source, StringComparison.Ordinal);
         Assert.Matches(
             new Regex(
-                @"case SettingsCard (?<name>\w+):\s*\k<name>\.Header = value;",
+                @"case SettingsCard (?<name>\w+):\s*\k<name>\.Header = InfoTip\.TryCreateHeaderContent\(\k<name>, value\) \?\? value;",
                 RegexOptions.CultureInvariant),
             source);
         Assert.Matches(
             new Regex(
-                @"case SettingsExpander (?<name>\w+):\s*\k<name>\.Header = value;",
+                @"case SettingsExpander (?<name>\w+):\s*\k<name>\.Header = InfoTip\.TryCreateHeaderContent\(\k<name>, value\) \?\? value;",
                 RegexOptions.CultureInvariant),
             source);
         Assert.Matches(
@@ -53,23 +53,30 @@ public sealed class AotStage4D1BContractTests
         Assert.DoesNotContain("SetObjectProperty", source, StringComparison.Ordinal);
         Assert.DoesNotContain("GetType().GetProperty", source, StringComparison.Ordinal);
 
-        // Combos such as Grid|HeaderKey or StackPanel|HeaderKey are intentional
-        // search-catalog markers (indexed by update-settings-search-catalog.ps1);
-        // Localized.cs deliberately ignores them at runtime because those
-        // containers have no Header/Description property.
+        // InfoBar carries the native notice Title/Message properties for the
+        // notice cards; the settings shell hosts every localized SettingsCard /
+        // SettingsExpander. The Grid/StackPanel/Expander catalog markers and the
+        // retired favorites panel are gone from the merged XAML tree, so the
+        // expectation tracks the seven surviving tag/property pairs only.
         IReadOnlyDictionary<string, int> usages = ReadLocalizedXamlUsages();
-        Assert.Equal(10, usages.Count);
-        Assert.Equal(186, usages["toolkit:SettingsCard|HeaderKey"]);
-        Assert.Equal(156, usages["toolkit:SettingsCard|DescriptionKey"]);
-        Assert.Equal(21, usages["toolkit:SettingsExpander|HeaderKey"]);
-        Assert.Equal(8, usages["toolkit:SettingsExpander|DescriptionKey"]);
+        Assert.Equal(7, usages.Count);
+        // 226->228 / 193->195: the per-widget icon-label editor added two
+        // SettingsCards (box picker + hide-labels toggle).
+        // 228->235 / 195->202: the pomodoro settings section added seven
+        // SettingsCards (schedule summary + four NumberBoxes + two toggles),
+        // each carrying both a header and a description key.
+        // 235->237 / 202->203 / 37->38 / 23->24: the screenshot settings
+        // section added one expander (header + description) with an inner
+        // SettingsCard (header only), plus the General entry card in
+        // SettingsWindow.xaml (header + description).
+        Assert.Equal(237, usages["toolkit:SettingsCard|HeaderKey"]);
+        Assert.Equal(203, usages["toolkit:SettingsCard|DescriptionKey"]);
+        Assert.Equal(38, usages["toolkit:SettingsExpander|HeaderKey"]);
+        Assert.Equal(24, usages["toolkit:SettingsExpander|DescriptionKey"]);
         Assert.Equal(2, usages["TextBox|HeaderKey"]);
-        Assert.Equal(2, usages["Grid|HeaderKey"]);
-        Assert.Equal(1, usages["Grid|DescriptionKey"]);
-        Assert.Equal(1, usages["StackPanel|HeaderKey"]);
-        Assert.Equal(1, usages["Expander|HeaderKey"]);
-        Assert.Equal(1, usages["Expander|DescriptionKey"]);
-        Assert.Equal(379, usages.Values.Sum());
+        Assert.Equal(6, usages["InfoBar|HeaderKey"]);
+        Assert.Equal(6, usages["InfoBar|DescriptionKey"]);
+        Assert.Equal(516, usages.Values.Sum());
     }
 
     [Fact]
@@ -77,7 +84,7 @@ public sealed class AotStage4D1BContractTests
     {
         string script = ReadRepositoryFile("scripts/publish-aot-audit.ps1");
 
-        Assert.Contains("$auditProfileVersion = 63", script, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 65", script, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", script, StringComparison.Ordinal);
         Assert.Contains("stage4D1BWarningMessages", script, StringComparison.Ordinal);
         Assert.Contains("QuickCaptureSurfaceContent.xaml.cs", script, StringComparison.Ordinal);

@@ -217,7 +217,7 @@ public partial class App
             settingsService,
             new LocalizationService(settingsService),
             dispatcherQueue: null,
-            _ => { },
+            _ => Task.FromResult(true),
             widgetId => new TodoWidgetStore(widgetsRoot, widgetId),
             () => AotTodoNotificationActivationClock);
 

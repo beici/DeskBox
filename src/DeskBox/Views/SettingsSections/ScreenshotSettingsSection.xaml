@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Screenshot capture settings. The per-feature ScreenshotSettingsStore owns
+  the state (see docs/forks/screenshot-capture-design.md); this section is
+  pure code-behind on that store, following GlanceWidgetSettingsSection's
+  store-first pattern instead of the frozen SettingsViewModel facade.
+-->
+<UserControl
+    x:Class="DeskBox.Views.SettingsSections.ScreenshotSettingsSection"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:toolkit="using:CommunityToolkit.WinUI.Controls"
+    xmlns:svc="using:DeskBox.Services"
+    mc:Ignorable="d">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="ms-appx:///Styles/SettingsOverviewResources.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <StackPanel Style="{StaticResource SectionPanelStyle}">
+        <toolkit:SettingsExpander
+            x:Name="ScreenshotHotkeyExpander"
+            HorizontalContentAlignment="Stretch"
+            svc:Localized.DescriptionKey="Settings.Screenshot.Hotkey.Description"
+            svc:Localized.HeaderKey="Settings.Screenshot.Hotkey.Title">
+            <toolkit:SettingsExpander.HeaderIcon>
+                <FontIcon Glyph="&#xE722;" />
+            </toolkit:SettingsExpander.HeaderIcon>
+            <ToggleSwitch svc:Localized.AutomationNameKey="Settings.Screenshot.Hotkey.Title"
+                x:Name="ScreenshotHotkeyToggle"
+                MinWidth="0"
+                OffContent=""
+                OnContent=""
+                Toggled="ScreenshotHotkeyToggle_Toggled" />
+            <toolkit:SettingsExpander.Items>
+                <toolkit:SettingsCard
+                    ContentAlignment="Vertical"
+                    HorizontalContentAlignment="Stretch"
+                    svc:Localized.HeaderKey="Settings.Screenshot.Hotkey.CustomTitle">
+                    <Grid RowSpacing="10">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock
+                            x:Name="ScreenshotHotkeyStatusText"
+                            Grid.Row="0"
+                            VerticalAlignment="Center"
+                            Style="{StaticResource SettingDescriptionTextStyle}" />
+                        <Grid
+                            Grid.Row="1"
+                            MinWidth="252"
+                            HorizontalAlignment="Right"
+                            ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Button
+                                x:Name="ScreenshotHotkeyCaptureButton"
+                                Grid.Column="0"
+                                MinWidth="132"
+                                HorizontalAlignment="Stretch"
+                                Click="ScreenshotHotkeyCaptureButton_Click"
+                                Style="{StaticResource ActionButtonStyle}"
+                                svc:Localized.ToolTipKey="Settings.Screenshot.Hotkey.ChangeTooltip" />
+                            <Button
+                                x:Name="ResetScreenshotHotkeyButton"
+                                Grid.Column="1"
+                                Click="ResetScreenshotHotkeyButton_Click"
+                                Style="{StaticResource ActionButtonStyle}"
+                                svc:Localized.ToolTipKey="Settings.Screenshot.Hotkey.ResetTooltip">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE72C;" FontSize="16" />
+                                    <TextBlock svc:Localized.Key="Common.Restore" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                    </Grid>
+                </toolkit:SettingsCard>
+            </toolkit:SettingsExpander.Items>
+        </toolkit:SettingsExpander>
+    </StackPanel>
+</UserControl>

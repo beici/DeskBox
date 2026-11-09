@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Win32.SafeHandles;
 using DeskBox.Models;
 using DeskBox.Platform;
@@ -6,7 +7,6 @@ namespace DeskBox.Services;
 
 public sealed class DesktopAutoOrganizationWatcher : IDisposable
 {
-    private static readonly TimeSpan SettleDelay = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan StabilityProbeDelay = TimeSpan.FromMilliseconds(800);
     private static readonly TimeSpan ActivityBurstWindow = TimeSpan.FromSeconds(8);
     private static readonly TimeSpan ActivityQuietDelay = TimeSpan.FromSeconds(4);
@@ -32,6 +32,8 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
     private readonly FileSystemWatcher _watcher;
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
+    private readonly ConcurrentDictionary<string, byte> _targetUnavailableNotifiedWidgetIds =
+        new(StringComparer.Ordinal);
     private CancellationTokenSource _featureCts = new();
     // FTHR-03: FileSystemWatcher callback threads read the feature token
     // after only a `_disposed` guard. Reading `_featureCts.Token` there races
@@ -42,11 +44,13 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
     private CancellationToken _featureToken;
     private Task? _retryPump;
     private bool _lastEnabled;
+    private bool _started;
     private bool _disposed;
     private int _watcherRecoveryScheduled;
     private int _watcherRecoveryAttempts;
 
     public event Action<DesktopAutoOrganizationCompleted>? ItemOrganized;
+    public event Action<DesktopOrganizationTargetUnavailableSummary>? AutoOrganizationTargetUnavailable;
 
     public DesktopAutoOrganizationWatcher(
         SettingsService settingsService,
@@ -108,6 +112,9 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
         ThrowIfDisposed();
         _retryPump ??= RetryPumpAsync(_lifetimeCts.Token);
         _lastEnabled = _settingsService.Settings.DesktopAutoOrganizationEnabled;
+        // Both exits below are "started": the disabled branch must also adopt
+        // later settings toggles, so the flag is set before either return.
+        _started = true;
         if (!_lastEnabled)
         {
             _featureCts.Cancel();
@@ -134,6 +141,15 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
 
     private void OnSettingsChanged()
     {
+        // Settings toggles must not bypass the deferred start: before Start()
+        // has run the watcher is deliberately idle (startup storm guard), and
+        // _lastEnabled still holds its pre-start default. Start() adopts the
+        // current setting when it runs.
+        if (!_started)
+        {
+            return;
+        }
+
         bool enabled = _settingsService.Settings.DesktopAutoOrganizationEnabled;
         if (!enabled && _lastEnabled)
         {
@@ -174,6 +190,10 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
         _featureCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
         _featureToken = _featureCts.Token;
         Interlocked.Exchange(ref _watcherRecoveryAttempts, 0);
+        // A fresh enable cycle gets a fresh unavailability episode: a target
+        // that is still unreachable after a toggle round-trip must warn
+        // again instead of staying muted by the previous cycle's notice.
+        _targetUnavailableNotifiedWidgetIds.Clear();
     }
 
     private void DisableFeature()
@@ -502,7 +522,17 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
             return;
         }
 
-        StartProcessing(_states.BeginPending(fullPath, preserveRetryAttempts));
+        DesktopAutoOrganizationWorkItem workItem =
+            _states.BeginPending(fullPath, preserveRetryAttempts);
+        // The configured wait replaces the old settle grace, so it must not
+        // consume the transient-failure retry budget.
+        if (_states.MarkDeferred(
+                workItem,
+                _utcNow().Add(DesktopAutoOrganizationPolicy.GetDelay(_settingsService.Settings)),
+                countAttempt: false))
+        {
+            SignalRetryPump();
+        }
     }
 
     private void StartProcessing(DesktopAutoOrganizationWorkItem workItem)
@@ -527,9 +557,11 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
         CancellationToken cancellationToken)
     {
         bool moveSucceeded = false;
+        // Declared outside the try so the recoverable-unavailability catch
+        // can report which target the item was being organized into.
+        WidgetConfig? target = null;
         try
         {
-            await _delayAsync(SettleDelay, cancellationToken);
             await WaitForDirectoryQuietAsync(workItem.Path, cancellationToken);
             if (_disposed ||
                 !_settingsService.Settings.DesktopAutoOrganizationEnabled ||
@@ -620,7 +652,10 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
                 return;
             }
 
-            WidgetConfig? target = widgetsSnapshot.FirstOrDefault(widget =>
+            // Assigns the outer local declared above the try: the recoverable
+            // unavailability catch still needs to report which target the item
+            // was being organized into, so this must not shadow it.
+            target = widgetsSnapshot.FirstOrDefault(widget =>
                 string.Equals(widget.Id, rule.TargetWidgetId, StringComparison.Ordinal));
             if (target is null)
             {
@@ -682,6 +717,7 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
                     move: true,
                     useShellProgress: false);
                 moveSucceeded = true;
+                _targetUnavailableNotifiedWidgetIds.TryRemove(target.Id, out _);
 
                 // Moving the source is the transaction boundary. Mark it before
                 // best-effort UI work so refresh/notification failures never retry it.
@@ -746,6 +782,17 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
             {
                 MarkMissing(workItem);
             }
+
+            // The recoverable skip must stay visible: warn once per target
+            // per unavailability episode (re-armed by a later successful
+            // move or a fresh enable cycle) instead of once per deferred
+            // item, so a dead drive with steady traffic does not spam.
+            if (ex is OrganizerService.MappedFolderUnavailableException mapped &&
+                target is not null &&
+                _targetUnavailableNotifiedWidgetIds.TryAdd(target.Id, 0))
+            {
+                RaiseTargetUnavailable(target.Name, mapped.Path);
+            }
         }
         catch (UnauthorizedAccessException ex) when (!moveSucceeded)
         {
@@ -779,6 +826,22 @@ public sealed class DesktopAutoOrganizationWatcher : IDisposable
             {
                 Defer(workItem, DesktopAutoOrganizationRetryKind.Finite);
             }
+        }
+    }
+
+    private void RaiseTargetUnavailable(string widgetName, string targetPath)
+    {
+        try
+        {
+            AutoOrganizationTargetUnavailable?.Invoke(
+                new DesktopOrganizationTargetUnavailableSummary(
+                    new[] { widgetName },
+                    new[] { targetPath }));
+        }
+        catch (Exception ex)
+        {
+            App.Log(
+                $"[DesktopAutoOrganization] Target-unavailable notification failed: {ex}");
         }
     }
 

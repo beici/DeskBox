@@ -134,13 +134,14 @@ public sealed class AotStage5B4AContractTests
         foreach (string locale in new[]
                  {
                      "zh-CN", "zh-TW", "en-US", "ja-JP", "de-DE", "pt-BR",
-                     "hi-IN", "es-ES", "fr-FR", "ar-SA", "bn-BD", "ru-RU"
+                     "hi-IN", "es-ES", "fr-FR", "ar-SA", "bn-BD", "ru-RU",
+                     "ko-KR"
                  })
         {
             Assert.Contains($"\"{locale}\"", source, StringComparison.Ordinal);
         }
 
-        Assert.Contains("Window.Settings.Title", source, StringComparison.Ordinal);
+        Assert.Contains("Settings.WindowTitle", source, StringComparison.Ordinal);
         Assert.Contains("Search.Action.OpenSettings", source, StringComparison.Ordinal);
         string diagnostic = source[
             source.IndexOf("CaptureAotSmokeResourceDiagnostics", StringComparison.Ordinal)..];
@@ -232,10 +233,10 @@ public sealed class AotStage5B4AContractTests
         string launcher = ReadRepositoryFile("scripts/start-aot-preview.ps1");
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
 
-        Assert.Contains("$auditProfileVersion = 63", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 65", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4A", audit, StringComparison.Ordinal);
-        Assert.Contains("$RequiredAuditProfileVersion = 63", launcher, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 65", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("managed UI", project, StringComparison.OrdinalIgnoreCase);

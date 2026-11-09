@@ -154,6 +154,15 @@ public sealed partial class DesktopOrganizationTaskView
             ResultInfo.IsOpen = true;
             ExecuteButton.IsEnabled = true;
         }
+        catch (DesktopOrganizationInvalidStorageRootException ex)
+        {
+            App.Log($"[DesktopOrganization] Execution failed: {ex}");
+            ResultInfo.Severity = InfoBarSeverity.Error;
+            ResultInfo.Title = T("DesktopOrganization.Result.FailedTitle");
+            ResultInfo.Message = T("DesktopOrganization.Error.StorageRootOnDesktop");
+            ResultInfo.IsOpen = true;
+            ExecuteButton.IsEnabled = true;
+        }
         catch (Exception ex)
         {
             App.Log($"[DesktopOrganization] Execution failed: {ex}");
@@ -197,6 +206,7 @@ public sealed partial class DesktopOrganizationTaskView
         }
 
         _isExecuting = true;
+        _isUndoing = true;
         UndoButton.IsEnabled = false;
         AbandonUndoButton.IsEnabled = false;
         SourceSelectionHost.IsEnabled = false;
@@ -247,6 +257,11 @@ public sealed partial class DesktopOrganizationTaskView
         finally
         {
             _isExecuting = false;
+            _isUndoing = false;
+            // Defensive: an undo cannot honor a close request, so any flag
+            // armed during this window is stale and must not leak into the
+            // next execution's finally.
+            _closeAfterExecutionStops = false;
             UndoButton.IsEnabled = true;
             AbandonUndoButton.IsEnabled = true;
             DoneButton.IsEnabled = true;
@@ -287,6 +302,7 @@ public sealed partial class DesktopOrganizationTaskView
         }
 
         _isExecuting = true;
+        _isUndoing = true;
         UndoButton.IsEnabled = false;
         AbandonUndoButton.IsEnabled = false;
         try
@@ -305,6 +321,9 @@ public sealed partial class DesktopOrganizationTaskView
         finally
         {
             _isExecuting = false;
+            _isUndoing = false;
+            // Defensive: not consumable here; drop any stale close request.
+            _closeAfterExecutionStops = false;
             UndoButton.IsEnabled = true;
             AbandonUndoButton.IsEnabled = true;
         }
@@ -339,6 +358,7 @@ public sealed partial class DesktopOrganizationTaskView
         }
 
         _isExecuting = true;
+        _isUndoing = true;
         RecoverButton.IsEnabled = false;
         AbandonRecoveryButton.IsEnabled = false;
         try
@@ -360,6 +380,9 @@ public sealed partial class DesktopOrganizationTaskView
         finally
         {
             _isExecuting = false;
+            _isUndoing = false;
+            // Defensive: not consumable here; drop any stale close request.
+            _closeAfterExecutionStops = false;
             RecoverButton.IsEnabled = true;
             AbandonRecoveryButton.IsEnabled = true;
             UpdateRecoveryState();

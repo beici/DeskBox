@@ -1,3 +1,4 @@
+using DeskBox.Helpers;
 using DeskBox.Services;
 using DeskBox.ViewModels;
 using Microsoft.UI.Xaml;
@@ -15,12 +16,17 @@ public sealed partial class TodoWidgetContent
     };
     private readonly MarkdownDocumentService _markdownDocumentService = new();
     private readonly SemaphoreSlim _notesSaveGate = new(1, 1);
+
+    // R20-S6-06: a save that never returns (store lock, IO stall) used to wedge
+    // every later notes save behind the gate forever, with no log and no retry.
+    private static readonly TimeSpan NotesSaveGateTimeout = TimeSpan.FromSeconds(10);
     private string? _notesEditingItemId;
     private string _notesOriginalText = string.Empty;
     private bool _notesExitRequested;
 
     private void InitializeDetailNotesAndSteps()
     {
+        TextCompositionTracker.Attach(DetailNewStepTextBox);
         _notesAutosaveTimer.Tick += NotesAutosaveTimer_Tick;
         DetailNotesView.AttachmentResolver = ResolveSelectedTodoAttachment;
         DetailNotesView.AttachmentOpenRequested += DetailNotesView_AttachmentOpenRequested;
@@ -56,6 +62,13 @@ public sealed partial class TodoWidgetContent
     {
         if (e.Key == VirtualKey.Enter)
         {
+            if (TextCompositionTracker.IsComposing(DetailNewStepTextBox))
+            {
+                // Enter confirms the IME candidate; adding a step here would persist the
+                // raw composition buffer and then clear the box.
+                return;
+            }
+
             e.Handled = true;
             await AddDetailStepAsync();
         }
@@ -267,7 +280,25 @@ public sealed partial class TodoWidgetContent
         string source = DetailNotesEditor.Text;
         TodoWidgetViewModel viewModel = ViewModel;
         bool saved = false;
-        await _notesSaveGate.WaitAsync();
+        // R20-S6-06: never wait without a bound. The editor keeps the text, and
+        // the autosave timer fires again, so a skipped save is recoverable — a
+        // permanently wedged gate is not.
+        if (!await _notesSaveGate.WaitAsync(NotesSaveGateTimeout))
+        {
+            App.Log(
+                $"[Todo] Skipped the notes save for {itemId}: a previous save is " +
+                "still running after the wait budget.");
+            // R21-S6-02: surface the skip instead of leaving the caller's button
+            // silently unresponsive - the same banner a failed save shows.
+            if (string.Equals(_notesEditingItemId, itemId, StringComparison.Ordinal))
+            {
+                DetailNotesSaveFailure.Visibility = Visibility.Visible;
+                ApplyNotesEditingVisualState(isEditing: true);
+            }
+
+            return false;
+        }
+
         try
         {
             saved = await viewModel.UpdateNotesAsync(itemId, source);

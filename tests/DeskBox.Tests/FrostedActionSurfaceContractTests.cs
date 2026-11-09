@@ -6,15 +6,27 @@ public sealed class FrostedActionSurfaceContractTests
     public void RecommendedActionAreas_UseIndependentAcrylicLayers()
     {
         string root = FindRepositoryRoot();
-        string onboarding = Read(root, "src/DeskBox/Views/OnboardingWindow.xaml");
         string quickCaptureSurface = Read(root, "src/DeskBox/Controls/WidgetContents/QuickCaptureSurfaceContent.xaml");
         string todo = Read(root, "src/DeskBox/Controls/WidgetContents/TodoWidgetContent.xaml");
         string releaseNotes = Read(root, "src/DeskBox/Views/ReleaseNotesWindow.xaml");
 
-        AssertAcrylicLayer(onboarding, "x:Name=\"FooterAcrylicSurface\"", "Opacity=\"0.46\"");
         AssertAcrylicLayer(quickCaptureSurface, "x:Name=\"DetailHeaderAcrylicSurface\"", "Opacity=\"0.42\"");
         AssertAcrylicLayer(todo, "x:Name=\"DetailHeaderAcrylicSurface\"", "Opacity=\"0.42\"");
-        AssertAcrylicLayer(releaseNotes, "x:Name=\"FooterAcrylicSurface\"", "Opacity=\"0.5\"");
+        // The ReleaseNotes footer follows the SearchPopupWindow footer plate
+        // convention (Layer fill on a Mica base) since the 2026-10 UI audit;
+        // large in-app acrylic there read as a washed-out hole.
+        Assert.Contains("x:Name=\"FooterAcrylicSurface\"", releaseNotes, StringComparison.Ordinal);
+        Assert.Contains(
+            "Background=\"{ThemeResource LayerFillColorDefaultBrush}\"",
+            releaseNotes,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "BorderBrush=\"{ThemeResource DividerStrokeColorDefaultBrush}\"",
+            releaseNotes,
+            StringComparison.Ordinal);
+        Assert.Contains("IsHitTestVisible=\"False\"", releaseNotes, StringComparison.Ordinal);
+        Assert.DoesNotContain("SystemControlAcrylicElementBrush", releaseNotes, StringComparison.Ordinal);
+        Assert.DoesNotContain("Opacity=\"0.5\"", releaseNotes, StringComparison.Ordinal);
     }
 
     [Fact]

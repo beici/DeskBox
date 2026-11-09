@@ -48,13 +48,15 @@ public sealed partial class TodoWidgetContent : UserControl
     private Button? _pressedColorFilterButton;
     private bool _isStartingColorFilterDrag;
     private bool _colorFilterHandledEventsRegistered;
+    // 色点拖拽的进程内载荷：DragStarting 置、Drop 应用时取走、源侧 finally 兜底清。
+    // 实例字段依赖待办格子单实例（WidgetManager.CreateSingletonContentFeatureWidgetAsync
+    // 存在即复用）；若未来允许多实例，跨格标色会退化为无操作（不崩不脏），届时改 static。
+    private string? _draggedColorMarker;
     private bool _isResponsiveLayoutTransitionActive;
     private bool _isInteractiveResizeActive;
     private bool _segmentedLayoutRefreshPending;
-    private bool _todoSegmentedRestoreQueued;
+    private readonly WidgetSegmentedRestoreSession _todoSegmentedRestoreSession = new();
     private EventHandler<object>? _todoSegmentedRenderingHandler;
-    private int _todoSegmentedStableFrameCount;
-    private double _todoSegmentedLastCandidateWidth;
     private DateTimeOffset _suppressColorFilterClickUntil;
     private Windows.Foundation.Point _colorFilterDragStartPoint;
     private Windows.Foundation.Point _selectionStartPoint;
@@ -75,12 +77,15 @@ public sealed partial class TodoWidgetContent : UserControl
     {
         InitializeComponent();
         InitializeDetailNotesAndSteps();
+        TextCompositionTracker.Attach(DetailTitleTextBox);
         DetailTitleTextBox.AddHandler(
             UIElement.PreviewKeyDownEvent,
             new KeyEventHandler(DetailTitleTextBox_KeyDown),
             handledEventsToo: true);
         Loaded += TodoWidgetContent_Loaded;
         Unloaded += TodoWidgetContent_Unloaded;
+        ListHeaderArea.SizeChanged += TodoSegmentedRestoreSlot_SizeChanged;
+        RootGrid.SizeChanged += TodoSegmentedRestoreSlot_SizeChanged;
         ActualThemeChanged += (_, _) =>
         {
             ApplyEditorVisualStyle();
@@ -172,6 +177,12 @@ public sealed partial class TodoWidgetContent : UserControl
             ViewModel.VisibleItems.CollectionChanged += VisibleItems_CollectionChanged;
         }
 
+        // FEXC-03 / R2 ⑥-1: SaveFailed feedback wiring used to hang off
+        // ClearAllTodos, which is dead code — the subscription never ran in a
+        // live app. Loaded is the live path and is idempotent (the helper
+        // unsubscribes any previous view model first).
+        EnsureSaveFailedFeedbackWiring();
+
         // DEF-043: merge background reminder writes into the live view model
         // while the view is loaded, so the next user-driven save cannot revert
         // the reminder bookkeeping. Loaded/Unloaded is the natural lifetime
@@ -197,6 +208,12 @@ public sealed partial class TodoWidgetContent : UserControl
     private void TodoWidgetContent_Unloaded(object sender, RoutedEventArgs e)
     {
         CancelTodoSegmentedRestore();
+        // A group switch can detach this view before its old host finishes
+        // resizing. The completion belongs to the new current content, so
+        // discard attachment-only flags here without laying out the old view.
+        _isInteractiveResizeActive = false;
+        _isResponsiveLayoutTransitionActive = false;
+        _segmentedLayoutRefreshPending = false;
         if (ViewModel is not null)
         {
             ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
@@ -368,25 +385,40 @@ public sealed partial class TodoWidgetContent : UserControl
     private void QueueTodoSegmentedRestore()
     {
         if (!IsLoaded ||
+            !_todoSegmentedRestoreSession.IsHostVisible ||
+            _isResponsiveLayoutTransitionActive ||
+            _isInteractiveResizeActive ||
             TodoFilterSegmented is null ||
             ViewModel?.TabBarVisibility != Visibility.Visible ||
             ListHeaderArea.Visibility != Visibility.Visible ||
             TodoFilterSegmented.Visibility == Visibility.Visible ||
-            _todoSegmentedRestoreQueued)
+            _todoSegmentedRenderingHandler is not null)
         {
             return;
         }
 
-        _todoSegmentedRestoreQueued = true;
-        _todoSegmentedStableFrameCount = 0;
-        _todoSegmentedLastCandidateWidth = 0;
+        double candidateWidth = Math.Min(ListHeaderArea.ActualWidth, RootGrid.ActualWidth);
+        if (!_todoSegmentedRestoreSession.TryStart(candidateWidth))
+        {
+            return;
+        }
+
         _todoSegmentedRenderingHandler = TodoSegmentedRestore_Rendering;
         CompositionTarget.Rendering += _todoSegmentedRenderingHandler;
+    }
+
+    private void TodoSegmentedRestoreSlot_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        _todoSegmentedRestoreSession.NotifyLayoutChanged();
+        QueueTodoSegmentedRestore();
     }
 
     private void TodoSegmentedRestore_Rendering(object? sender, object e)
     {
         if (!IsLoaded ||
+            !_todoSegmentedRestoreSession.IsHostVisible ||
+            _isResponsiveLayoutTransitionActive ||
+            _isInteractiveResizeActive ||
             ViewModel?.TabBarVisibility != Visibility.Visible ||
             ListHeaderArea.Visibility != Visibility.Visible)
         {
@@ -397,34 +429,27 @@ public sealed partial class TodoWidgetContent : UserControl
             return;
         }
 
-        if (_isResponsiveLayoutTransitionActive)
-        {
-            _todoSegmentedStableFrameCount = 0;
-            return;
-        }
-
         double candidateWidth = Math.Min(ListHeaderArea.ActualWidth, RootGrid.ActualWidth);
-        if (!double.IsFinite(candidateWidth) ||
-            candidateWidth < WidgetSegmentedLayoutHelper.MinimumSafeWidth)
-        {
-            _todoSegmentedStableFrameCount = 0;
-            _todoSegmentedLastCandidateWidth = candidateWidth;
-            return;
-        }
-
-        if (Math.Abs(candidateWidth - _todoSegmentedLastCandidateWidth) > 0.5)
-        {
-            _todoSegmentedLastCandidateWidth = candidateWidth;
-            _todoSegmentedStableFrameCount = 1;
-            return;
-        }
-
-        if (++_todoSegmentedStableFrameCount < 3)
+        WidgetSegmentedRestoreFrameResult result =
+            _todoSegmentedRestoreSession.ObserveFrame(candidateWidth);
+        if (result == WidgetSegmentedRestoreFrameResult.Waiting)
         {
             return;
         }
 
         CancelTodoSegmentedRestore();
+        if (result == WidgetSegmentedRestoreFrameResult.RetryAfterLayoutChange)
+        {
+            _ = DispatcherQueue.TryEnqueue(
+                Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+                QueueTodoSegmentedRestore);
+            return;
+        }
+        if (result != WidgetSegmentedRestoreFrameResult.Ready)
+        {
+            return;
+        }
+
         TodoFilterSegmented.Visibility = Visibility.Visible;
         ApplySegmentedStyle();
     }
@@ -437,13 +462,25 @@ public sealed partial class TodoWidgetContent : UserControl
             _todoSegmentedRenderingHandler = null;
         }
 
-        _todoSegmentedRestoreQueued = false;
-        _todoSegmentedStableFrameCount = 0;
-        _todoSegmentedLastCandidateWidth = 0;
+        _todoSegmentedRestoreSession.Cancel();
+    }
+
+    internal void OnWindowVisibilityChanged(bool visible)
+    {
+        _todoSegmentedRestoreSession.SetHostVisibility(visible);
+        if (visible)
+        {
+            QueueTodoSegmentedRestore();
+        }
+        else
+        {
+            CancelTodoSegmentedRestore();
+        }
     }
 
     internal void ReleaseTransientRenderingSubscriptions()
     {
+        _todoSegmentedRestoreSession.SetHostVisibility(false);
         CancelTodoSegmentedRestore();
     }
 
@@ -571,7 +608,7 @@ public sealed partial class TodoWidgetContent : UserControl
         CustomDueDateTitleText.Text = localization.T("Todo.Due.Custom");
         CustomDueDatePicker.PlaceholderText = localization.T("Todo.Due.Custom");
         CustomDueDateCancelButton.Content = localization.T("Common.Cancel");
-        CustomDueDateSaveButton.Content = localization.T("Common.Ok");
+        CustomDueDateSaveButton.Content = localization.T("Common.Save");
     }
 
     public void OpenAddEditor() => _ = OpenAddEditorAsync();
@@ -659,84 +696,6 @@ public sealed partial class TodoWidgetContent : UserControl
         }
 
         EnsureWideDetailSelection();
-    }
-
-    private void DraftImportantButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (ViewModel is null)
-        {
-            return;
-        }
-
-        ViewModel.DraftImportant = !ViewModel.DraftImportant;
-    }
-
-    private void DraftDueDateButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button button || ViewModel is null)
-        {
-            return;
-        }
-
-        var flyout = CreateDraftDueDateFlyout();
-        flyout.ShowAt(button, new FlyoutShowOptions { Placement = FlyoutPlacementMode.Bottom });
-    }
-
-    private MenuFlyout CreateDraftDueDateFlyout()
-    {
-        var flyout = new MenuFlyout();
-        var localization = App.Current.LocalizationService;
-
-        var todayItem = new MenuFlyoutItem { Text = localization.T("Todo.Due.Today") };
-        todayItem.Click += (_, _) => ViewModel?.SetDraftDueDatePreset(TodoDuePreset.Today);
-        flyout.Items.Add(todayItem);
-
-        var tomorrowItem = new MenuFlyoutItem { Text = localization.T("Todo.Due.Tomorrow") };
-        tomorrowItem.Click += (_, _) => ViewModel?.SetDraftDueDatePreset(TodoDuePreset.Tomorrow);
-        flyout.Items.Add(tomorrowItem);
-
-        var thisWeekItem = new MenuFlyoutItem { Text = localization.T("Todo.Due.ThisWeek") };
-        thisWeekItem.Click += (_, _) => ViewModel?.SetDraftDueDatePreset(TodoDuePreset.ThisWeek);
-        flyout.Items.Add(thisWeekItem);
-
-        var nextMondayItem = new MenuFlyoutItem { Text = localization.T("Todo.Due.NextMonday") };
-        nextMondayItem.Click += (_, _) => ViewModel?.SetDraftDueDatePreset(TodoDuePreset.NextMonday);
-        flyout.Items.Add(nextMondayItem);
-
-        flyout.Items.Add(new MenuFlyoutSeparator());
-
-        var customItem = new MenuFlyoutItem
-        {
-            Text = localization.T("Todo.Due.Custom"),
-            Icon = new FontIcon { Glyph = "\uE8A5" }
-        };
-        customItem.Click += async (_, _) => await PickCustomDueDateAsync(null);
-        flyout.Items.Add(customItem);
-
-        if (ViewModel?.DraftDueDate is not null)
-        {
-            var clearItem = new MenuFlyoutItem
-            {
-                Text = localization.T("Todo.Due.Clear"),
-                Icon = new FontIcon { Glyph = "\uE711" }
-            };
-            clearItem.Click += (_, _) => ViewModel?.SetDraftDueDatePreset(TodoDuePreset.Clear);
-            flyout.Items.Add(clearItem);
-        }
-
-        return flyout;
-    }
-
-    private void MetadataImportant_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement element ||
-            element.DataContext is not TodoItemViewModel item ||
-            ViewModel is null)
-        {
-            return;
-        }
-
-        _ = SetImportantWithFeedbackAsync(item, !item.IsImportant);
     }
 
     private void MetadataDueDate_Click(object sender, RoutedEventArgs e)
@@ -844,53 +803,6 @@ public sealed partial class TodoWidgetContent : UserControl
         }
 
         flyout.ShowAt(button, new FlyoutShowOptions { Placement = FlyoutPlacementMode.Bottom });
-    }
-
-    private async void InlineEditTextBox_LostFocus(object sender, RoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement element ||
-            element.DataContext is not TodoItemViewModel item ||
-            ViewModel is null)
-        {
-            return;
-        }
-
-        if (!item.IsEditing)
-        {
-            return;
-        }
-
-        _ = await ViewModel.CommitEditAsync(item.Id);
-    }
-
-    private async void InlineEditTextBox_KeyDown(object sender, KeyRoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement element ||
-            element.DataContext is not TodoItemViewModel item ||
-            ViewModel is null)
-        {
-            return;
-        }
-
-        if (e.Key == VirtualKey.Escape)
-        {
-            ViewModel.CancelEdit(item.Id);
-            e.Handled = true;
-            return;
-        }
-
-        if (e.Key == VirtualKey.Enter)
-        {
-            e.Handled = true;
-            if (ShouldSubmitTodoEditor(e))
-            {
-                _ = await ViewModel.CommitEditAsync(item.Id);
-            }
-            else if (sender is TextBox textBox)
-            {
-                TextBoxEditorShortcutHelper.InsertLineBreak(textBox);
-            }
-        }
     }
 
     private async void DetailBackButton_Click(object sender, RoutedEventArgs e)
@@ -1059,13 +971,31 @@ public sealed partial class TodoWidgetContent : UserControl
     {
         if (e.Key == VirtualKey.Escape)
         {
-            await CloseDetailAsync();
+            if (TextCompositionTracker.IsComposing(DetailTitleTextBox))
+            {
+                // Escape closes the IME candidate window; closing the detail here would
+                // also persist the still-composing title through the draft finalizer.
+                return;
+            }
+
+            // Mark the key handled before awaiting: CloseDetailAsync yields several
+            // times, and by the time it returns the event has already finished
+            // dispatching, so a late Handled flag lets Escape bubble into the list
+            // and window handlers (detail closed plus widget collapsed).
             e.Handled = true;
+            await CloseDetailAsync();
             return;
         }
 
         if (e.Key == VirtualKey.Enter)
         {
+            if (TextCompositionTracker.IsComposing(DetailTitleTextBox))
+            {
+                // The IME is committing a candidate; let it keep the key so the
+                // romanized composition never becomes the stored title.
+                return;
+            }
+
             e.Handled = true;
             if (ShouldSubmitTodoEditor(e))
             {

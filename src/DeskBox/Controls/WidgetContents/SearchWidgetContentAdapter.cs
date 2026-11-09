@@ -8,51 +8,33 @@ namespace DeskBox.Controls.WidgetContents;
 /// <summary>
 /// Adapts SearchWidgetContent to the IWidgetContent contract.
 /// </summary>
-public sealed class SearchWidgetContentAdapter : IWidgetContent, IWidgetResponsiveLayoutContent, IDisposable
+public sealed class SearchWidgetContentAdapter :
+    WidgetContentAdapterBase,
+    IWidgetResponsiveLayoutContent
 {
-    private readonly Func<FrameworkElement> _viewFactory;
-    private FrameworkElement? _view;
-    private bool _isDisposed;
-
     public SearchWidgetContentAdapter(
         WidgetConfig config,
         LocalizationService localizationService,
         SettingsService? settingsService = null,
         Func<FrameworkElement>? viewFactory = null)
+        : base(
+            config,
+            viewFactory ?? (() => new SearchWidgetContent(localizationService, settingsService)))
     {
         if (config.WidgetKind != WidgetKind.Search)
         {
             throw new ArgumentException("Search content requires a Search widget config.", nameof(config));
         }
-
-        Config = config;
-        _viewFactory = viewFactory ?? (() => new SearchWidgetContent(localizationService, settingsService));
     }
 
-    public WidgetConfig Config { get; }
+    // DEF-099/DEF-100: the fork retired the SearchRequested notification chain
+    // — SearchWidgetContent opens the popup itself through
+    // App.Current.OpenSearchPopup/OpenSearchPopupWithQuery, so the adapter
+    // neither re-publishes the event nor subscribes to the content.
 
-    public string WidgetId => Config.Id;
-
-    public WidgetKind WidgetKind => Config.WidgetKind;
-
-    public FrameworkElement View
+    public override Task RefreshAsync()
     {
-        get
-        {
-            ObjectDisposedException.ThrowIf(_isDisposed, this);
-            _view ??= _viewFactory();
-            return _view;
-        }
-    }
-
-    public Task InitializeAsync()
-    {
-        return Task.CompletedTask;
-    }
-
-    public Task RefreshAsync()
-    {
-        if (_view is SearchWidgetContent content)
+        if (MaterializedView is SearchWidgetContent content)
         {
             content.UpdateContent();
         }
@@ -60,20 +42,12 @@ public sealed class SearchWidgetContentAdapter : IWidgetContent, IWidgetResponsi
         return Task.CompletedTask;
     }
 
-    public void ApplyAppearance()
+    public override void ApplyAppearance()
     {
-        if (_view is SearchWidgetContent content)
+        if (MaterializedView is SearchWidgetContent content)
         {
             content.ApplyAppearance();
         }
-    }
-
-    public void OnActivated()
-    {
-    }
-
-    public void OnDeactivated()
-    {
     }
 
     public void BeginResponsiveLayoutTransition(
@@ -81,7 +55,7 @@ public sealed class SearchWidgetContentAdapter : IWidgetContent, IWidgetResponsi
         double targetContentHeight,
         bool isCollapsing)
     {
-        if (_view is SearchWidgetContent content)
+        if (MaterializedView is SearchWidgetContent content)
         {
             content.BeginResponsiveLayoutTransition(
                 targetContentWidth,
@@ -94,7 +68,7 @@ public sealed class SearchWidgetContentAdapter : IWidgetContent, IWidgetResponsi
         double finalContentWidth,
         double finalContentHeight)
     {
-        if (_view is SearchWidgetContent content)
+        if (MaterializedView is SearchWidgetContent content)
         {
             content.CompleteResponsiveLayoutTransition(
                 finalContentWidth,
@@ -104,21 +78,14 @@ public sealed class SearchWidgetContentAdapter : IWidgetContent, IWidgetResponsi
 
     public void CancelResponsiveLayoutTransition()
     {
-        if (_view is SearchWidgetContent content)
+        if (MaterializedView is SearchWidgetContent content)
         {
             content.CancelResponsiveLayoutTransition();
         }
     }
 
-    public void Dispose()
+    protected override void Dispose(bool disposing)
     {
-        if (_isDisposed)
-        {
-            return;
-        }
-
-        _isDisposed = true;
-        (_view as IDisposable)?.Dispose();
-        _view = null;
+        (MaterializedView as IDisposable)?.Dispose();
     }
 }

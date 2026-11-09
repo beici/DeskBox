@@ -75,7 +75,13 @@ public sealed partial class TodoWidgetViewModel
     /// </summary>
     public event EventHandler? SaveFailed;
 
-    private async Task SaveAsync()
+    /// <summary>
+    /// Persists the whole list. Returns false when the store write failed;
+    /// the exception is logged and raised through <see cref="SaveFailed"/>
+    /// instead of propagating because every caller except the transactional
+    /// ones (UpdateNotesAsync) is fire-and-forget.
+    /// </summary>
+    private async Task<bool> SaveAsync()
     {
         NormalizeSortOrders();
         var liveIds = new HashSet<string>(
@@ -96,6 +102,7 @@ public sealed partial class TodoWidgetViewModel
             {
                 Items = Items.Select(item => item.Item).Concat(persistedTombstones).ToList()
             });
+            return true;
         }
         catch (Exception ex)
         {
@@ -105,6 +112,7 @@ public sealed partial class TodoWidgetViewModel
             // fire-and-forget/async void caller where it would be lost.
             App.Log($"[Todo] Save failed: {ex}");
             SaveFailed?.Invoke(this, EventArgs.Empty);
+            return false;
         }
     }
 
@@ -351,6 +359,7 @@ public sealed partial class TodoWidgetViewModel
         OnPropertyChanged(nameof(DisplayName));
         OnPropertyChanged(nameof(AddPlaceholderText));
         OnPropertyChanged(nameof(ExpandInputTooltipText));
+        OnPropertyChanged(nameof(DraftDueDateText));
         OnPropertyChanged(nameof(AllFilterText));
         OnPropertyChanged(nameof(ActiveFilterText));
         OnPropertyChanged(nameof(TodayFilterText));
@@ -456,9 +465,7 @@ public sealed partial class TodoWidgetViewModel
 
     private static string NormalizeNewTaskPosition(string? value)
     {
-        return value == SettingsService.TodoNewTaskPositionBottom
-            ? SettingsService.TodoNewTaskPositionBottom
-            : SettingsService.TodoNewTaskPositionTop;
+        return SettingsService.NormalizeTodoNewTaskPosition(value);
     }
 
     private static DateTimeOffset? NormalizeDueDate(DateTimeOffset? dueDate)

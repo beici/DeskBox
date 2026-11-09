@@ -138,6 +138,12 @@ public sealed class DesktopDoubleClickActivationService : IDisposable, IHookHeal
 
     void IHookHealthProbeTarget.RecoverHook() => RefreshRegistration();
 
+    // Async twin for the watchdog's UI-dispatcher recovery path: the hook
+    // handshake blocks up to 1.5 s synchronously (DEF-087), which would
+    // freeze the UI thread during recovery.
+    async Task IHookHealthProbeTarget.RecoverHookAsync()
+        => await RefreshRegistrationAsync().ConfigureAwait(true);
+
     public bool TrySetEnabled(bool enabled, out int errorCode)
     {
         errorCode = 0;
@@ -326,7 +332,16 @@ public sealed class DesktopDoubleClickActivationService : IDisposable, IHookHeal
         }
 
         thread.Start();
-        if (!await ready.Task.WaitAsync(TimeSpan.FromMilliseconds(StartupTimeoutMilliseconds)).ConfigureAwait(false))
+        try
+        {
+            // WaitAsync(TimeSpan) throws on timeout instead of returning
+            // false, so the timeout branch below is only reachable when the
+            // hook thread actually completes with a negative result.
+            await ready.Task
+                .WaitAsync(TimeSpan.FromMilliseconds(StartupTimeoutMilliseconds))
+                .ConfigureAwait(false);
+        }
+        catch (TimeoutException)
         {
             LastErrorCode = 1460;
             Stop();
@@ -413,6 +428,15 @@ public sealed class DesktopDoubleClickActivationService : IDisposable, IHookHeal
         IntPtr installedHook = IntPtr.Zero;
         try
         {
+            // Low-level hook callbacks are delivered as a message to this
+            // thread; whenever it is not scheduled in time
+            // (LowLevelHooksTimeout, capped at 1000ms by the system) Windows
+            // silently removes the hook. AboveNormal keeps this pump ahead of
+            // ordinary work under transient CPU pressure without starving
+            // time-critical system work — feedback 445/450/502 showed the
+            // default Normal priority being starved often enough to lose the
+            // hook dozens of times per day.
+            Thread.CurrentThread.Priority = ThreadPriority.AboveNormal;
             lock (_sync)
             {
                 if (_disposed || generation != _lifecycleGeneration)

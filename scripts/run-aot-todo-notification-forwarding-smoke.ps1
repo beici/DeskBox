@@ -11,7 +11,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$requiredAuditProfileVersion = 63
+$requiredAuditProfileVersion = 65
 $requiredSummarySchemaVersion = 55
 $scenario = "EnvelopeAndSingleInstance"
 $smokeEnvironmentVariable =
@@ -478,7 +478,7 @@ New-Item -ItemType Directory -Path $dataDirectory -Force | Out-Null
     -Encoding UTF8
 
 $settings = [ordered]@{
-    schemaVersion = 5
+    schemaVersion = 9
     language = "zh-CN"
     autoStart = $false
     autoCheckForUpdates = $false

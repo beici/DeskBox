@@ -42,12 +42,21 @@ internal static class ShellThumbnailProxy
     private const string ThumbnailHandlerClassId =
         "{e357fccd-a995-4576-b01f-234630154e96}";
     private const int MaximumPayloadBytes = 2 * 1024 * 1024;
+    // Failure frames carry at most a short diagnostic message; a declared
+    // length beyond this bound is a corrupt frame and is rejected instead of
+    // being allocated.
+    private const int FailurePayloadLimitBytes = 64 * 1024;
     private const int MaximumFailureEntries = 256;
     private const long FailureRetryDelayMilliseconds = 30_000;
     private static readonly TimeSpan ExtractionTimeout =
         TimeSpan.FromMilliseconds(2500);
     private const uint BatchProtocolMagic = 0x4458_4231;
     private const uint BatchProtocolVersion = 1;
+    // One batch process runs at a time (the dispatcher drains the queue
+    // sequentially), so a larger chunk only amortizes process creation and
+    // Shell handler DLL loads. The native proxy caps its own worker fan-out
+    // independently (feedback 226/452/495), so this stays above that cap on
+    // purpose.
     private const int MaximumBatchRequests = 8;
     private static readonly TimeSpan BatchCoalesceWindow =
         TimeSpan.FromMilliseconds(25);
@@ -57,6 +66,16 @@ internal static class ShellThumbnailProxy
     // every batch normally resolves within BatchExtractionTimeout.
     private static readonly TimeSpan BatchWaiterSafetyTimeout =
         TimeSpan.FromMilliseconds(6000);
+    // Caps every post-failure observe wait (exit, stdout, stderr) so an
+    // unkillable proxy — or a dead one whose pipes are still held by a
+    // grandchild process — can never wedge extraction or the batch
+    // dispatcher. ShellContextMenuProxy.TerminationTimeout is the same bound.
+    private static readonly TimeSpan TerminationTimeout =
+        TimeSpan.FromSeconds(5);
+    // Mirrors EXTRACT_BATCH_MAX_PATH_BYTES in the thumbnail proxy's batch
+    // reader (native/deskbox-thumbnail-proxy/src/main.rs); a manifest entry
+    // over this limit is rejected by the proxy and would kill its batch.
+    private const int MaxBatchPathBytes = 64 * 1024;
     private static readonly bool s_batchExtractionDisabled =
         Environment.GetEnvironmentVariable("DESKBOX_DISABLE_ICON_BATCH") == "1";
     private static readonly ConcurrentQueue<ProxyBatchRequest> s_batchQueue = new();
@@ -248,6 +267,13 @@ internal static class ShellThumbnailProxy
             {
                 return null;
             }
+
+            // R1-050: app-lifetime job so a host crash cannot leave this
+            // short-lived proxy orphaned.
+            if (!Platform.ChildProcessJob.TryAssignToAppLifetimeJob(process))
+            {
+                App.Log("[ShellThumbnailProxy] Job assignment failed; child not orphan-protected");
+            }
         }
         catch (Exception ex)
         {
@@ -284,8 +310,23 @@ internal static class ShellThumbnailProxy
         string error;
         try
         {
+            // The proxy has exited, but a grandchild that inherited the pipe
+            // handles can keep these reads open indefinitely, so the drains
+            // need their own bound (the timeout and batch paths already have
+            // one; this was the only unbounded wait left in the file).
+            await Task.WhenAll(outputTask, errorTask).WaitAsync(ExtractionTimeout);
             output = await outputTask;
             error = await errorTask;
+        }
+        catch (TimeoutException)
+        {
+            TryKill(process);
+            await ObserveOutputAsync(outputTask, errorTask);
+            App.Log(
+                $"[ShellThumbnailProxy] Output drain timed out " +
+                $"timeoutMs={ExtractionTimeout.TotalMilliseconds:0} " +
+                $"mode={mode} path={normalizedPath}");
+            return null;
         }
         catch (Exception ex)
         {
@@ -383,6 +424,30 @@ internal static class ShellThumbnailProxy
         string executablePath,
         List<ProxyBatchRequest> batch)
     {
+        // The proxy's batch reader (EXTRACT_BATCH_MAX_PATH_BYTES) rejects a
+        // manifest entry whose UTF-16 path exceeds 64 KiB, and that rejection
+        // poisons the whole batch stream. Fail only the offending request and
+        // let the rest proceed; Windows paths cannot normally exceed 32 767
+        // characters, so this only catches pathological \\?\ inputs.
+        for (int index = batch.Count - 1; index >= 0; index--)
+        {
+            ProxyBatchRequest request = batch[index];
+            if (string.IsNullOrEmpty(request.Path) ||
+                System.Text.Encoding.Unicode.GetByteCount(request.Path) > MaxBatchPathBytes)
+            {
+                App.Log(
+                    $"[ShellThumbnailProxy] Batch request path is empty or exceeds " +
+                    $"the {MaxBatchPathBytes}-byte protocol limit; dropping single request");
+                batch.RemoveAt(index);
+                request.Completion.TrySetResult(null);
+            }
+        }
+
+        if (batch.Count == 0)
+        {
+            return;
+        }
+
         var startInfo = new ProcessStartInfo
         {
             FileName = executablePath,
@@ -404,6 +469,13 @@ internal static class ShellThumbnailProxy
             {
                 throw new InvalidOperationException(
                     "The thumbnail proxy process failed to start.");
+            }
+
+            // R1-050: app-lifetime job so a host crash cannot leave the
+            // long-lived batch dispatcher orphaned.
+            if (!Platform.ChildProcessJob.TryAssignToAppLifetimeJob(process))
+            {
+                App.Log("[ShellThumbnailProxy] Batch job assignment failed; child not orphan-protected");
             }
 
             errorTask = process.StandardError.ReadToEndAsync();
@@ -434,7 +506,7 @@ internal static class ShellThumbnailProxy
             {
                 try
                 {
-                    _ = await errorTask;
+                    _ = await errorTask.WaitAsync(TerminationTimeout);
                 }
                 catch
                 {
@@ -543,12 +615,37 @@ internal static class ShellThumbnailProxy
                 throw new InvalidDataException(
                     "The thumbnail proxy batch payload size was outside its limit.");
             }
-
-            byte[] payload = new byte[length];
-            if (length > 0)
+            if (status != 0 && length > FailurePayloadLimitBytes)
             {
-                await stream.ReadExactlyAsync(payload, cancellationToken)
-                    .ConfigureAwait(false);
+                throw new InvalidDataException(
+                    "The thumbnail proxy batch failure payload size was outside its limit.");
+            }
+
+            byte[] payload;
+            if (status != 0 && length > 0)
+            {
+                // Failure payloads are discarded by the caller; drain the
+                // declared bytes in bounded chunks so a hostile length can
+                // never be turned into a matching up-front allocation.
+                byte[] drain = new byte[Math.Min(length, 8192)];
+                long remainingBytes = length;
+                while (remainingBytes > 0)
+                {
+                    int chunk = (int)Math.Min(remainingBytes, drain.Length);
+                    await stream.ReadExactlyAsync(drain, 0, chunk, cancellationToken)
+                        .ConfigureAwait(false);
+                    remainingBytes -= chunk;
+                }
+                payload = Array.Empty<byte>();
+            }
+            else
+            {
+                payload = new byte[length];
+                if (length > 0)
+                {
+                    await stream.ReadExactlyAsync(payload, cancellationToken)
+                        .ConfigureAwait(false);
+                }
             }
 
             fulfilled[index] = true;
@@ -965,7 +1062,7 @@ internal static class ShellThumbnailProxy
     {
         try
         {
-            await process.WaitForExitAsync();
+            await process.WaitForExitAsync().WaitAsync(TerminationTimeout);
         }
         catch
         {
@@ -978,7 +1075,7 @@ internal static class ShellThumbnailProxy
     {
         try
         {
-            await Task.WhenAll(outputTask, errorTask);
+            await Task.WhenAll(outputTask, errorTask).WaitAsync(TerminationTimeout);
         }
         catch
         {

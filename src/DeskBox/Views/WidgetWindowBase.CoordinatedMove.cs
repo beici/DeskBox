@@ -1,4 +1,5 @@
 using DeskBox.Helpers;
+using DeskBox.Services;
 using Windows.Graphics;
 
 namespace DeskBox.Views;
@@ -67,18 +68,7 @@ public abstract partial class WidgetWindowBase
                 finalBounds = CompleteExpandedWidgetDrag(
                     finalBounds,
                     coordinateCapsuleBar: false);
-                CapturePositionAnchor(
-                    finalBounds.X,
-                    finalBounds.Y,
-                    finalBounds.Width,
-                    finalBounds.Height);
-                UpdateConfigBoundsFromPhysical(
-                    finalBounds.X,
-                    finalBounds.Y,
-                    finalBounds.Width,
-                    finalBounds.Height,
-                    persist: false);
-                SynchronizeWidgetGroupLayout();
+                CommitUserPlacementFromWindow(WidgetPlacementSource.CoordinatedMove);
             }
         }
         finally
@@ -89,6 +79,16 @@ public abstract partial class WidgetWindowBase
             {
                 OnDragEnd(hasMoved);
             }
+            // The source window's Ctrl-drag early-exit paths return before
+            // reaching their own RestoreBackdropAfterInteraction call, and
+            // QueueBackdropRefresh alone short-circuits when the backdrop
+            // signature did not change (Backdrop.cs documents this), which
+            // would leave a Win10 legacy-acrylic window dimmed until the
+            // next manual drag. RestoreBackdropAfterInteraction is
+            // idempotent (guarded by _isInteractionBackdropDowngraded), so
+            // running it for every participant covers both early exits
+            // without disturbing windows that already restored.
+            RestoreBackdropAfterInteraction();
             QueueBackdropRefresh();
         }
     }

@@ -15,37 +15,39 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.ApplicationModel.DataTransfer;
+using Microsoft.Windows.Storage.Pickers;
 using Windows.Storage;
-using Windows.Storage.Pickers;
 using Windows.UI;
-using WinRT.Interop;
 
 namespace DeskBox.Controls.WidgetContents;
 
 /// <summary>
-/// Window-independent Quick Capture member. All top-level window, DWM,
+/// Window-independent Quick Capture leaf view. All top-level window, DWM,
 /// z-order, bounds, capsule, and group navigation behavior stays with the
-/// surface host; this control owns only Quick Capture data and interaction.
+/// surface host; this control owns only Quick Capture interaction state.
+/// The residency adapter (QuickCaptureWidgetContentAdapter) owns the view
+/// model and this leaf's lifetime.
 /// </summary>
 public sealed partial class QuickCaptureSurfaceContent :
     UserControl,
-    IWidgetContent,
-    IWidgetFeedbackSource,
-    IWidgetTransientStateContent,
-    IWidgetResponsiveLayoutContent,
-    IWidgetHostViewportContent,
-    IWidgetInteractiveResizeContent,
-    IWidgetAddActionContent,
-    IWidgetGroupContentCacheable,
     IDisposable
 {
     private const int DetailAutoSaveDelayMs = 600;
     private const int DetailImageDecodePixelWidth = 1200;
+    // R21-S6-01: bound every wait on the detail save gate. The editor keeps the
+    // text and the autosave timer re-arms, so a skipped save is recoverable.
+    private static readonly TimeSpan DetailSaveGateTimeout = TimeSpan.FromSeconds(10);
     private readonly LocalizationService _localizationService;
     private readonly SettingsService _settingsService;
     private readonly MasterDetailLayoutPolicy _masterDetailLayoutPolicy = new();
     private readonly MarkdownDocumentService _markdownDocumentService = new();
     private readonly List<DroppedFilePath> _pendingDetailAttachments = [];
+
+    // Identity of the new-note draft. It stays fixed while the draft is open
+    // (adding or removing an attachment only changes the attachment-set
+    // fingerprint the view model keys on) and is renewed only when a new
+    // creation intent starts, so a partial save retries into the same record.
+    private string? _pendingDetailCreationIntentId;
     private readonly SemaphoreSlim _detailSaveGate = new(1, 1);
     private DispatcherQueueTimer? _detailAutoSaveTimer;
     private string _lastFocusTarget = "Root";
@@ -81,8 +83,7 @@ public sealed partial class QuickCaptureSurfaceContent :
     private double? _persistedMasterPaneWidth;
     private double _hostViewportWidth = double.NaN;
     private EventHandler<object>? _segmentedRestoreHandler;
-    private int _segmentedStableFrames;
-    private double _segmentedCandidateWidth;
+    private readonly WidgetSegmentedRestoreSession _segmentedRestoreSession = new();
     private bool _isResponsiveLayoutTransitionActive;
     private bool _isInteractiveResizeActive;
     private bool _deferDetailReaderUntilTransitionCompletes;
@@ -92,26 +93,20 @@ public sealed partial class QuickCaptureSurfaceContent :
     private bool _isWindowRevealCompleted;
 
     public QuickCaptureSurfaceContent(
-        WidgetConfig config,
-        QuickCaptureService quickCaptureService,
+        QuickCaptureWidgetViewModel viewModel,
         SettingsService settingsService,
         LocalizationService localizationService,
         DispatcherQueue dispatcherQueue)
     {
-        ArgumentNullException.ThrowIfNull(config);
-        ArgumentNullException.ThrowIfNull(quickCaptureService);
+        ArgumentNullException.ThrowIfNull(viewModel);
         ArgumentNullException.ThrowIfNull(settingsService);
         ArgumentNullException.ThrowIfNull(localizationService);
         ArgumentNullException.ThrowIfNull(dispatcherQueue);
 
         _localizationService = localizationService;
         _settingsService = settingsService;
-        ViewModel = new QuickCaptureWidgetViewModel(
-            config,
-            quickCaptureService,
-            settingsService,
-            localizationService,
-            dispatcherQueue);
+        ViewModel = viewModel;
+        WidgetConfig config = viewModel.Config;
 
         try
         {
@@ -149,6 +144,7 @@ public sealed partial class QuickCaptureSurfaceContent :
         _detailAutoSaveTimer.Tick += DetailAutoSaveTimer_Tick;
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
+        ListPage.SizeChanged += SegmentedRestoreSlot_SizeChanged;
         ActualThemeChanged += QuickCaptureSurfaceContent_ActualThemeChanged;
         ApplyClipboardItemColors();
         UpdateSelectedViewVisual();
@@ -461,19 +457,15 @@ public sealed partial class QuickCaptureSurfaceContent :
 
     public QuickCaptureWidgetViewModel ViewModel { get; }
 
-    public event EventHandler<WidgetFeedbackRequestedEventArgs>? FeedbackRequested;
+    internal event EventHandler<WidgetFeedbackRequestedEventArgs>? FeedbackRequested;
 
-    public WidgetConfig Config => ViewModel.Config;
+    internal WidgetConfig Config => ViewModel.Config;
 
-    public string WidgetId => Config.Id;
+    internal string WidgetId => Config.Id;
 
-    public WidgetKind WidgetKind => WidgetKind.QuickCapture;
+    internal bool IsReadyForReuse => _isInitialized && !_isDisposed;
 
-    public FrameworkElement View => this;
-
-    public bool IsReadyForReuse => _isInitialized && !_isDisposed;
-
-    public async Task InitializeAsync()
+    internal async Task InitializeContentAsync()
     {
         await ViewModel.InitializeAsync();
         _isInitialized = true;
@@ -485,9 +477,7 @@ public sealed partial class QuickCaptureSurfaceContent :
         }
     }
 
-    public Task RefreshAsync() => ViewModel.RefreshItemsAsync();
-
-    public async Task AddFromTitleButtonAsync()
+    internal async Task AddFromTitleButtonAsync()
     {
         await OpenNewDetailAsync();
     }
@@ -514,7 +504,7 @@ public sealed partial class QuickCaptureSurfaceContent :
         await OpenDetailAfterSavingAsync(item);
     }
 
-    public void ApplyAppearance()
+    internal void ApplyAppearance()
     {
         ViewModel.ApplyAppearancePreview();
         UpdateSelectedViewVisual();
@@ -522,7 +512,7 @@ public sealed partial class QuickCaptureSurfaceContent :
         ApplyResponsiveLayout();
     }
 
-    public void OnActivated()
+    internal void OnActivated()
     {
         if (IsLoaded)
         {
@@ -530,24 +520,30 @@ public sealed partial class QuickCaptureSurfaceContent :
         }
     }
 
-    public async void OnDeactivated()
+    internal async void OnDeactivated()
     {
         _lastFocusTarget = GetCurrentFocusTarget();
         await FlushPendingDetailSaveAsync();
     }
 
-    public async void OnWindowVisibilityChanged(bool visible)
+    internal async void OnWindowVisibilityChanged(bool visible)
     {
         _isWindowVisible = visible;
+        _segmentedRestoreSession.SetHostVisibility(visible);
         if (!visible)
         {
+            CancelSegmentedRestore();
             _isWindowRevealCompleted = false;
             ViewModel.SuspendWindowRefresh();
             await FlushPendingDetailSaveAsync();
         }
+        else
+        {
+            QueueSegmentedRestore();
+        }
     }
 
-    public void OnWindowRevealCompleted()
+    internal void OnWindowRevealCompleted()
     {
         if (!_isWindowVisible || _isWindowRevealCompleted)
         {
@@ -570,7 +566,7 @@ public sealed partial class QuickCaptureSurfaceContent :
         }
     }
 
-    object? IWidgetTransientStateContent.CaptureTransientState()
+    internal object? CaptureSwitchTransientState()
     {
         bool shouldCaptureDetail =
             QuickCaptureDetailRestorePolicy.ShouldCaptureDetail(
@@ -589,7 +585,7 @@ public sealed partial class QuickCaptureSurfaceContent :
             shouldCaptureDetail && !_isDualPane && _showDetailInSinglePane);
     }
 
-    void IWidgetTransientStateContent.RestoreTransientState(object? state)
+    internal void RestoreSwitchTransientState(object? state)
     {
         if (state is QuickCaptureWidgetTransientState quickState)
         {
@@ -693,20 +689,21 @@ public sealed partial class QuickCaptureSurfaceContent :
         object sender,
         SizeChangedEventArgs e)
     {
+        _segmentedRestoreSession.NotifyLayoutChanged();
         if (!_isInteractiveResizeActive)
         {
             ApplyResponsiveLayout();
         }
     }
 
-    public void BeginInteractiveResize(double contentWidth, double contentHeight)
+    internal void BeginInteractiveResize(double contentWidth, double contentHeight)
     {
         _isInteractiveResizeActive = true;
         CancelSegmentedRestore();
         _deferDetailReaderUntilTransitionCompletes = true;
     }
 
-    public void CompleteInteractiveResize(double contentWidth, double contentHeight)
+    internal void CompleteInteractiveResize(double contentWidth, double contentHeight)
     {
         _isInteractiveResizeActive = false;
         _deferDetailReaderUntilTransitionCompletes = false;
@@ -935,7 +932,7 @@ public sealed partial class QuickCaptureSurfaceContent :
         _settingsService.SaveDebounced();
     }
 
-    public void BeginResponsiveLayoutTransition(
+    internal void BeginResponsiveLayoutTransition(
         double targetContentWidth,
         double targetContentHeight,
         bool isCollapsing)
@@ -1015,7 +1012,7 @@ public sealed partial class QuickCaptureSurfaceContent :
         });
     }
 
-    public void OnHostViewportSizeChanged(double width, double height)
+    internal void OnHostViewportSizeChanged(double width, double height)
     {
         if (!double.IsFinite(width) || width <= 0)
         {
@@ -1030,7 +1027,7 @@ public sealed partial class QuickCaptureSurfaceContent :
         }
     }
 
-    public void CompleteResponsiveLayoutTransition(
+    internal void CompleteResponsiveLayoutTransition(
         double finalContentWidth,
         double finalContentHeight)
     {
@@ -1046,7 +1043,7 @@ public sealed partial class QuickCaptureSurfaceContent :
         QueueSegmentedRestore();
     }
 
-    public void CancelResponsiveLayoutTransition()
+    internal void CancelResponsiveLayoutTransition()
     {
         _isResponsiveLayoutTransitionActive = false;
         _deferDetailReaderUntilTransitionCompletes = false;
@@ -1104,7 +1101,10 @@ public sealed partial class QuickCaptureSurfaceContent :
     private void QueueSegmentedRestore()
     {
         if (!IsLoaded ||
+            _isDisposed ||
+            !_segmentedRestoreSession.IsHostVisible ||
             _isResponsiveLayoutTransitionActive ||
+            _isInteractiveResizeActive ||
             QuickCaptureViewSegmented is null ||
             ViewModel.TabBarVisibility != Visibility.Visible ||
             ListPage.Visibility != Visibility.Visible ||
@@ -1114,14 +1114,34 @@ public sealed partial class QuickCaptureSurfaceContent :
             return;
         }
 
-        _segmentedStableFrames = 0;
-        _segmentedCandidateWidth = 0;
+        double width = Math.Min(ListPage.ActualWidth, ResponsiveContentGrid.ActualWidth);
+        if (!_segmentedRestoreSession.TryStart(width))
+        {
+            return;
+        }
+
         _segmentedRestoreHandler = SegmentedRestore_Rendering;
         CompositionTarget.Rendering += _segmentedRestoreHandler;
     }
 
+    private void SegmentedRestoreSlot_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        _segmentedRestoreSession.NotifyLayoutChanged();
+        QueueSegmentedRestore();
+    }
+
     private void SegmentedRestore_Rendering(object? sender, object e)
     {
+        if (!IsLoaded ||
+            _isDisposed ||
+            !_segmentedRestoreSession.IsHostVisible ||
+            _isResponsiveLayoutTransitionActive ||
+            _isInteractiveResizeActive)
+        {
+            CancelSegmentedRestore();
+            return;
+        }
+
         if (ViewModel.TabBarVisibility != Visibility.Visible ||
             ListPage.Visibility != Visibility.Visible)
         {
@@ -1129,34 +1149,27 @@ public sealed partial class QuickCaptureSurfaceContent :
             return;
         }
 
-        if (_isResponsiveLayoutTransitionActive)
-        {
-            _segmentedStableFrames = 0;
-            return;
-        }
-
         double width = Math.Min(ListPage.ActualWidth, ResponsiveContentGrid.ActualWidth);
-        if (!double.IsFinite(width) ||
-            width < WidgetSegmentedLayoutHelper.MinimumSafeWidth)
-        {
-            _segmentedStableFrames = 0;
-            _segmentedCandidateWidth = width;
-            return;
-        }
-
-        if (Math.Abs(width - _segmentedCandidateWidth) > 0.5)
-        {
-            _segmentedCandidateWidth = width;
-            _segmentedStableFrames = 1;
-            return;
-        }
-
-        if (++_segmentedStableFrames < 3)
+        WidgetSegmentedRestoreFrameResult result =
+            _segmentedRestoreSession.ObserveFrame(width);
+        if (result == WidgetSegmentedRestoreFrameResult.Waiting)
         {
             return;
         }
 
         CancelSegmentedRestore();
+        if (result == WidgetSegmentedRestoreFrameResult.RetryAfterLayoutChange)
+        {
+            _ = DispatcherQueue.TryEnqueue(
+                Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+                QueueSegmentedRestore);
+            return;
+        }
+        if (result != WidgetSegmentedRestoreFrameResult.Ready)
+        {
+            return;
+        }
+
         RevealSegmentedAtSelectedView();
     }
 
@@ -1193,8 +1206,7 @@ public sealed partial class QuickCaptureSurfaceContent :
             CompositionTarget.Rendering -= _segmentedRestoreHandler;
             _segmentedRestoreHandler = null;
         }
-        _segmentedStableFrames = 0;
-        _segmentedCandidateWidth = 0;
+        _segmentedRestoreSession.Cancel();
     }
 
     private void SearchTextBox_KeyDown(object sender, KeyRoutedEventArgs e)
@@ -1271,6 +1283,7 @@ public sealed partial class QuickCaptureSurfaceContent :
         _detailAppearance = QuickCaptureAppearancePreset.Default;
         _detailContentFormat = ViewModel.EditorContentFormat;
         _pendingDetailAttachments.Clear();
+        RenewPendingDetailCreationIntent();
         _isDetailEditing = true;
         _detailEditRevision = 0;
         _detailSavedRevision = 0;
@@ -1281,7 +1294,7 @@ public sealed partial class QuickCaptureSurfaceContent :
             _detailContentFormat == TextContentFormat.Markdown;
         DetailTimestampText.Text = _localizationService.Format(
             "QuickCapture.Detail.Created",
-            DateTimeOffset.Now.ToString("yyyy/M/d HH:mm"));
+            DateTimeOffset.Now.ToString("yyyy/M/d HH:mm", DisplayCulture.GregorianCurrent));
         RefreshDetailAttachments();
         ApplyDetailMaterialSurface();
         ApplyResponsiveLayout();
@@ -1297,6 +1310,7 @@ public sealed partial class QuickCaptureSurfaceContent :
         _detailItem = item;
         _detailAppearance = item.AppearancePreset;
         _pendingDetailAttachments.Clear();
+        RenewPendingDetailCreationIntent();
         _isDetailEditing = !item.IsRecent &&
             (!_isDualPane || SettingsService.NormalizeQuickCaptureWideOpenMode(
                 _settingsService.Settings.QuickCaptureWideOpenMode) ==
@@ -1320,7 +1334,7 @@ public sealed partial class QuickCaptureSurfaceContent :
             !item.IsRecent && _detailContentFormat == TextContentFormat.Markdown;
         DetailTimestampText.Text = _localizationService.Format(
             "QuickCapture.Detail.Created",
-            item.ToModel().CreatedAt.ToLocalTime().ToString("yyyy/M/d HH:mm"));
+            item.ToModel().CreatedAt.ToLocalTime().ToString("yyyy/M/d HH:mm", DisplayCulture.GregorianCurrent));
         DetailPinIcon.IsPinned = item.IsPinned;
         RefreshDetailAttachments();
         ApplyDetailMaterialSurface();
@@ -1549,10 +1563,52 @@ public sealed partial class QuickCaptureSurfaceContent :
         !string.IsNullOrWhiteSpace(DetailMarkdownEditor.Text) ||
         _pendingDetailAttachments.Count > 0;
 
+    /// <summary>
+    /// Resolves the detail subject by identity from the view model cache,
+    /// never from the visible (view/search filtered)
+    /// <see cref="QuickCaptureWidgetViewModel.Items"/> collection. A filtered
+    /// row must keep its detail subject, otherwise the editor clears its
+    /// subject and re-arms the auto-save forever. When the cache misses,
+    /// refreshes from the service and retries by id; null means the row no
+    /// longer exists, which lets the editor collapse instead of writing to a
+    /// deleted row.
+    /// </summary>
+    private async Task<QuickCaptureItemViewModel?> ResolveDetailItemAsync(string id)
+    {
+        QuickCaptureItemViewModel? resolved = ViewModel.FindItemViewModelById(id);
+        if (resolved is not null)
+        {
+            return resolved;
+        }
+
+        // Explicit cold-cache fallback: re-project from the service, then
+        // retry the identity lookup. Scanning the visible list is not an
+        // acceptable fallback because filtering hides exactly these rows.
+        await ViewModel.RefreshItemsAsync();
+        return ViewModel.FindItemViewModelById(id);
+    }
+
+    private void RenewPendingDetailCreationIntent()
+    {
+        _pendingDetailCreationIntentId = Guid.NewGuid().ToString("N");
+    }
+
     private async Task<bool> SaveDetailAsync(bool completeEditing)
     {
         _detailAutoSaveTimer?.Stop();
-        await _detailSaveGate.WaitAsync();
+        // R21-S6-01: never wait without a bound. A wedged save would otherwise
+        // hang every later save and the deactivate/close flush forever.
+        if (!await _detailSaveGate.WaitAsync(DetailSaveGateTimeout))
+        {
+            App.Log(
+                $"[QuickCaptureSurface] Skipped the detail save id={WidgetId}: a previous save is still running after the wait budget.");
+            RaiseFeedback(
+                T("Common.OperationFailedRetry"),
+                WidgetFeedbackSeverity.Error,
+                "quick-detail-save-timeout");
+            return false;
+        }
+
         try
         {
             _isSavingDetail = true;
@@ -1588,8 +1644,8 @@ public sealed partial class QuickCaptureSurfaceContent :
         {
             _isSavingDetail = false;
             _detailSaveGate.Release();
-            if (_detailHasUnsavedChanges && _isDetailEditing && !_isCreatingDetail &&
-                !string.IsNullOrWhiteSpace(DetailMarkdownEditor.Text))
+            if (_detailItem is not null && _detailHasUnsavedChanges && _isDetailEditing &&
+                !_isCreatingDetail && !string.IsNullOrWhiteSpace(DetailMarkdownEditor.Text))
             {
                 // An emptied body fails validation on every attempt; re-arming
                 // the auto-save here would toast "content cannot be empty"
@@ -1624,8 +1680,11 @@ public sealed partial class QuickCaptureSurfaceContent :
             QuickCaptureItem? created = null;
             if (_pendingDetailAttachments.Count > 0)
             {
+                _pendingDetailCreationIntentId ??= Guid.NewGuid().ToString("N");
                 QuickCaptureItemViewModel? attached =
-                    await ViewModel.AddItemWithAttachmentsAsync(_pendingDetailAttachments);
+                    await ViewModel.AddItemWithAttachmentsAsync(
+                        _pendingDetailAttachments,
+                        _pendingDetailCreationIntentId);
                 if (attached is null)
                 {
                     return false;
@@ -1675,9 +1734,10 @@ public sealed partial class QuickCaptureSurfaceContent :
             if (created is not null)
             {
                 await ViewModel.RefreshItemsAsync();
-                _detailItem = ViewModel.Items.FirstOrDefault(item => item.Id == created.Id);
+                _detailItem = await ResolveDetailItemAsync(created.Id);
                 _isCreatingDetail = false;
                 _pendingDetailAttachments.Clear();
+                RenewPendingDetailCreationIntent();
             }
 
             _detailSavedRevision = Math.Max(_detailSavedRevision, revisionAtStart);
@@ -1714,12 +1774,22 @@ public sealed partial class QuickCaptureSurfaceContent :
                     _detailContentFormat);
             if (!updateResult.Saved)
             {
+                if (ViewModel.FindItemViewModelById(item.Id) is null)
+                {
+                    // The row was deleted elsewhere (another surface or widget)
+                    // while this editor still held it. Drop the subject so the
+                    // auto-save stops re-arming against something that is gone.
+                    _detailItem = null;
+                    _detailHasUnsavedChanges = false;
+                    return false;
+                }
+
                 return false;
             }
 
             ReportBodyTruncation(updateResult);
             await ViewModel.RefreshItemsAsync();
-            _detailItem = ViewModel.Items.FirstOrDefault(entry => entry.Id == item.Id);
+            _detailItem = await ResolveDetailItemAsync(item.Id);
         }
 
         _detailSavedRevision = Math.Max(_detailSavedRevision, revisionAtStart);
@@ -1806,8 +1876,7 @@ public sealed partial class QuickCaptureSurfaceContent :
             }
 
             await ViewModel.RefreshItemsAsync();
-            QuickCaptureItemViewModel? refreshed =
-                ViewModel.Items.FirstOrDefault(entry => entry.Id == item.Id);
+            QuickCaptureItemViewModel? refreshed = await ResolveDetailItemAsync(item.Id);
             if (refreshed is not null)
             {
                 _detailItem = refreshed;
@@ -1914,20 +1983,19 @@ public sealed partial class QuickCaptureSurfaceContent :
 
         try
         {
-            var picker = new FileOpenPicker
-            {
-                SuggestedStartLocation = PickerLocationId.Desktop
-            };
-            picker.FileTypeFilter.Add("*");
             IntPtr foreground = Win32Helper.GetForegroundWindow();
             IntPtr owner = Win32Helper.GetAncestor(foreground, Win32Helper.GA_ROOT);
-            InitializeWithWindow.Initialize(
-                picker,
-                owner == IntPtr.Zero ? foreground : owner);
-            IReadOnlyList<StorageFile> files = await picker.PickMultipleFilesAsync();
+            IReadOnlyList<string> files =
+                await FileOpenPickerService.PickMultipleFilesAsync(
+                    owner == IntPtr.Zero ? foreground : owner,
+                    [],
+                    PickerLocationId.Desktop);
             DroppedFilePath[] paths = files
-                .Where(file => !string.IsNullOrWhiteSpace(file.Path) && File.Exists(file.Path))
-                .Select(file => new DroppedFilePath(file.Path, file.Name, ForceManagedCopy: false))
+                .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                .Select(path => new DroppedFilePath(
+                    path,
+                    Path.GetFileName(path),
+                    ForceManagedCopy: false))
                 .ToArray();
             if (paths.Length == 0)
             {
@@ -1941,6 +2009,9 @@ public sealed partial class QuickCaptureSurfaceContent :
                     if (!_pendingDetailAttachments.Any(existing =>
                             string.Equals(existing.Path, path.Path, StringComparison.OrdinalIgnoreCase)))
                     {
+                        // Same creation intent: the view model keys idempotency
+                        // on the attachment-set fingerprint, so editing the set
+                        // must not start a new record.
                         _pendingDetailAttachments.Add(path);
                     }
                 }
@@ -2011,6 +2082,7 @@ public sealed partial class QuickCaptureSurfaceContent :
             RefreshDetailAttachments();
             if (removed > 0)
             {
+                // Same creation intent: removal only changes the fingerprint.
                 MarkDetailDirty();
             }
             return;
@@ -2207,11 +2279,26 @@ public sealed partial class QuickCaptureSurfaceContent :
         object? sender,
         MarkdownAttachmentRequestedEventArgs e)
     {
-        string? path = ResolveDetailAttachmentPath(e.AttachmentId);
-        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+        // FEXC-02: async void entry — same TOCTOU guard as
+        // DetailAttachmentStrip_OpenRequested above: the file can vanish
+        // between File.Exists and GetFileFromPathAsync, and the launch itself
+        // can throw. Catch, log, and feed back instead of crashing the app.
+        try
         {
-            StorageFile file = await StorageFile.GetFileFromPathAsync(path);
-            await Windows.System.Launcher.LaunchFileAsync(file);
+            string? path = ResolveDetailAttachmentPath(e.AttachmentId);
+            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+            {
+                StorageFile file = await StorageFile.GetFileFromPathAsync(path);
+                await Windows.System.Launcher.LaunchFileAsync(file);
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[QuickCaptureSurface] Open markdown attachment failed: {ex}");
+            RaiseFeedback(
+                T("Common.OperationFailedRetry"),
+                WidgetFeedbackSeverity.Error,
+                "quick-attachment-open-error");
         }
     }
 
@@ -2568,9 +2655,10 @@ public sealed partial class QuickCaptureSurfaceContent :
         // fixed-size array before DragItemsCompleted is raised. Item-row drop
         // handlers persist the requested position instead.
         ItemsList.CanReorderItems = false;
-        e.Data.RequestedOperation =
-            DataPackageOperation.Copy |
-            DataPackageOperation.Move;
+        // Export drags are copy-only: advertising Move would let a Win10
+        // Explorer drop physically move the backing attachment file out of
+        // quick-capture storage, and multi-effect offers prompt the picker.
+        e.Data.RequestedOperation = DataPackageOperation.Copy;
     }
 
     private void ItemsList_DragItemsCompleted(
@@ -2592,7 +2680,9 @@ public sealed partial class QuickCaptureSurfaceContent :
         }
 
         e.Handled = true;
-        e.AcceptedOperation = DataPackageOperation.Move;
+        e.AcceptedOperation =
+            DeskBoxDragData.ResolveInternalMetadataOperation(
+                e.AllowedOperations);
         e.DragUIOverride.IsGlyphVisible = true;
     }
 
@@ -2625,6 +2715,17 @@ public sealed partial class QuickCaptureSurfaceContent :
                 ItemsList.SelectedItems.Clear();
                 UpdateSelectedViewVisual();
             }
+        }
+        catch (Exception ex)
+        {
+            // Mirrors Root_Drop: async void must not let a failed tab move
+            // escape to the XAML dispatcher.
+            App.Log($"[QuickCaptureSurface] Tab drop failed: {ex}");
+            RaiseFeedback(
+                T("Common.OperationFailedRetry"),
+                WidgetFeedbackSeverity.Error,
+                "quick-tab-drop-error");
+            e.AcceptedOperation = DataPackageOperation.None;
         }
         finally
         {
@@ -2714,7 +2815,20 @@ public sealed partial class QuickCaptureSurfaceContent :
             if (selectedItems.Count > 0)
             {
                 e.Handled = true;
-                await DeleteSelectedQuickCaptureItemsAsync(selectedItems);
+                try
+                {
+                    await DeleteSelectedQuickCaptureItemsAsync(selectedItems);
+                }
+                catch (Exception ex)
+                {
+                    // async void handler: a failed batch delete must not
+                    // escape to the XAML dispatcher.
+                    App.Log($"[QuickCaptureSurface] Delete selected items failed: {ex}");
+                    RaiseFeedback(
+                        T("Common.OperationFailedRetry"),
+                        WidgetFeedbackSeverity.Error,
+                        "quick-delete-selected-error");
+                }
             }
             return;
         }
@@ -2843,7 +2957,9 @@ public sealed partial class QuickCaptureSurfaceContent :
         {
             bool hasFiles = DeskBoxDragData.HasDroppedFiles(e.DataView);
             e.AcceptedOperation = hasFiles
-                ? DeskBoxDragData.GetFileAssociationOperation(e.DataView)
+                ? DeskBoxDragData.GetFileAssociationOperation(
+                    e.DataView,
+                    e.AllowedOperations)
                 : DataPackageOperation.Copy;
             if (hasFiles)
             {
@@ -2933,7 +3049,9 @@ public sealed partial class QuickCaptureSurfaceContent :
 
             bool insertAfter = e.GetPosition(border).Y >= border.ActualHeight / 2;
             e.Handled = true;
-            e.AcceptedOperation = DataPackageOperation.Move;
+            e.AcceptedOperation =
+                DeskBoxDragData.ResolveInternalMetadataOperation(
+                    e.AllowedOperations);
             e.DragUIOverride.IsGlyphVisible = true;
             ApplyQuickCaptureReorderDropState(border, active: true, insertAfter);
             return;
@@ -2946,7 +3064,9 @@ public sealed partial class QuickCaptureSurfaceContent :
 
         e.Handled = true;
         e.AcceptedOperation =
-            DeskBoxDragData.GetFileAssociationOperation(e.DataView);
+            DeskBoxDragData.GetFileAssociationOperation(
+                e.DataView,
+                e.AllowedOperations);
         ApplyFileAssociationDragFeedback(e);
         ApplyQuickCaptureItemDropState(border, active: true);
     }
@@ -3275,14 +3395,23 @@ public sealed partial class QuickCaptureSurfaceContent :
         DependencyObject? itemRoot,
         bool isVisible)
     {
-        if (itemRoot is null ||
-            FindQuickCaptureVisualChild<Border>(itemRoot, "QuickCaptureItemActionButtons") is not { } actionButtons)
+        if (itemRoot is null)
         {
             return;
         }
 
-        actionButtons.Opacity = isVisible ? 1 : 0;
-        actionButtons.IsHitTestVisible = isVisible;
+        if (FindQuickCaptureVisualChild<Border>(itemRoot, "QuickCaptureItemActionButtons") is { } actionButtons)
+        {
+            actionButtons.Opacity = isVisible ? 1 : 0;
+            actionButtons.IsHitTestVisible = isVisible;
+        }
+
+        // Same pass also toggles the hover wash so the card itself reacts,
+        // matching the Todo widget's dual hover feedback.
+        if (FindQuickCaptureVisualChild<Border>(itemRoot, "QuickCaptureItemHoverBackground") is { } hoverBackground)
+        {
+            hoverBackground.Opacity = isVisible ? 1 : 0;
+        }
     }
 
     private static T? FindQuickCaptureVisualChild<T>(DependencyObject parent, string name)
@@ -3497,6 +3626,7 @@ public sealed partial class QuickCaptureSurfaceContent :
         _detailSavedRevision = 0;
         _showDetailInSinglePane = false;
         _pendingDetailAttachments.Clear();
+        RenewPendingDetailCreationIntent();
         SetDetailEditorText(string.Empty);
         DetailMarkdownView.Markdown = string.Empty;
         RefreshDetailAttachments();
@@ -3636,6 +3766,7 @@ public sealed partial class QuickCaptureSurfaceContent :
         CancelSegmentedRestore();
         Loaded -= OnLoaded;
         Unloaded -= OnUnloaded;
+        ListPage.SizeChanged -= SegmentedRestoreSlot_SizeChanged;
         ActualThemeChanged -= QuickCaptureSurfaceContent_ActualThemeChanged;
         if (_detailAutoSaveTimer is not null)
         {

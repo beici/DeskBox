@@ -1,40 +1,18 @@
 using DeskBox.Models;
 using DeskBox.Services;
+using DeskBox.Helpers;
 
 namespace DeskBox.ViewModels;
 
+/// <summary>
+/// Runtime-health diagnostics, batch 49 form: the snapshot computation and
+/// the resync flow (App-level external state recovery) stay on the shell;
+/// the localized summary/detail lines are pushed into the backup settings
+/// editor (<see cref="Features.Backup.BackupSettingsViewModel"/>) which
+/// owns the compatibility-diagnostics section's XAML binding surface.
+/// </summary>
 public partial class SettingsViewModel
 {
-    private string _runtimeHealthSummary = string.Empty;
-    private string _runtimeHealthDetail = string.Empty;
-    private bool _isRuntimeResyncing;
-
-    public string RuntimeHealthSummary
-    {
-        get => _runtimeHealthSummary;
-        private set => SetProperty(ref _runtimeHealthSummary, value);
-    }
-
-    public string RuntimeHealthDetail
-    {
-        get => _runtimeHealthDetail;
-        private set => SetProperty(ref _runtimeHealthDetail, value);
-    }
-
-    public bool IsRuntimeResyncing
-    {
-        get => _isRuntimeResyncing;
-        private set
-        {
-            if (SetProperty(ref _isRuntimeResyncing, value))
-            {
-                OnPropertyChanged(nameof(CanResyncRuntimeState));
-            }
-        }
-    }
-
-    public bool CanResyncRuntimeState => !IsRuntimeResyncing;
-
     public void RefreshRuntimeDiagnostics()
     {
         App? app = App.Current;
@@ -43,8 +21,9 @@ public partial class SettingsViewModel
             app.WidgetManager?.GetFolderWatcherHealthSnapshots());
         if (snapshot is null)
         {
-            RuntimeHealthSummary = _localizationService.T("Settings.RuntimeHealth.Unavailable");
-            RuntimeHealthDetail = string.Empty;
+            _backupSettings.SetRuntimeHealth(
+                _localizationService.T("Settings.RuntimeHealth.Unavailable"),
+                string.Empty);
             return;
         }
 
@@ -55,7 +34,7 @@ public partial class SettingsViewModel
             snapshot.EverythingState != EverythingConnectionState.Connected &&
             !everythingChecking;
 
-        RuntimeHealthSummary = everythingChecking
+        string summaryText = everythingChecking
             ? _localizationService.T("Settings.RuntimeHealth.Summary.Scanning")
             : everythingNeedsAttention ||
               snapshot.OfflineFolderCount > 0 ||
@@ -65,7 +44,7 @@ public partial class SettingsViewModel
                 : _localizationService.T("Settings.RuntimeHealth.Summary.Healthy");
 
         string lastLifecycle = snapshot.LastLifecycleEventAt is { } lifecycleAt
-            ? lifecycleAt.ToLocalTime().ToString("g")
+            ? lifecycleAt.ToLocalTime().ToString("g", DisplayCulture.GregorianCurrent)
             : _localizationService.T("Settings.RuntimeHealth.Never");
         string everythingStatus = !everythingEnabled
             ? _localizationService.T("Settings.Search.Everything.Status.NotConfirmed")
@@ -92,7 +71,7 @@ public partial class SettingsViewModel
                 _ => _localizationService.T("Settings.Search.Everything.Status.Unknown")
             };
 
-        RuntimeHealthDetail = _localizationService.Format(
+        string detailText = _localizationService.Format(
             "Settings.RuntimeHealth.Detail",
             snapshot.LifecycleEventCount,
             lastLifecycle,
@@ -103,16 +82,18 @@ public partial class SettingsViewModel
             string.IsNullOrWhiteSpace(snapshot.LastLifecycleReason)
                 ? _localizationService.T("Settings.RuntimeHealth.Never")
                 : snapshot.LastLifecycleReason);
+
+        _backupSettings.SetRuntimeHealth(summaryText, detailText);
     }
 
     public async Task ResyncRuntimeStateAsync()
     {
-        if (IsRuntimeResyncing)
+        if (!_backupSettings.CanResyncRuntime)
         {
             return;
         }
 
-        IsRuntimeResyncing = true;
+        _backupSettings.SetRuntimeResyncBusy(true);
         try
         {
             if (App.Current is { } app)
@@ -124,7 +105,7 @@ public partial class SettingsViewModel
         }
         finally
         {
-            IsRuntimeResyncing = false;
+            _backupSettings.SetRuntimeResyncBusy(false);
         }
     }
 }

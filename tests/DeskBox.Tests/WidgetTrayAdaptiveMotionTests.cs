@@ -215,6 +215,127 @@ public sealed class WidgetTrayAdaptiveMotionTests
         Assert.Equal(1, slow.PositionSubmissionCount);
     }
 
+    [Fact]
+    public void VisualChannels_WaitForContentReadyFramesAndStartOnlyOnce()
+    {
+        var run = new FakeAnimationRun();
+        var starts = new List<double>();
+        run.Driver.Start([Entry(1, startVisual: starts.Add)],
+            100, SettingsService.WidgetAnimationEasingNone, true, 2);
+
+        run.Tick(0);
+        run.Tick(17);
+        Assert.Empty(starts);
+        run.Tick(34);
+        Assert.Equal(0, Assert.Single(starts));
+        run.Tick(51);
+        Assert.Single(starts);
+        run.Driver.Cancel();
+    }
+
+    [Fact]
+    public void StaggeredVisualStart_UsesSpatialOrderAndSeeksToTheNativeFramePhase()
+    {
+        var run = new FakeAnimationRun();
+        var firstStarts = new List<double>();
+        var delayedStarts = new List<double>();
+        run.Driver.Start(
+            [Entry(1, baseY: 100, startVisual: delayedStarts.Add), Entry(2, startVisual: firstStarts.Add)],
+            100, SettingsService.WidgetAnimationEasingNone, true, 0, staggerIntervalMs: 40);
+
+        run.Tick(0);
+        Assert.Equal(0, Assert.Single(firstStarts));
+        Assert.Empty(delayedStarts);
+        run.Tick(70);
+
+        Assert.Equal(0.3, Assert.Single(delayedStarts), 6);
+        Assert.Contains(new WidgetTrayWindowPosition(new IntPtr(1), 30, 100),
+            Assert.Single(run.CommittedPositions));
+        run.Driver.Cancel();
+    }
+
+    [Fact]
+    public async Task StationaryEffect_StartsVisualsWithoutWaitingForANativeMove()
+    {
+        var run = new FakeAnimationRun();
+        var starts = new List<double>();
+        int completed = 0;
+        run.Driver.Start([Entry(1, destination: 0, startVisual: starts.Add, completed: () => completed++)],
+            100, SettingsService.WidgetAnimationEasingNone, true, 0);
+        Task idle = run.Driver.WaitForIdleAsync();
+
+        run.Tick(0);
+        run.Tick(50);
+        Assert.Equal(0, Assert.Single(starts));
+        Assert.Empty(run.CommittedPositions);
+        run.Tick(100);
+        await idle;
+        Assert.Equal(1, completed);
+    }
+
+    [Fact]
+    public void CancelledBatch_NeverStartsItsPendingVisuals()
+    {
+        var run = new FakeAnimationRun();
+        int delayedStarts = 0;
+        run.Driver.Start([Entry(1), Entry(2, startVisual: _ => delayedStarts++)],
+            100, SettingsService.WidgetAnimationEasingNone, false, 0, staggerIntervalMs: 40);
+        run.Tick(0);
+        run.Driver.Cancel();
+        run.Tick(100);
+        Assert.Equal(0, delayedStarts);
+    }
+
+    [Fact]
+    public void InvalidatedEntry_NeverStartsItsPendingVisuals()
+    {
+        var run = new FakeAnimationRun();
+        bool valid = true;
+        int delayedStarts = 0;
+        run.Driver.Start([Entry(1), Entry(2, startVisual: _ => delayedStarts++, isValid: () => valid)],
+            100, SettingsService.WidgetAnimationEasingNone, true, 0, staggerIntervalMs: 40);
+        run.Tick(0);
+        valid = false;
+        run.Tick(70);
+        Assert.Equal(0, delayedStarts);
+        run.Driver.Cancel();
+    }
+
+    [Fact]
+    public async Task VisualStartFailure_ReleasesTheBatchAndRunsFailureCleanup()
+    {
+        var run = new FakeAnimationRun();
+        int failures = 0;
+        var failure = new InvalidOperationException("Visual target was disposed");
+        run.Driver.Start([Entry(1, startVisual: _ => throw failure, failed: () => failures++)],
+            100, SettingsService.WidgetAnimationEasingNone, true, 0);
+        Task idle = run.Driver.WaitForIdleAsync();
+        run.Tick(0);
+
+        Assert.Same(failure, await Assert.ThrowsAsync<InvalidOperationException>(() => idle));
+        Assert.Equal(1, failures);
+        Assert.Empty(run.CommittedPositions);
+        Assert.True(run.RegistrationDisposed);
+    }
+
+    [Fact]
+    public void ReplacementBatch_StartsOnlyTheNewVisualGeneration()
+    {
+        var run = new FakeAnimationRun();
+        int oldStarts = 0;
+        int newStarts = 0;
+        run.Driver.Start([Entry(1, startVisual: _ => oldStarts++)],
+            100, SettingsService.WidgetAnimationEasingNone, true, 2);
+        run.Tick(0);
+        run.Driver.Start([Entry(1, startVisual: _ => newStarts++)],
+            100, SettingsService.WidgetAnimationEasingNone, false, 0);
+        run.Tick(20);
+
+        Assert.Equal(0, oldStarts);
+        Assert.Equal(1, newStarts);
+        run.Driver.Cancel();
+    }
+
     private static readonly WidgetTrayWindowPosition[] Positions =
     [new(new IntPtr(1), 100, 200), new(new IntPtr(2), 300, 400)];
 
@@ -222,11 +343,12 @@ public sealed class WidgetTrayAdaptiveMotionTests
         (long)Math.Round(milliseconds * Stopwatch.Frequency / 1000d);
 
     private static WidgetTrayBatchAnimationEntry Entry(int handle, double destination = 100,
-        Action? completed = null, Action? failed = null) => new()
+        Action? completed = null, Action? failed = null, int baseY = 0,
+        Action<double>? startVisual = null, Func<bool>? isValid = null) => new()
     {
-        WindowHandle = new IntPtr(handle), BaseX = 0, BaseY = 0,
+        WindowHandle = new IntPtr(handle), BaseX = 0, BaseY = baseY,
         FromOffsetX = 0, FromOffsetY = 0, ToOffsetX = destination, ToOffsetY = 0,
-        RefreshRateHz = 60, IsValid = () => true,
+        RefreshRateHz = 60, IsValid = isValid ?? (() => true), StartVisual = startVisual,
         Completed = completed ?? (() => { }), Failed = failed
     };
 

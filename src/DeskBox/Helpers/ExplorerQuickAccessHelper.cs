@@ -28,6 +28,14 @@ public static class ExplorerQuickAccessHelper
     private const string IsPinnedProperty = "System.IsPinnedToNameSpaceTree";
 #endif
 
+    /// <summary>
+    /// Upper bound a caller waits for a Shell quick-access verb. The STA thread that
+    /// runs the verb cannot be aborted safely, so it is intentionally left to finish
+    /// (see <c>BoundedStaOperationRunner</c>); the timeout only releases the caller so
+    /// a hung <c>pintohome</c> cannot leave a settings toggle stuck forever.
+    /// </summary>
+    private static readonly TimeSpan ShellStaOperationTimeout = TimeSpan.FromSeconds(15);
+
     public static Task<QuickAccessStateResult> GetQuickAccessPinStateAsync(string folderPath)
     {
         return RunShellStaAsync(
@@ -251,7 +259,7 @@ public static class ExplorerQuickAccessHelper
 
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        return completion.Task;
+        return completion.Task.WaitAsync(ShellStaOperationTimeout);
     }
 
     private static void LogShellTiming(string operationName, TimeSpan elapsed)
@@ -328,28 +336,50 @@ public static class ExplorerQuickAccessHelper
                 return QuickAccessPinState.Unknown;
             }
 
-            dynamic shell = shellObject;
-            dynamic? quickAccessFolder = shell.NameSpace(QuickAccessNamespace);
-            if (quickAccessFolder is null)
+            object? quickAccessFolderObject = null;
+            try
             {
-                error = "Quick Access namespace is unavailable.";
-                return QuickAccessPinState.Unknown;
-            }
-
-            foreach (dynamic item in quickAccessFolder.Items())
-            {
-                if (!TryGetFolderItemPath(item, out string itemPath) ||
-                    !PathsEqual(itemPath, fullPath))
+                dynamic shell = shellObject;
+                quickAccessFolderObject = shell.NameSpace(QuickAccessNamespace);
+                if (quickAccessFolderObject is null)
                 {
-                    continue;
+                    error = "Quick Access namespace is unavailable.";
+                    return QuickAccessPinState.Unknown;
                 }
 
-                return TryGetPinnedProperty(item, out bool isPinned)
-                    ? isPinned ? QuickAccessPinState.Pinned : QuickAccessPinState.NotPinned
-                    : QuickAccessPinState.Unknown;
-            }
+                dynamic quickAccessFolder = quickAccessFolderObject;
+                object? items = null;
+                try
+                {
+                    items = quickAccessFolder.Items();
+                    foreach (dynamic item in (dynamic)items)
+                    {
+                        if (!TryGetFolderItemPath(item, out string itemPath) ||
+                            !PathsEqual(itemPath, fullPath))
+                        {
+                            continue;
+                        }
 
-            return QuickAccessPinState.NotPinned;
+                        return TryGetPinnedProperty(item, out bool isPinned)
+                            ? isPinned ? QuickAccessPinState.Pinned : QuickAccessPinState.NotPinned
+                            : QuickAccessPinState.Unknown;
+                    }
+                }
+                finally
+                {
+                    // The items collection RCW's single reference lives in
+                    // this scope's local. Loop item RCWs belong to the
+                    // enumerator and are deliberately left alone.
+                    ReleaseCom(items);
+                }
+
+                return QuickAccessPinState.NotPinned;
+            }
+            finally
+            {
+                ReleaseCom(quickAccessFolderObject);
+                ReleaseCom(shellObject);
+            }
         }
         catch (COMException ex)
         {
@@ -379,25 +409,48 @@ public static class ExplorerQuickAccessHelper
         try
         {
             if (!TryNormalizeFolderPath(folderPath, out string fullPath, out error) ||
-                !TryCreateShellApplication(out object? shellObject, out error) ||
-                shellObject is null)
+                !TryCreateShellApplication(out object? shellObject, out error))
             {
                 return false;
             }
 
-            dynamic shell = shellObject;
-            dynamic? quickAccessFolder = shell.NameSpace(QuickAccessNamespace);
-            if (quickAccessFolder is not null)
+            object? quickAccessFolderObject = null;
+            try
             {
-                foreach (dynamic item in quickAccessFolder.Items())
+                if (shellObject is null)
                 {
-                    if (TryGetFolderItemPath(item, out string itemPath) &&
-                        PathsEqual(itemPath, fullPath))
+                    return false;
+                }
+
+                dynamic shell = shellObject;
+                quickAccessFolderObject = shell.NameSpace(QuickAccessNamespace);
+                if (quickAccessFolderObject is not null)
+                {
+                    dynamic quickAccessFolder = quickAccessFolderObject;
+                    object? items = null;
+                    try
                     {
-                        item.InvokeVerb(UnpinVerb);
-                        return true;
+                        items = quickAccessFolder.Items();
+                        foreach (dynamic item in (dynamic)items)
+                        {
+                            if (TryGetFolderItemPath(item, out string itemPath) &&
+                                PathsEqual(itemPath, fullPath))
+                            {
+                                item.InvokeVerb(UnpinVerb);
+                                return true;
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        ReleaseCom(items);
                     }
                 }
+            }
+            finally
+            {
+                ReleaseCom(quickAccessFolderObject);
+                ReleaseCom(shellObject);
             }
 
             return TryInvokeFolderVerbCSharp(
@@ -418,6 +471,28 @@ public static class ExplorerQuickAccessHelper
         }
     }
 
+    // R1-055: explicit RCW release for the JIT oracle path only (AOT builds
+    // take the Rust layer). The COM objects here would otherwise wait for GC
+    // on the dedicated STA thread that dies right after each call. Only
+    // objects with a provable single held reference are released — the
+    // foreach enumerator and its compiler temporaries keep theirs, and
+    // ReleaseComObject (unlike FinalReleaseComObject) only decrements one
+    // reference, so the loop's hidden reference stays valid.
+    private static void ReleaseCom(object? comObject)
+    {
+        if (comObject is not null && Marshal.IsComObject(comObject))
+        {
+            try
+            {
+                Marshal.ReleaseComObject(comObject);
+            }
+            catch (InvalidOperationException)
+            {
+                // Already detached from the RCW — nothing left to release.
+            }
+        }
+    }
+
     private static bool TryInvokeFolderVerbCSharp(
         string folderPath,
         string verb,
@@ -435,15 +510,28 @@ public static class ExplorerQuickAccessHelper
                     folderPath,
                     createFolder,
                     out object? folderItemObject,
-                    out error) ||
-                folderItemObject is null)
+                    out error))
             {
+                ReleaseCom(shellObject);
                 return false;
             }
 
-            dynamic folderItem = folderItemObject;
-            folderItem.InvokeVerb(verb);
-            return true;
+            try
+            {
+                if (folderItemObject is null)
+                {
+                    return false;
+                }
+
+                dynamic folderItem = folderItemObject;
+                folderItem.InvokeVerb(verb);
+                return true;
+            }
+            finally
+            {
+                ReleaseCom(folderItemObject);
+                ReleaseCom(shellObject);
+            }
         }
         catch (COMException ex)
         {
@@ -514,15 +602,31 @@ public static class ExplorerQuickAccessHelper
         }
 
         dynamic shell = shellObject;
-        dynamic? parentFolder = shell.NameSpace(parentPath);
-        folderItem = parentFolder?.ParseName(folderName);
-        if (folderItem is null)
+        object? parentFolderObject = shell.NameSpace(parentPath);
+        try
         {
-            error = "Could not locate the folder in File Explorer.";
-            return false;
-        }
+            if (parentFolderObject is null)
+            {
+                error = "Could not open the parent folder in File Explorer.";
+                return false;
+            }
 
-        return true;
+            dynamic parentFolder = parentFolderObject;
+            folderItem = parentFolder.ParseName(folderName);
+            if (folderItem is null)
+            {
+                error = "Could not locate the folder in File Explorer.";
+                return false;
+            }
+
+            return true;
+        }
+        finally
+        {
+            // folderItem crosses to the caller (its own finally releases it);
+            // only the parent folder RCW is owned by this scope.
+            ReleaseCom(parentFolderObject);
+        }
     }
 
     private static bool TryGetFolderItemPath(dynamic item, out string path)

@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$SummaryPath,
 
@@ -37,7 +37,7 @@ $productionDataRoot = [System.IO.Path]::GetFullPath(
     (Join-Path $env:LOCALAPPDATA "DeskBox"))
 $ownedMarkerName = ".deskbox-aot-todo-notification-user-click-owned.json"
 $ownedMarkerKind = "DeskBox.Aot.TodoNotificationUserClickSmoke.v1"
-$requiredAuditProfileVersion = 63
+$requiredAuditProfileVersion = 65
 $requiredSummarySchemaVersion = 55
 
 function Test-PathEqual {
@@ -470,7 +470,7 @@ New-Item -ItemType Directory -Path $dataDirectory -Force | Out-Null
     -LiteralPath (Join-Path $DataRoot $ownedMarkerName) `
     -Encoding UTF8
 @{
-    schemaVersion = 5
+    schemaVersion = 9
     language = "zh-CN"
     autoStart = $false
     autoCheckForUpdates = $false

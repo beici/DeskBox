@@ -30,6 +30,7 @@ internal sealed class WidgetToolDialogWindow : Window
     private readonly TaskCompletionSource<bool> _completion =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Button _primaryButton;
+    private readonly Func<bool>? _validatePrimary;
     private bool _closed;
 
     internal WidgetToolDialogWindow(
@@ -37,9 +38,11 @@ internal sealed class WidgetToolDialogWindow : Window
         FrameworkElement content,
         string primaryText,
         string closeText,
-        WidgetDialogViewport viewport)
+        WidgetDialogViewport viewport,
+        Func<bool>? validatePrimary = null)
     {
         Title = title;
+        _validatePrimary = validatePrimary;
 
         var scroller = new ScrollViewer
         {
@@ -60,7 +63,7 @@ internal sealed class WidgetToolDialogWindow : Window
             Style = ResolveStyle("AccentButtonStyle"),
             MinWidth = 96
         };
-        _primaryButton.Click += (_, _) => Complete(true);
+        _primaryButton.Click += (_, _) => TryCompletePrimary();
         var closeButton = new Button
         {
             Content = closeText,
@@ -162,8 +165,21 @@ internal sealed class WidgetToolDialogWindow : Window
         else if (e.Key == VirtualKey.Enter)
         {
             e.Handled = true;
-            Complete(true);
+            TryCompletePrimary();
         }
+    }
+
+    private void TryCompletePrimary()
+    {
+        // Validation runs before the window closes, so an invalid editor
+        // keeps the dialog open with its inline error visible instead of
+        // vanishing without saving and without an explanation.
+        if (_validatePrimary is { } validate && !validate())
+        {
+            return;
+        }
+
+        Complete(true);
     }
 
     private void Complete(bool primary)

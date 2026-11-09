@@ -22,11 +22,11 @@ public sealed class AotStage5B4B2AContractTests
     {
         string source = ReadRepositoryFile("src/DeskBox/App.AotManagedUiSmoke.cs");
 
-        Assert.Contains("settingsWindow.ViewModel", source, StringComparison.Ordinal);
+        Assert.Contains("settingsWindow.FileDisplaySettings", source, StringComparison.Ordinal);
         Assert.Contains("ShowFileExtensions", source, StringComparison.Ordinal);
         Assert.Contains("FileNameLineCount", source, StringComparison.Ordinal);
         Assert.Contains("TextSize", source, StringComparison.Ordinal);
-        Assert.Contains("SelectedTrayIconStyle", source, StringComparison.Ordinal);
+        Assert.Contains("TrayIconStyle", source, StringComparison.Ordinal);
         Assert.Contains("FlushPendingSaveAsync(", source, StringComparison.Ordinal);
         Assert.Contains("notifySubscribers: false", source, StringComparison.Ordinal);
         Assert.Contains("SettingsPersistenceFlushed", source, StringComparison.Ordinal);
@@ -158,9 +158,9 @@ public sealed class AotStage5B4B2AContractTests
     {
         string baseline = ReadRepositoryFile("tests/DeskBox.Tests/JsonSerializationBaselineContractTests.cs");
 
-        Assert.Contains("Assert.Equal(36, actual.Count);", baseline, StringComparison.Ordinal);
-        Assert.Contains("Assert.Equal(86, actual.Values.Sum());", baseline, StringComparison.Ordinal);
-        Assert.Contains("Assert.Equal(33, actualContextOwners.Length);", baseline, StringComparison.Ordinal);
+        Assert.Contains("Assert.Equal(44, actual.Count);", baseline, StringComparison.Ordinal);
+        Assert.Contains("Assert.Equal(105, actual.Values.Sum());", baseline, StringComparison.Ordinal);
+        Assert.Contains("Assert.Equal(40, actualContextOwners.Length);", baseline, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -170,10 +170,10 @@ public sealed class AotStage5B4B2AContractTests
         string launcher = ReadRepositoryFile("scripts/start-aot-preview.ps1");
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
 
-        Assert.Contains("$auditProfileVersion = 63", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 65", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B2A", audit, StringComparison.Ordinal);
-        Assert.Contains("$RequiredAuditProfileVersion = 63", launcher, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 65", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("persistence", project, StringComparison.OrdinalIgnoreCase);
@@ -192,7 +192,7 @@ public sealed class AotStage5B4B2AContractTests
         Assert.Contains("stage5B4B2AForbiddenScopePatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B2AJsonSerializeCallCount", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4B2ASourceWarningMessages", audit, StringComparison.Ordinal);
-        Assert.Contains("stage5B4B2AExpectedWmc1510Count = 742", audit, StringComparison.Ordinal);
+        Assert.Contains("stage5B4B2AExpectedWmc1510Count = 808", audit, StringComparison.Ordinal);
     }
 
     private static int CountOccurrences(string value, string token)

@@ -1,6 +1,8 @@
 using DeskBox.Helpers;
 using DeskBox.Models;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -62,7 +64,33 @@ public sealed partial class SearchResultRowControl : UserControl
             _isMultiSelected = value;
             RefreshBackground();
             MultiSelectedIcon.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+            NotifySelectionChanged();
         }
+    }
+
+    /// <summary>
+    /// Raised when assistive technology asks to select this row. The popup window owns the
+    /// selection model, so it subscribes and routes the request through its normal path.
+    /// </summary>
+    public event EventHandler? AutomationSelectionRequested;
+
+    internal void RequestAutomationSelection() =>
+        AutomationSelectionRequested?.Invoke(this, EventArgs.Empty);
+
+    protected override AutomationPeer OnCreateAutomationPeer() =>
+        new SearchResultRowAutomationPeer(this);
+
+    private void NotifySelectionChanged()
+    {
+        if (FrameworkElementAutomationPeer.FromElement(this) is not { } peer)
+        {
+            return;
+        }
+
+        peer.RaisePropertyChangedEvent(
+            SelectionItemPatternIdentifiers.IsSelectedProperty,
+            !(IsSelected || IsMultiSelected),
+            IsSelected || IsMultiSelected);
     }
 
     /// <summary>
@@ -94,6 +122,7 @@ public sealed partial class SearchResultRowControl : UserControl
             ? Visibility.Visible
             : Visibility.Collapsed;
         control.RefreshBackground();
+        control.NotifySelectionChanged();
     }
 
     private void OnRowPointerEntered(object sender, PointerRoutedEventArgs e)

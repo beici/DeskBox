@@ -10,7 +10,7 @@ namespace DeskBox.Tests;
 public sealed class TodoOrphanCleanupContractTests
 {
     [Fact]
-    public void RemoveWidgetAsync_DeletesTodoStoreBeforeFeatureDisableCheck()
+    public void RemoveWidgetAsync_PersistsRemovalBeforeDeletingTodoStore()
     {
         string manager = File.ReadAllText(TestPaths.FromRepository(
             "src/DeskBox/Services/WidgetManager.cs"));
@@ -20,6 +20,12 @@ public sealed class TodoOrphanCleanupContractTests
             StringComparison.Ordinal);
         Assert.True(todoBranch >= 0, "RemoveWidgetAsync must handle WidgetKind.Todo.");
 
+        // R19-S2-01 moved the settings write ahead of the store retirement:
+        // a failed write must leave the widget's data in place instead of
+        // orphaning a config that still points at deleted notes.
+        int persistGate = manager.IndexOf(
+            "if (!await _settingsService.SaveCheckedAsync())",
+            StringComparison.Ordinal);
         int deleteCall = manager.IndexOf(
             "await TodoWidgetStore.DeleteForWidgetAsync(config.Id);",
             StringComparison.Ordinal);
@@ -30,9 +36,12 @@ public sealed class TodoOrphanCleanupContractTests
             "if (config.WidgetKind == WidgetKind.Glance)",
             StringComparison.Ordinal);
 
-        Assert.True(deleteCall > todoBranch, "The todo branch must delete the widget store.");
+        Assert.True(persistGate > todoBranch, "The todo branch must gate on the settings write.");
         Assert.True(
-            remainingCheck > deleteCall,
+            deleteCall > persistGate,
+            "The todo store may only be deleted after the removal was persisted.");
+        Assert.True(
+            remainingCheck > todoBranch,
             "The feature may only be disabled after checking for remaining todo widgets.");
         Assert.True(
             glanceBranch >= 0 && todoBranch > glanceBranch,

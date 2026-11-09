@@ -42,7 +42,10 @@ public sealed partial class TodoItemViewModel : ObservableObject
         _colorMarker = TodoItem.NormalizeColorMarker(item.ColorMarker);
         item.ColorMarker = _colorMarker;
         _dueDate = item.DueDate;
-        _recurrence = TodoRecurrence.Normalize(item.Recurrence, item.DueDate);
+        // Clone like the Recurrence setter does: the VM must own its own
+        // instance so mutating the model elsewhere (undo snapshots, recurrence
+        // generation) cannot alias this item's schedule state.
+        _recurrence = TodoRecurrence.Normalize(item.Recurrence, item.DueDate)?.Clone();
         item.Recurrence = _recurrence;
         _completedAt = item.CompletedAt;
         _reminderOffsetMinutes = TodoReminderOptions.NormalizeOffsetMinutes(item.ReminderOffsetMinutes);
@@ -110,7 +113,7 @@ public sealed partial class TodoItemViewModel : ObservableObject
         ? Visibility.Visible
         : Visibility.Collapsed;
 
-    public string CreatedText => Format("Todo.Detail.Created", CreatedAt.ToLocalTime().ToString("yyyy/M/d HH:mm"));
+    public string CreatedText => Format("Todo.Detail.Created", CreatedAt.ToLocalTime().ToString("yyyy/M/d HH:mm", DisplayCulture.GregorianCurrent));
 
     public DateTimeOffset UpdatedAt
     {
@@ -668,18 +671,18 @@ public sealed partial class TodoItemViewModel : ObservableObject
         return _localizationService?.Format(key, args) ?? LocalizationService.DefaultFormat(key, args);
     }
 
-    private static string FormatDueDateTime(DateTimeOffset dueDate)
+    internal static string FormatDueDateTime(DateTimeOffset dueDate)
     {
         return dueDate.Second == 0
-            ? dueDate.ToString("yyyy/M/d HH:mm")
-            : dueDate.ToString("yyyy/M/d HH:mm:ss");
+            ? dueDate.ToString("yyyy/M/d HH:mm", DisplayCulture.GregorianCurrent)
+            : dueDate.ToString("yyyy/M/d HH:mm:ss", DisplayCulture.GregorianCurrent);
     }
 
     private static string FormatDueTime(DateTimeOffset dueDate)
     {
         return dueDate.Second == 0
-            ? dueDate.ToString("HH:mm")
-            : dueDate.ToString("HH:mm:ss");
+            ? dueDate.ToString("HH:mm", DisplayCulture.GregorianCurrent)
+            : dueDate.ToString("HH:mm:ss", DisplayCulture.GregorianCurrent);
     }
 
     private string FormatSnoozeDateTime(DateTimeOffset snoozedUntil)
@@ -697,8 +700,8 @@ public sealed partial class TodoItemViewModel : ObservableObject
         }
 
         return snoozedUntil.Second == 0
-            ? snoozedUntil.ToString("yyyy/M/d HH:mm")
-            : snoozedUntil.ToString("yyyy/M/d HH:mm:ss");
+            ? snoozedUntil.ToString("yyyy/M/d HH:mm", DisplayCulture.GregorianCurrent)
+            : snoozedUntil.ToString("yyyy/M/d HH:mm:ss", DisplayCulture.GregorianCurrent);
     }
 
     private static Windows.UI.Color ParseColor(string hex)

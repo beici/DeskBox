@@ -319,23 +319,20 @@ public sealed class ItemMutationBatchContractTests
             StringComparison.Ordinal);
 
         int addedTimes = hydration.IndexOf(
-            "ApplyPersistedAddedTimes(items);",
+            "ApplyPersistedAddedTimes(items, folderPath);",
             guard,
             StringComparison.Ordinal);
         int sync = hydration.IndexOf(
             "SyncFolderItems(items);",
             guard,
             StringComparison.Ordinal);
-        int sort = hydration.IndexOf(
-            "SortItems();",
-            sync,
-            StringComparison.Ordinal);
         int hydrate = hydration.IndexOf(
             "StartItemHydration();",
-            sort,
+            sync,
             StringComparison.Ordinal);
-        Assert.True(addedTimes > guard && sync > addedTimes && sort > sync && hydrate > sort,
+        Assert.True(addedTimes > guard && sync > addedTimes && hydrate > sync,
             "the Items mutation sequence must run only after the commit guard");
+        Assert.DoesNotContain("SortItems();", hydration[sync..hydrate], StringComparison.Ordinal);
 
         string betweenGuardAndSync = hydration[guard..sync];
         // Strip comment lines first - the guard's own comment explains the
@@ -400,6 +397,60 @@ public sealed class ItemMutationBatchContractTests
             operations.IndexOf("batchScope.Dispose();", StringComparison.Ordinal) <
             operations.IndexOf("finalizeSyncMs=", StringComparison.Ordinal),
             "the finalize measurement must include the scope disposal");
+    }
+
+    [Fact]
+    public void FailedBulkImport_RestoresTheOriginalSortMode()
+    {
+        string operations = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/ViewModels/WidgetViewModel.Operations.cs"))
+            .Replace("\r\n", "\n");
+        int start = operations.IndexOf(
+            "private async Task ApplyImportedTransferResultsAsync",
+            StringComparison.Ordinal);
+        Assert.True(start > 0, "the transfer-results batch method must exist");
+        int end = operations.IndexOf(
+            "internal async Task<int> ApplyManualInsertionAsync",
+            start,
+            StringComparison.Ordinal);
+        Assert.True(end > start, "the batch method must be followed by the manual-insertion method");
+        string batch = operations[start..end];
+
+        // R01-S6-05: the manual-mode switch happens before the upsert loop and
+        // used to be reverted only on the success path, so a single throwing
+        // upsert pinned the widget to Manual sort forever. The batch catch must
+        // restore the captured mode and rethrow.
+        int restore = batch.IndexOf("Config.SortMode = originalSortMode.Value;", StringComparison.Ordinal);
+        Assert.True(restore > 0, "the batch must restore the captured sort mode");
+        int catchBlock = batch.LastIndexOf("catch (Exception ex)", restore, StringComparison.Ordinal);
+        Assert.True(catchBlock > 0 && catchBlock < restore,
+            "the sort-mode restore must sit inside the batch catch block");
+        int rethrow = batch.IndexOf("throw;", restore, StringComparison.Ordinal);
+        Assert.True(rethrow > restore, "the catch must rethrow after restoring the sort mode");
+        Assert.True(
+            batch.IndexOf("SortItems();", catchBlock, StringComparison.Ordinal) is > 0 and var resort &&
+            resort < rethrow,
+            "the catch must re-sort before rethrowing so the list matches the restored label");
+
+        // The manual-insertion batch carries the same Manual-mode switch and
+        // had the same gap (shortcut drops), so it needs the same guard.
+        int manualStart = end;
+        int manualEnd = operations.IndexOf(
+            "internal async Task<IReadOnlyList<string>> GetConfirmedMissingPathsAsync",
+            manualStart,
+            StringComparison.Ordinal);
+        Assert.True(manualEnd > manualStart, "the manual-insertion method must exist");
+        string manual = operations[manualStart..manualEnd];
+        int manualRestore = manual.IndexOf(
+            "Config.SortMode = originalSortMode.Value;",
+            StringComparison.Ordinal);
+        Assert.True(manualRestore > 0, "the manual-insertion batch must restore the captured sort mode");
+        int manualCatch = manual.LastIndexOf("catch (Exception ex)", manualRestore, StringComparison.Ordinal);
+        Assert.True(manualCatch > 0 && manualCatch < manualRestore,
+            "the manual-insertion batch must restore the sort mode inside a catch block");
+        int manualRethrow = manual.IndexOf("throw;", manualRestore, StringComparison.Ordinal);
+        Assert.True(manualRethrow > manualRestore,
+            "the manual-insertion catch must rethrow after restoring the sort mode");
     }
 
     [Fact]

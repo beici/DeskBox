@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using DeskBox.Models;
+using DeskBox.Contracts;
 using DeskBox.Platform;
 
 namespace DeskBox.Services;
@@ -13,28 +14,11 @@ internal sealed record SearchFileQueryPage(
     public static SearchFileQueryPage Empty { get; } = new([], 0, 0);
 }
 
-public sealed record EverythingConnectionSnapshot(
-    EverythingConnectionState State,
-    string? ExecutablePath,
-    string? Version,
-    bool IsRunning,
-    bool UsesManualPath,
-    string? DiagnosticCode)
-{
-    public static EverythingConnectionSnapshot Unknown { get; } = new(
-        EverythingConnectionState.Unknown,
-        null,
-        null,
-        false,
-        false,
-        null);
-}
-
 /// <summary>
 /// The only DeskBox filename provider. It queries the official Everything SDK over
 /// local IPC and never creates, scans, watches, or persists a second filename index.
 /// </summary>
-public sealed class EverythingSearchService : IDisposable
+public sealed class EverythingSearchService : IDisposable, ISearchConnectionClient
 {
     private const int MaximumInitialListCapacity = 4_000;
     private const long ConnectedProbeTtlMilliseconds = 30_000;
@@ -89,6 +73,7 @@ public sealed class EverythingSearchService : IDisposable
         bool allowIpcProbe = true,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(_isDisposed, this);
         PublishSnapshot(CurrentSnapshot with
         {
@@ -101,6 +86,7 @@ public sealed class EverythingSearchService : IDisposable
             () => EverythingInstallationDetector.Detect(configuredPath),
             cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
+        ObjectDisposedException.ThrowIf(_isDisposed, this);
         _lastInstallation = installation;
 
         if (string.IsNullOrWhiteSpace(installation.ExecutablePath))
@@ -135,6 +121,7 @@ public sealed class EverythingSearchService : IDisposable
                 (bool connected, string? version, uint error) = await Task.Run(
                     ProbeNativeConnection,
                     cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
                 Interlocked.Exchange(ref _lastProbeTick, Environment.TickCount64);
                 if (!connected)
                 {
@@ -239,7 +226,21 @@ public sealed class EverythingSearchService : IDisposable
             query,
             _settingsService.Settings.SearchEverythingAdvancedSyntaxEnabled);
 
-        await _nativeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        // DEF-044 only rescues the caller that wins the race; a native call
+        // that never returns keeps holding the gate, so every later search
+        // would block here forever. Bound the acquisition itself and report a
+        // distinct diagnostic instead of hanging the search box.
+        if (!await _nativeGate.WaitAsync(NativeQueryTimeout, cancellationToken).ConfigureAwait(false))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            PublishSnapshot(CurrentSnapshot with
+            {
+                DiagnosticCode = "gate-timeout"
+            });
+            App.Log("[Everything] Query skipped: a previous native call still holds the gate.");
+            return SearchFileQueryPage.Empty;
+        }
+
         Task<SearchFileQueryPage>? inFlightQuery = null;
         try
         {
@@ -334,6 +335,8 @@ public sealed class EverythingSearchService : IDisposable
         string path,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        ObjectDisposedException.ThrowIf(_isDisposed, this);
         if (!EverythingInstallationDetector.IsValidExecutablePath(path))
         {
             return false;
@@ -350,6 +353,8 @@ public sealed class EverythingSearchService : IDisposable
     public async Task UseAutomaticDetectionAsync(
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        ObjectDisposedException.ThrowIf(_isDisposed, this);
         _settingsService.Settings.SearchEverythingExecutablePath = string.Empty;
         _settingsService.SaveDebounced();
         await RefreshConnectionAsync(
@@ -364,6 +369,8 @@ public sealed class EverythingSearchService : IDisposable
             () => EverythingInstallationDetector.Detect(
                 _settingsService.Settings.SearchEverythingExecutablePath),
             cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        ObjectDisposedException.ThrowIf(_isDisposed, this);
         _lastInstallation = installation;
         if (!EverythingInstallationDetector.IsValidExecutablePath(installation.ExecutablePath))
         {
@@ -610,6 +617,7 @@ public sealed class EverythingSearchService : IDisposable
         EverythingConnectionSnapshot previous;
         lock (_snapshotLock)
         {
+            if (_isDisposed) return _snapshot;
             previous = _snapshot;
             _snapshot = snapshot;
         }

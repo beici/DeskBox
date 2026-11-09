@@ -36,15 +36,28 @@ internal sealed partial class MusicSettingsJsonContext : JsonSerializerContext
 /// </summary>
 public sealed class MusicSettingsStore
 {
-    private readonly object _lock = new();
-    private readonly string _storePath;
-    private MusicWidgetSettings? _cached;
+    private sealed class SharedState
+    {
+        internal readonly object SyncRoot = new();
+        internal MusicWidgetSettings? Cached;
+        internal Task WriteChain = Task.CompletedTask;
+        internal volatile bool PersistFailed;
+    }
 
-    // Tail of the persistence chain. Reads and appends happen under _lock so
-    // concurrent Updates enqueue in cache-mutation order; the chain itself
-    // runs on pool threads and never faults (PersistAsync logs its own
-    // failures and the link re-observes its predecessor).
-    private Task _writeChain = Task.CompletedTask;
+    private static readonly object s_statesLock = new();
+    private static readonly Dictionary<string, WeakReference<SharedState>> s_states =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private readonly SharedState _state;
+    private readonly string _storePath;
+
+    // Aggregate of every live instance's chain tail (the settings page, each
+    // music widget view model, and migration temporaries each own an
+    // instance). Shutdown's settings-flush step drains this so no music
+    // write is lost regardless of which instance issued it. WhenAll never
+    // faults because individual links never do.
+    private static readonly object s_globalChainLock = new();
+    private static Task s_globalWriteChain = Task.CompletedTask;
 
     public MusicSettingsStore()
         : this(Path.Combine(
@@ -55,8 +68,31 @@ public sealed class MusicSettingsStore
 
     internal MusicSettingsStore(string musicDataDirectory)
     {
-        Directory.CreateDirectory(musicDataDirectory);
-        _storePath = Path.Combine(musicDataDirectory, "settings.json");
+        _storePath = Path.GetFullPath(Path.Combine(musicDataDirectory, "settings.json"));
+        Directory.CreateDirectory(Path.GetDirectoryName(_storePath)!);
+        lock (s_statesLock)
+        {
+            // A store or pending write keeps its state alive. Retired profile
+            // and staging directories must not become process-lifetime caches.
+            foreach (var entry in s_states.ToArray())
+            {
+                if (!entry.Value.TryGetTarget(out _))
+                {
+                    s_states.Remove(entry.Key);
+                }
+            }
+
+            if (s_states.TryGetValue(_storePath, out var reference) &&
+                reference.TryGetTarget(out var state))
+            {
+                _state = state;
+            }
+            else
+            {
+                _state = new SharedState();
+                s_states[_storePath] = new WeakReference<SharedState>(_state);
+            }
+        }
     }
 
     internal string StorePath => _storePath;
@@ -69,10 +105,10 @@ public sealed class MusicSettingsStore
     /// </summary>
     public MusicWidgetSettings Load()
     {
-        lock (_lock)
+        lock (_state.SyncRoot)
         {
-            _cached ??= LoadFromDisk();
-            return Clone(_cached);
+            _state.Cached ??= LoadFromDisk();
+            return Clone(_state.Cached);
         }
     }
 
@@ -88,14 +124,14 @@ public sealed class MusicSettingsStore
     public void Update(Action<MusicWidgetSettings> update)
     {
         ArgumentNullException.ThrowIfNull(update);
-        lock (_lock)
+        lock (_state.SyncRoot)
         {
-            _cached ??= LoadFromDisk();
-            update(_cached);
-            MusicWidgetSettings snapshot = Clone(_cached);
+            _state.Cached ??= LoadFromDisk();
+            update(_state.Cached);
+            MusicWidgetSettings snapshot = Clone(_state.Cached);
 
-            Task predecessor = _writeChain;
-            _writeChain = Task.Run(async () =>
+            Task predecessor = _state.WriteChain;
+            Task link = Task.Run(async () =>
             {
                 try
                 {
@@ -110,6 +146,8 @@ public sealed class MusicSettingsStore
                     App.Log($"[MusicSettingsStore] Persist chain failed: {ex.Message}");
                 }
             });
+            _state.WriteChain = link;
+            TrackGlobalLink(link);
         }
     }
 
@@ -118,30 +156,79 @@ public sealed class MusicSettingsStore
     /// on pool threads (Task.Run), so a caller on any thread — including the
     /// UI thread during the synchronous migration step — waits without
     /// deadlock. The chain never faults (failures are logged by the links),
-    /// so this rethrows nothing.
+    /// so this rethrows nothing; it returns <see langword="false"/> when any
+    /// queued write failed, so a caller that gates a durable checkpoint on the
+    /// write can refuse to advance (R21-S7-02).
     /// </summary>
-    internal void WaitForPendingPersist()
+    internal bool WaitForPendingPersist()
     {
         Task chain;
-        lock (_lock)
+        lock (_state.SyncRoot)
         {
-            chain = _writeChain;
+            chain = _state.WriteChain;
+        }
+
+        chain.GetAwaiter().GetResult();
+        return !_state.PersistFailed;
+    }
+
+    /// <summary>
+    /// Blocks until every write enqueued by every live store instance has
+    /// finished. Called from the shutdown settings-flush step (R2 ⑨-2), which
+    /// previously drained Pomodoro/Screenshot/SearchHistory but missed the
+    /// music store's instance chains. Pool-thread links, so any caller waits
+    /// without deadlock.
+    /// </summary>
+    internal static void WaitForAllPendingPersists()
+    {
+        Task chain;
+        lock (s_globalChainLock)
+        {
+            chain = s_globalWriteChain;
         }
 
         chain.GetAwaiter().GetResult();
     }
 
+    private static void TrackGlobalLink(Task link)
+    {
+        lock (s_globalChainLock)
+        {
+            s_globalWriteChain = Task.WhenAll(s_globalWriteChain, link);
+        }
+    }
+
     public async Task SaveAsync(MusicWidgetSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        MusicWidgetSettings snapshot;
-        lock (_lock)
+        Task link;
+        lock (_state.SyncRoot)
         {
-            _cached = Normalize(Clone(settings));
-            snapshot = Clone(_cached);
+            _state.Cached = Normalize(Clone(settings));
+            MusicWidgetSettings snapshot = Clone(_state.Cached);
+
+            // Routed through the write chain exactly like Update (FCFG-05):
+            // a direct PersistAsync here could interleave with a concurrent
+            // Update link and File.Replace an older snapshot over a newer
+            // one. Awaiting the link keeps SaveAsync's contract that the
+            // mutation is durable when it returns.
+            Task predecessor = _state.WriteChain;
+            _state.WriteChain = link = Task.Run(async () =>
+            {
+                try
+                {
+                    await predecessor;
+                    await PersistAsync(snapshot);
+                }
+                catch (Exception ex)
+                {
+                    App.Log($"[MusicSettingsStore] Persist chain failed: {ex.Message}");
+                }
+            });
+            TrackGlobalLink(link);
         }
 
-        await PersistAsync(snapshot);
+        await link;
     }
 
     private async Task PersistAsync(MusicWidgetSettings snapshot)
@@ -151,10 +238,16 @@ public sealed class MusicSettingsStore
             await ResilientJsonStore.SaveAsync(
                 _storePath,
                 JsonSerializer.Serialize(snapshot, MusicSettingsJsonContext.Default.Settings));
+            _state.PersistFailed = false;
         }
         catch (Exception ex)
         {
+            // Logged then rethrown so the failure reaches the chain link's
+            // own guard; anything the link runs after this write must only
+            // happen for a snapshot that actually reached the disk.
+            _state.PersistFailed = true;
             App.Log($"[MusicSettingsStore] Failed to persist '{_storePath}': {ex.Message}");
+            throw;
         }
     }
 

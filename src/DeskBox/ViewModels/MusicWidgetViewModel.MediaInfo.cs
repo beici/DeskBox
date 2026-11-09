@@ -63,6 +63,9 @@ public sealed partial class MusicWidgetViewModel
         _lastSyncedPosition = TimeSpan.Zero;
         _lastPositionSyncAt = DateTimeOffset.UtcNow;
             Duration = TimeSpan.Zero;
+            // A no-change clear (both values already zero) raises no property
+            // change, but the row must follow the missing session immediately.
+            UpdateTimelineRowEligibility();
             ThumbnailImage = null;
             _lastCoverSignature = null;
             _coverRetrySignature = null;
@@ -88,6 +91,10 @@ public sealed partial class MusicWidgetViewModel
         SourceDisplayName = info.SourceDisplayName;
         PlaybackState = info.PlaybackState;
         Position = info.Position;
+        // Must precede the Duration assignment: its setter re-evaluates
+        // CanSeek from _sessionCanSeek, which would otherwise still hold
+        // the previous session's capability.
+        _sessionCanSeek = info.CanSeek;
         Duration = info.Duration;
         _lastSyncedPosition = info.Position;
         _lastPositionSyncAt = DateTimeOffset.UtcNow;
@@ -100,6 +107,10 @@ public sealed partial class MusicWidgetViewModel
         CanChangeRepeat = info.CanChangeRepeat;
         PlaybackMode = info.PlaybackMode;
         UpdateProgressTimerState();
+        // Re-attaching a session that publishes no timeline may leave both
+        // values unchanged, so the hide-gate evaluation needs an explicit
+        // nudge in addition to the property setters above.
+        UpdateTimelineRowEligibility();
         // Cover signature dedup: skip expensive cover reload when the song hasn't changed.
         // Timeline and playback events go through lightweight refresh paths, but
         // MediaPropertiesChanged can fire even when only metadata (not the thumbnail) changes.

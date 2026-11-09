@@ -11,6 +11,17 @@ public sealed partial class WidgetStackItem : WidgetItem
     private string _automationState = string.Empty;
     private string _collapseText = string.Empty;
     private bool _isExpanded;
+    private double _tileWidth;
+    private double _tileHeight;
+    private Thickness _tileMargin;
+    private Thickness _tilePadding;
+    private double _previewSize;
+    private double _previewItemSize;
+    private double _labelMaxWidth;
+    private double _labelFontSize;
+    private Thickness _listMargin;
+    private Thickness _listPadding;
+    private double _listIconSize;
 
     public required WidgetStackCategory Category { get; init; }
 
@@ -28,13 +39,18 @@ public sealed partial class WidgetStackItem : WidgetItem
 
     public string CollapseText => _collapseText;
 
-    public WidgetItem PreviewOne => Members[0];
+    // Preview slots may be evaluated while the group is tearing down and
+    // Members is empty; the bindings tolerate a null intermediate, so the
+    // getters guard instead of indexing into an empty list.
+    public WidgetItem? PreviewOne => Members.Count > 0 ? Members[0] : null;
 
-    public WidgetItem PreviewTwo => Members[Math.Min(1, Members.Count - 1)];
+    public WidgetItem? PreviewTwo => Members.Count > 0
+        ? Members[Math.Min(1, Members.Count - 1)]
+        : null;
 
-    public WidgetItem PreviewThree => Members[Math.Min(2, Members.Count - 1)];
+    public WidgetItem? PreviewThree => Members.Count > 2 ? Members[2] : null;
 
-    public WidgetItem PreviewFour => Members[Math.Min(3, Members.Count - 1)];
+    public WidgetItem? PreviewFour => Members.Count > 3 ? Members[3] : null;
 
     public Visibility ThirdPreviewVisibility => Members.Count >= 3
         ? Visibility.Visible
@@ -58,27 +74,71 @@ public sealed partial class WidgetStackItem : WidgetItem
 
     public string ChevronGlyph => IsExpanded ? "\uE70E" : "\uE70D";
 
-    public double TileWidth { get; private set; }
+    public double TileWidth
+    {
+        get => _tileWidth;
+        private set => SetProperty(ref _tileWidth, value);
+    }
 
-    public double TileHeight { get; private set; }
+    public double TileHeight
+    {
+        get => _tileHeight;
+        private set => SetProperty(ref _tileHeight, value);
+    }
 
-    public Thickness TileMargin { get; private set; }
+    public Thickness TileMargin
+    {
+        get => _tileMargin;
+        private set => SetProperty(ref _tileMargin, value);
+    }
 
-    public Thickness TilePadding { get; private set; }
+    public Thickness TilePadding
+    {
+        get => _tilePadding;
+        private set => SetProperty(ref _tilePadding, value);
+    }
 
-    public double PreviewSize { get; private set; }
+    public double PreviewSize
+    {
+        get => _previewSize;
+        private set => SetProperty(ref _previewSize, value);
+    }
 
-    public double PreviewItemSize { get; private set; }
+    public double PreviewItemSize
+    {
+        get => _previewItemSize;
+        private set => SetProperty(ref _previewItemSize, value);
+    }
 
-    public double LabelMaxWidth { get; private set; }
+    public double LabelMaxWidth
+    {
+        get => _labelMaxWidth;
+        private set => SetProperty(ref _labelMaxWidth, value);
+    }
 
-    public double LabelFontSize { get; private set; }
+    public double LabelFontSize
+    {
+        get => _labelFontSize;
+        private set => SetProperty(ref _labelFontSize, value);
+    }
 
-    public Thickness ListMargin { get; private set; }
+    public Thickness ListMargin
+    {
+        get => _listMargin;
+        private set => SetProperty(ref _listMargin, value);
+    }
 
-    public Thickness ListPadding { get; private set; }
+    public Thickness ListPadding
+    {
+        get => _listPadding;
+        private set => SetProperty(ref _listPadding, value);
+    }
 
-    public double ListIconSize { get; private set; }
+    public double ListIconSize
+    {
+        get => _listIconSize;
+        private set => SetProperty(ref _listIconSize, value);
+    }
 
     public void Update(
         IReadOnlyList<WidgetItem> members,
@@ -99,12 +159,25 @@ public sealed partial class WidgetStackItem : WidgetItem
         Thickness listPadding,
         double listIconSize)
     {
-        _members = members;
-        Name = name;
+        ArgumentNullException.ThrowIfNull(members);
+        IReadOnlyList<WidgetItem> previousMembers = _members;
+        bool membersChanged = !HaveSameMembers(previousMembers, members);
+        string previousSummary = _summary;
+        string previousAutomationState = _automationState;
+        string previousCollapseText = _collapseText;
+        bool previousExpanded = _isExpanded;
+
+        // Own the member sequence so a provider's reused mutable list cannot
+        // change the published previews before their notifications arrive.
+        if (membersChanged)
+        {
+            _members = members.ToArray();
+        }
         _summary = summary;
         _automationState = automationState;
         _collapseText = collapseText;
         _isExpanded = isExpanded;
+        Name = name;
         UpdateLayoutMetrics(
             tileWidth,
             tileHeight,
@@ -118,7 +191,17 @@ public sealed partial class WidgetStackItem : WidgetItem
             listPadding,
             listIconSize);
 
-        RefreshPresentationState();
+        if (membersChanged)
+        {
+            NotifyMemberChanges(previousMembers);
+        }
+        NotifyIfChanged(previousSummary, _summary, nameof(Summary));
+        NotifyIfChanged(previousAutomationState, _automationState, nameof(AutomationState));
+        NotifyIfChanged(previousCollapseText, _collapseText, nameof(CollapseText));
+        if (previousExpanded != _isExpanded)
+        {
+            NotifyExpansionChanged();
+        }
     }
 
     public void UpdateLayoutMetrics(
@@ -145,18 +228,6 @@ public sealed partial class WidgetStackItem : WidgetItem
         ListMargin = listMargin;
         ListPadding = listPadding;
         ListIconSize = listIconSize;
-
-        OnPropertyChanged(nameof(TileWidth));
-        OnPropertyChanged(nameof(TileHeight));
-        OnPropertyChanged(nameof(TileMargin));
-        OnPropertyChanged(nameof(TilePadding));
-        OnPropertyChanged(nameof(PreviewSize));
-        OnPropertyChanged(nameof(PreviewItemSize));
-        OnPropertyChanged(nameof(LabelMaxWidth));
-        OnPropertyChanged(nameof(LabelFontSize));
-        OnPropertyChanged(nameof(ListMargin));
-        OnPropertyChanged(nameof(ListPadding));
-        OnPropertyChanged(nameof(ListIconSize));
     }
 
     /// <summary>
@@ -164,10 +235,82 @@ public sealed partial class WidgetStackItem : WidgetItem
     /// (expand/collapse toggle without a membership or order change). The
     /// full rebuild keeps ownership of <see cref="Update"/> for real changes.
     /// </summary>
-    internal void SetExpanded(bool expanded)
+    internal void SetExpanded(bool expanded, string? automationState = null)
     {
+        string previousAutomationState = _automationState;
+        bool expandedChanged = _isExpanded != expanded;
+        _automationState = automationState ?? _automationState;
         _isExpanded = expanded;
-        RefreshPresentationState();
+        NotifyIfChanged(previousAutomationState, _automationState, nameof(AutomationState));
+        if (expandedChanged)
+        {
+            NotifyExpansionChanged();
+        }
+    }
+
+    private static bool HaveSameMembers(
+        IReadOnlyList<WidgetItem> previous,
+        IReadOnlyList<WidgetItem> current)
+    {
+        if (previous.Count != current.Count)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < previous.Count; index++)
+        {
+            if (!ReferenceEquals(previous[index], current[index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private void NotifyMemberChanges(IReadOnlyList<WidgetItem> previous)
+    {
+        OnPropertyChanged(nameof(Members));
+        NotifyPreviewChanged(previous.Count > 0 ? previous[0] : null, PreviewOne, nameof(PreviewOne));
+        NotifyPreviewChanged(previous.Count > 0 ? previous[Math.Min(1, previous.Count - 1)] : null, PreviewTwo, nameof(PreviewTwo));
+        NotifyPreviewChanged(previous.Count > 2 ? previous[2] : null, PreviewThree, nameof(PreviewThree));
+        NotifyPreviewChanged(previous.Count > 3 ? previous[3] : null, PreviewFour, nameof(PreviewFour));
+        if (previous.Count != Members.Count)
+        {
+            OnPropertyChanged(nameof(CountText));
+        }
+        if ((previous.Count >= 3) != (Members.Count >= 3))
+        {
+            OnPropertyChanged(nameof(ThirdPreviewVisibility));
+        }
+        if ((previous.Count >= 4) != (Members.Count >= 4))
+        {
+            OnPropertyChanged(nameof(FourthPreviewVisibility));
+        }
+    }
+
+    private void NotifyPreviewChanged(WidgetItem? previous, WidgetItem? current, string propertyName)
+    {
+        if (!ReferenceEquals(previous, current))
+        {
+            OnPropertyChanged(propertyName);
+        }
+    }
+
+    private void NotifyIfChanged(string previous, string current, string propertyName)
+    {
+        if (!string.Equals(previous, current, StringComparison.Ordinal))
+        {
+            OnPropertyChanged(propertyName);
+        }
+    }
+
+    private void NotifyExpansionChanged()
+    {
+        OnPropertyChanged(nameof(IsExpanded));
+        OnPropertyChanged(nameof(CollapsedPreviewVisibility));
+        OnPropertyChanged(nameof(ExpandedAnchorVisibility));
+        OnPropertyChanged(nameof(ChevronGlyph));
     }
 
     public void RefreshPresentationState()

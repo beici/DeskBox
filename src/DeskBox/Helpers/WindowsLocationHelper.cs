@@ -150,18 +150,26 @@ public static class WindowsLocationHelper
     }
 
     /// <summary>
-    /// Tries multiple IP geolocation services concurrently.
-    /// Returns the first successful result, or null if all fail.
+    /// Tries the encrypted IP geolocation services concurrently first, and only
+    /// falls back to the plaintext ip-api.com HTTP endpoint when both fail.
+    /// ip-api.com's free tier offers no HTTPS, so racing it against the HTTPS
+    /// sources let the unencrypted request win on TLS-handshake speed alone
+    /// (R1-086); the two-stage budget keeps it strictly last-resort while
+    /// preserving its localized (Chinese) city names as a final fallback.
     /// </summary>
     private static async Task<(double Lat, double Lon, string Name)?> TryMultiSourceIpLocationAsync(
         Services.LocalizationService? localizationService)
     {
-        using var cancellation = new CancellationTokenSource();
+        // Short shared budget for the HTTPS pair; past it we stop waiting —
+        // a working network answers an IP geolocation call well within it.
+        // The same token also stops the losing HTTPS request once one source
+        // answers; the last-resort HTTP fallback runs uncancellable under the
+        // HttpClient's own 6s timeout.
+        using var httpsBudget = new CancellationTokenSource(TimeSpan.FromSeconds(4));
         var pending = new List<Task<(double Lat, double Lon, string Name)?>>
         {
-            TryIpApiComAsync(localizationService, cancellation.Token),
-            TryIpApiCoAsync(localizationService, cancellation.Token),
-            TryIpSbAsync(localizationService, cancellation.Token)
+            TryIpApiCoAsync(localizationService, httpsBudget.Token),
+            TryIpSbAsync(localizationService, httpsBudget.Token)
         };
 
         while (pending.Count > 0)
@@ -172,13 +180,20 @@ public static class WindowsLocationHelper
             (double Lat, double Lon, string Name)? result = await completed;
             if (result is not null)
             {
-                await cancellation.CancelAsync();
+                await httpsBudget.CancelAsync();
                 return result;
             }
         }
 
-        App.Log("[WindowsLocation] All IP location sources failed");
-        return null;
+        App.Log("[WindowsLocation] HTTPS IP sources failed, falling back to ip-api.com (HTTP)");
+        (double Lat, double Lon, string Name)? fallback = await TryIpApiComAsync(
+            localizationService, CancellationToken.None);
+        if (fallback is null)
+        {
+            App.Log("[WindowsLocation] All IP location sources failed");
+        }
+
+        return fallback;
     }
 
     /// <summary>

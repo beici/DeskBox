@@ -1,3 +1,5 @@
+using DeskBox.Helpers;
+
 namespace DeskBox.Tests;
 
 public sealed class AotStage5B4C1B1ContractTests
@@ -58,10 +60,10 @@ public sealed class AotStage5B4C1B1ContractTests
 
         Assert.Contains("CreateItemFlyout", menu, StringComparison.Ordinal);
         Assert.Contains("CreateMultiSelectionFlyout", menu, StringComparison.Ordinal);
-        Assert.Equal(2, CountOccurrences(menu, "Widget.MoveToRecycleBin"));
-        Assert.Equal(
-            2,
-            CountOccurrences(menu, "await actions.DeleteItemsAsync(actions.GetSelectedItems())"));
+        // Delete moved to the shared primary-strip helper (one literal
+        // serving both flyouts) with the Windows 11 menu rework.
+        Assert.Equal(1, CountOccurrences(menu, "Widget.MoveToRecycleBin"));
+        Assert.Equal(1, CountOccurrences(menu, "actions.DeleteItemsAsync("));
         Assert.Contains("FileItemMenuBuilder.CreateItemFlyout", surface, StringComparison.Ordinal);
         Assert.Contains("FileItemMenuBuilder.CreateMultiSelectionFlyout", surface, StringComparison.Ordinal);
         Assert.Contains("items => DeleteItemsAsync(items)", surface, StringComparison.Ordinal);
@@ -83,8 +85,13 @@ public sealed class AotStage5B4C1B1ContractTests
         Assert.Contains("CreateItemFlyout(selectedItems[0])", probe, StringComparison.Ordinal);
         Assert.Contains("CreateMultiSelectionFlyout()", probe, StringComparison.Ordinal);
         Assert.Contains("Widget.MoveToRecycleBin", probe, StringComparison.Ordinal);
-        Assert.Contains("MenuFlyoutItemAutomationPeer", probe, StringComparison.Ordinal);
-        Assert.Contains("PatternInterface.Invoke", probe, StringComparison.Ordinal);
+        Assert.Contains("AotContextMenuProbe.InvokeProvider", probe, StringComparison.Ordinal);
+        Assert.Contains(
+            "PatternInterface.Invoke",
+            ReadRepositoryFile(
+                "src/DeskBox/Controls/WidgetContents/" +
+                "FileSurfaceContent.AotContextMenuProbe.cs"),
+            StringComparison.Ordinal);
         Assert.Contains("IInvokeProvider", probe, StringComparison.Ordinal);
         Assert.Contains("invokeProvider.Invoke()", probe, StringComparison.Ordinal);
         Assert.Contains("FeedbackRequested += OnFeedbackRequested", probe, StringComparison.Ordinal);
@@ -100,7 +107,13 @@ public sealed class AotStage5B4C1B1ContractTests
         Assert.Contains("const RECYCLE_BIN_CSIDL: i32 = 10", rust, StringComparison.Ordinal);
         Assert.Contains("System.Recycle.DeletedFrom", rust, StringComparison.Ordinal);
         Assert.Contains("item.Name()", rust, StringComparison.Ordinal);
-        Assert.Contains("GetFullPathNameW", rust, StringComparison.Ordinal);
+        // R1-054: path normalization moved into com_scaffold; the module keeps
+        // calling it, so pin the call site here and the implementation there.
+        Assert.Contains("normalize_full_path", rust, StringComparison.Ordinal);
+        Assert.Contains(
+            "GetFullPathNameW",
+            ReadRepositoryFile("native/deskbox-native/src/com_scaffold.rs"),
+            StringComparison.Ordinal);
         Assert.Contains("CompareStringOrdinal", rust, StringComparison.Ordinal);
         Assert.Contains("let mut restore_item: Option<FolderItem> = None", rust, StringComparison.Ordinal);
         Assert.Contains("if result.matched_count != 1", rust, StringComparison.Ordinal);
@@ -112,6 +125,51 @@ public sealed class AotStage5B4C1B1ContractTests
         Assert.DoesNotContain("IFileOperation", rust, StringComparison.Ordinal);
         Assert.DoesNotContain("$Recycle.Bin", rust, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void RecycleBinGate_RealExportFailsNonSingleMatchAndNeverInvokesRestore()
+    {
+        ShortcutNativeLoadResult load = ShortcutNativeModule.Default;
+        Assert.True(load.Success, $"{load.Failure}: {load.Detail}");
+        Assert.NotEqual(
+            0UL,
+            load.Module!.Capabilities & ShortcutNativeModule.RecycleBinCapability);
+
+        // An identity that cannot exist. The export enumerates the real bin,
+        // matches nothing, and the restore request must fail without reaching
+        // `InvokeVerb` — a zero or ambiguous match must never restore an
+        // unrelated item.
+        string parent = Path.Combine(Path.GetTempPath(), "DeskBox.Tests", "recycle-bin-gate");
+        string name = $"absent-{Guid.NewGuid():N}.txt";
+
+        RecycleBinNativeCallResult query = RecycleBinNativeBackend.Invoke(
+            RecycleBinNativeOperation.Query,
+            parent,
+            name);
+        Assert.True(query.Success, query.Detail);
+        Assert.Equal(0U, query.MatchedCount);
+
+        RecycleBinNativeCallResult restore = RecycleBinNativeBackend.Invoke(
+            RecycleBinNativeOperation.Restore,
+            parent,
+            name);
+
+        Assert.Equal(RecycleBinNativeCallFailure.NativeFailure, restore.Failure);
+        Assert.Equal(RecycleBinOperationFailedStatus, restore.Status);
+        Assert.NotEqual(1U, restore.MatchedCount);
+        Assert.Equal(0U, restore.RestoredCount);
+        // The gate ran the enumeration to completion, then rejected the
+        // restore: the verb phase was neither attempted nor recorded.
+        Assert.Equal(DeskBoxNativeHResultOk, restore.EnumerateHResult);
+        Assert.Equal(0U, restore.AttemptedPhases & RecycleBinInvokePhase);
+        Assert.Equal(ShortcutNativeModule.HResultNotAttempted, restore.InvokeHResult);
+    }
+
+    // ABI contract v1: status 7 is DESKBOX_NATIVE_STATUS_OPERATION_FAILED and
+    // phase bit 7 is DESKBOX_RECYCLE_BIN_PHASE_INVOKE.
+    private const uint RecycleBinOperationFailedStatus = 7;
+    private const uint RecycleBinInvokePhase = 1U << 7;
+    private const int DeskBoxNativeHResultOk = 0;
 
     [Fact]
     public void NativeAbi_HeaderRustManagedAndBuildContractAdvanceTogether()
@@ -250,10 +308,10 @@ public sealed class AotStage5B4C1B1ContractTests
         string roadmap = ReadRepositoryFile(
             "docs/architecture/rust-native-aot-roadmap.md");
 
-        Assert.Contains("$auditProfileVersion = 63", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 65", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1B1", audit, StringComparison.Ordinal);
-        Assert.Contains("$RequiredAuditProfileVersion = 63", launcher, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 65", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredRustCapabilities = 511", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredRustExportCount = 10", launcher, StringComparison.Ordinal);

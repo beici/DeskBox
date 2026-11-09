@@ -513,3 +513,959 @@
 
 - **方案与复核**：DEF-132 为一行恢复（与 R15 方案钉死值逐字符比对一致）——方案与复核由 R16 审查自身承担（其发现即诊断、其修法建议即方案，见 `round-16/B-…报告.md` §4 B-01 建议修法），主流程按建议逐字符执行并经门禁验证。
 - **门禁**：构建 0 错误；x64 全量回归 **4291/4291**；`static_gate.py` **PASS**（五项与基线持平，留档 `rectify/r16-static-gate.json`）；新实例 PID 23980。
+
+---
+
+## round-17 五路全量代码缺陷深度审查（2026-10-27，5 路并行 + Lead 独立复核）
+
+> 代码基线 `wip/fix-bug` @ `61213206`，工作树含 215 文件未提交改动 + 13 个未跟踪源码文件。纯静态审查，未运行代码/测试，未修改源码。
+> 5 份专项报告 + 总报告见 `docs/quality/rounds/round-17/`（`S1-…`/`S2-…`/`S3-…`/`S4-…`/`S5-…`、`总报告-全量代码缺陷审查.md`、`lead-verified-findings.md`）。
+> **本轮协议明令禁止 SubAgent 读取 `docs/quality/**` 与 `docs/audit/**` 历史结论**，因此本节全部条目均从代码独立得出；「存量条目状态变更」本轮不适用（历史条目维持原状态，待 Round-18 交叉比对）。
+> 规模：984 文件 / 314,283 行全量模式扫描（100%），约 45,000 行深读。**P0=0，P1=1，P2=22，P3=33，合计 56 条**。
+
+### 新增缺陷 — P1
+
+| 编号 | 标题 | 优先级 | 位置 | 根因/机制 | 状态 |
+|---|---|---|---|---|---|
+| **DEF-133** | 截图标注导出：文本标注必然渲染成实心色块（屏幕显示正常、导出错误） | P1 | `Controls/ScreenshotAnnotationRasterizer.cs:1245-1252` | `GdiText.TryRender` 覆盖度取 `max(green, blue)`，而 DIB 为 32bpp BI_RGB（BGRA）、品红哨兵 `0x00FF00FF` 与白色文字 `0x00FFFFFF` 的蓝通道都是 255 → 覆盖度恒 255 → `DrawText` 以 alpha=1 全不透明混合，文字矩形变实心块。类内注释自称「only green carries the signal」与实现矛盾。现有单测只用 1×1 帧断言 `AlphaAt(0,0)==255`，无法发现 | ✅ 已修（R17 整改批：`coverage[i] = buffer[offset + 1]`，新增用例 `Render_TextPaintsGlyphCoverageInsteadOfAFilledBox`） |
+
+### 新增缺陷 — P2
+
+| 编号 | 标题 | 优先级 | 位置 | 根因/机制 | 状态 |
+|---|---|---|---|---|---|
+| **DEF-135** | 关闭序列在托盘/钉窗/日志尾部之前释放单实例互斥体 | P2 | `App.xaml.cs:6975-6981` vs `:6767-6773` | 步骤序列末尾无条件 `ReleaseMutex()+Dispose()+null`，而 `finally` 注释恰好论证「提前释放会让新实例在本进程仍写盘时启动」；释放后仍有 `_trayWindow?.Close()`/`ShutdownScreenshotServices()`/`DrainLogQueue()`/`ArmShutdownExitBackstop`/`Exit()` | ✅ 已修（R17 整改批） |
+| **DEF-136** | 三个 per-kind 设置 store 的 `SaveAsync` 永不抛异常 | P2 | `MusicSettingsStore.cs:170-201`、`PomodoroSettingsStore.cs:215-251`、`ScreenshotSettingsStore.cs:207-221` | 写链 link 内 catch 吞掉落盘异常后正常返回 → 注释承诺的 durable 契约失效 | ⬜ 待修 |
+| **DEF-137** | `LoadFromDisk` 无重试，瞬时读失败被固化为默认值并回写覆盖 | P2 | `PomodoroSettingsStore.cs:169-177,289-321`、`MusicSettingsStore.cs:227-259` | 共享冲突 → 静默返回默认值 → `_cachedVersion` 戳成当前版本 → 下次 Update/Save 用默认值覆盖真实设置，两代内 `.bak` 也被覆盖 | ⬜ 待修 |
+| **DEF-138** | 过期的 `SnoozedUntil` 永久静音该条待办的全部提醒 | P2 | `TodoReminderService.cs:806-813` | `return now >= snoozedUntil && now <= snoozedUntil + Grace` → 宽限期后无条件早返回，值持久化不复原 | ⬜ 待修 |
+| **DEF-139** | `ResilientJsonStore` 提交路径缺 flush-to-disk（同文件回退路径却有） | P2 | `ResilientJsonStore.cs:370-394`、`SettingsService.cs:1381,1406` | 提交用 `File.WriteAllTextAsync`/`WriteAllBytesAsync` 无 `WriteThrough`；in-place 回退路径却有 `FileOptions.WriteThrough + Flush(flushToDisk:true)` → 断电「改名已生效、内容未落盘」 | ⬜ 待修 |
+| **DEF-140** | 托盘显示路径裸 `await` 批量动画 idle 任务，与隐藏路径不对称 | P2 | `Services/WidgetManager.cs:1665` vs `:1710-1742` | show 分支无 try/catch/finally，task fault 即跳过 `ScheduleCapsuleArrangementConsistencyCheck`（胶囊栏失去自愈）；hide 分支注释明写该 task 会 fault | ⬜ 待修 |
+| **DEF-141** | `InvalidateBackdropSampleAfterMove` 是前沿节流而非 burst 合并，且多条重排路径绕过 | P2 | `Services/WidgetLayerService.cs:48-59`、`:979-1029`、`:1324-1369` | 250ms 内后续移动直接丢弃且无 trailing 补发 → 最后位置可能永不失效采样；标题激活重排与 z-order 兜底绕过它（本轮新增修复机制本身不成立） | ⬜ 待修 |
+| **DEF-142** | 每个窗格 settle 触发全量可见窗口同步 `SWP_FRAMECHANGED` 扫描（O(N²)） | P2 | `Views/WidgetWindowBase.Collapse.cs:4198` | 12 窗 = 132 次同步 SetWindowPos，收拢→展开两拍翻倍，全在 UI 线程 | ⬜ 待修 |
+| **DEF-143** | `DispatcherQueue.TryEnqueue(async () => …)` 是 async void 派发且无 try/catch | P2 | `Views/ContentWidgetWindow.NativeDragDrop.cs:1496-1530` | 异常后 `ScheduleNativeFileDropFallback` 不执行（拖放静默失效）+ 临时副本残留；`grep "async void"` 查不到 | ⬜ 待修 |
+| **DEF-144** | 本地备份恢复缺互斥与身份校验（云端已修、本地未跟进） | P2 | `SettingsWindow.Maintenance.cs:475-483`、`DeskBoxDataBackupService.cs:545,1626` | `ConfirmPendingFullRestoreAsync()` 无 expected-identity 参数，`PrepareRestoreAsync` 开头无条件删共享 marker → 「确认的备份」可能≠「实际恢复的备份」；`CloudBackup.cs:296-300` 注释已写明 "Confirmed must equal applied" | ⬜ 待修 |
+| **DEF-145** | Todo「今天/本周/本月」智能列表跨日不重算 | P2 | `TodoWidgetViewModel.FilteringAndAppearance.cs:488-519` | 常驻时长期显示昨天分组 | ⬜ 待修 |
+| **DEF-146** | 「恢复默认设置」先改内存、丢弃 `SaveAsync` 返回值、失败不回滚 | P2 | `SettingsViewModel.PreferenceCommands.cs:62-101`、`Maintenance.cs:560-587` | 内存与磁盘分叉；正确范式在同轮 `DesktopOrganizationSettingsSection.xaml.cs:182-191` | ⬜ 待修 |
+| **DEF-147** | Widget 组成员上移/下移/移除三个 `async void` 可重入、无兜底 | P2 | `SettingsWindow.Navigation.cs:984-1006,1008-1030,1032-1051` | 快速连点并发改组成员顺序；失败静默 | ⬜ 待修 |
+| **DEF-148** | 9 处对话框入口裸调 `ShowAsync`，`ShowInfoDialogAsync` 缺 `XamlRoot` null 检查 | P2 | `Maintenance.cs:65,485,560`、`DataTools.cs:154,336-345,418-434`、`StorageAndUpdates.cs:387`、`Navigation.cs:1053`、`CloudBackup.cs:246` | 并发 `ShowAsync` 抛 `InvalidOperationException` 逃出 async void → 错误提示自身失败并掩盖真实失败；同窗口同语义 4 种实现 | ⬜ 待修 |
+| **DEF-149** | 作业对象配置失败后留下粘性哨兵，孤儿保护静默失效 | P2 | `Platform/ChildProcessJob.cs:57-67` | `SetInformationJobObject` 失败 `return false` 但不关句柄、不复位 `s_jobHandle` → 后续调用跳过配置把子进程挂进无 `KILL_ON_JOB_CLOSE` 的空 job 并返回 true；`catch → false` 无日志 | ⬜ 待修 |
+| **DEF-150** | 门禁 `DoesNotContain` 硬失败契约未接线 | P2 | `scripts/quality/static_gate.py:262-265`（承诺）vs `:381-386`（只 print） | 一整类契约断言永久失效；基线沉积约 700 条 `DoesNotContain violation :: tests/...` 死数据 | ⬜ 待修 |
+| **DEF-151** | 门禁当前 FAIL，且基线在红灯态被刷写、计数口径跨轮不可比 | P2 | `scripts/quality/static-baseline.json`、`static_gate.py:397-411` | 实测 `async void 258 > 257`、`empty catch 117 > 116`；基线残留 `"failures": ["async void 257 > 基线 254"]`；`empty_catch 245→116`、`sync_wait 147→193` 方向矛盾；计数域依赖外部 rg（CI 不装） | ✅ 已修（R17 整改批） |
+| **DEF-152** | 门禁无 rg 回退分支的 `tests/` 排除永不生效 | P2 | `scripts/quality/static_gate.py:293-296` | `path` 来自 `os.walk(ROOT)` 的绝对路径，`startswith("tests/")` 恒 False → 契约重放把测试自身计入，`Contains` 断言可被测试源码满足而掩盖真实契约破坏 | ⏭ 撤出本轮（Round-18 与 DEF-150 合并立项） |
+| **DEF-153** | ARM64 ABI 契约测试默认空过 | P2 | `tests/DeskBox.Tests/Arm64NativeRuntimeGateTests.cs:15-21` | 未设 `DESKBOX_REQUIRE_ARM64_RUNTIME_GATE=1` 时 `return` → xUnit 记为 passed（零断言）；ARM64 唯一自动化证据在 x64 CI 不执行，`passed == total` 无法识别 | ⬜ 待修 |
+| **DEF-154** | 更新器安装包 SHA256 二次校验在缺 `--installer-sha256` 时完全跳过 | P2 | `src/DeskBox.Updater/Program.cs:91-97` | `if (!IsNullOrWhiteSpace(...) && !Verify(...))` → 缺参数即 fail-open | ⬜ 待修 |
+| **DEF-155** | Quick Access 查询在属性读取失败时仍上报「操作成功 + 状态未知」 | P2 | `native/deskbox-native/src/quick_access.rs:163-182`、`Helpers/QuickAccessNativeBackend.cs` | 部分失败折叠成成功语义，调用方无法区分 | ⬜ 待修 |
+| **DEF-156** | 快捷方式读取 260/512 定长缓冲无 `BUFFER_TOO_SMALL` 重试，长路径整体失败 | P2 | `Helpers/ShortcutNativeBackend.cs:541-548,612-619`、`native/deskbox-native/src/shortcut.rs` | 缓冲不足不扩容重试 → 长路径快捷方式判无效 | ⬜ 待修 |
+
+| **DEF-189** | 截图标注栅格化器把 12 个 `[DllImport]` 写在 `Controls/` 域，越过 Platform 边界并使 `ModuleBoundaryContractTests.PlatformInterop_StaysInsideThePlatformDomain` 常红 | P2 | `Controls/ScreenshotAnnotationRasterizer.cs:1337-1400` | 12 个 GDI P/Invoke（`CreateCompatibleDC`/`DeleteDC`/`CreateDIBSection`/`SelectObject`/`DeleteObject`/`GdiFlush`/`SetBkMode`/`SetBkColor`/`SetTextColor`/`CreateFontW`/`TextOutW`/`GetTextExtentPoint32W`）直接声明在 Controls；`tests/DeskBox.Tests/ModuleBoundaryContractTests.cs:463-484` 的 `PlatformInteropExpectedViolations` 未登记该文件 → 测试断言 `New P/Invoke belongs in Platform` 失败。根修应迁入 `Platform/Win32Helper.Text.cs`；浅修是登记清单（会固化越界） | ⬜ 待修（Round-18 决策根修 vs 浅修） |
+### 新增缺陷 — P3
+
+| 编号 | 标题 | 位置 | 状态 |
+|---|---|---|---|
+| **DEF-134** | 退出请求前置段（`MarkCleanExit()`/150s 退避武装）在 `try` 之外；`StartupSessionLedger.TryWrite` 全吞异常 → 当前仅剩 OOM 触发面（`try` 边界缺口，修法两行） | `App.xaml.cs:6726,6736,6738` | ✅ 已修（R17 整改批） |
+| **DEF-157** | `SaveCoreAsync` 写临时文件前移走 primary（仅上次读失败触发；旧字节保留 `.unreadable-<ts>` ≤3 份） | `ResilientJsonStore.cs:365-399` | ⬜ 待修 |
+| **DEF-158** | 保留设备名消毒对带扩展名无效（`CON.txt` → `CON.txt_`） | `FileService.cs:2020-2027` | ⬜ 待修 |
+| **DEF-159** | 大小写重命名 journal 裸换行分隔，路径含换行时 journal 被删、文件滞留 | `FileService.CaseOnlyRename.cs:187-196,253-259` | ⬜ 待修 |
+| **DEF-160** | `restore-rollback/` 在「恢复成功、进程死在清理前」后永不回收 | `DeskBoxDataBackupService.cs:2500-2511` | ⬜ 待修 |
+| **DEF-161** | `HasUserDocuments` 只认 4 类文件，可能 park 在用数据 | `DeskBoxDataBackupService.cs:2602-2626` | ⬜ 待修 |
+| **DEF-162** | `MusicSettingsStore` 静态 `Task.WhenAll` 聚合无界保留历史写入 | `MusicSettingsStore.cs:162-168` | ⬜ 待修 |
+| **DEF-163** | 10 分钟总下载超时被归入网络错误，分类依赖异常确切子类型 | `AppUpdateService.cs:399-401,454-478` | ⬜ 待修 |
+| **DEF-164** | 取色复制剪贴板写入无 try/catch（违反 DEF-097 范式） | `ScreenshotCaptureWindow.xaml.cs:1455-1456` | ⬜ 待修 |
+| **DEF-165** | 截图覆盖窗口 `SetWindowPos` 返回值未检查，配合单例闸可致热键永久失效 | `ScreenshotCaptureWindow.xaml.cs` | ⬜ 待修 |
+| **DEF-166** | `LoadFrozenImageAsync` 无 `_isClosed` 守卫，窗口销毁后仍写 XAML | `ScreenshotCaptureWindow.xaml.cs` | ⬜ 待修 |
+| **DEF-167** | `BackdropSampleInvalidationRequested` 静态字段持实例方法委托，全仓无清除点 | `WidgetLayerService.cs` | ⬜ 待修 |
+| **DEF-168** | `Windows10DwmFlushLoop` 在裸后台线程无 try/catch | `WidgetWindowBase.*.cs` | ⬜ 待修 |
+| **DEF-169** | `ActiveDeskBoxDragRegistry.Begin` 的 `Path.GetFullPath` 无 try/catch | `ActiveDeskBoxDragRegistry.cs` | ⬜ 待修 |
+| **DEF-170** | `ShowNativeRightButtonDropChoiceAsync` 超时/取消路径不隐藏 Flyout | `ContentWidgetWindow.NativeDragDrop.cs` | ⬜ 待修 |
+| **DEF-171** | `ScreenshotCaptureWindow_Closed` 不释放冻结帧缓冲 | `ScreenshotCaptureWindow.xaml.cs` | ⬜ 待修 |
+| **DEF-172** | 备份快照列表把 `FailedBody` 当摘要（键语义错配）+ finally 无条件解禁按钮 | `Maintenance.cs:460-472` | ⬜ 待修 |
+| **DEF-173** | `BackupRuntime.StopCoreAsync` 把清理失败伪造成「计划内备份失败」 | `BackupRuntime.cs:164-170` | ⬜ 待修 |
+| **DEF-174** | 搜索结果右键菜单在 UI 线程同步做 `File.Exists`/PE 头探测 | `SearchPopupWindow.xaml.cs:3813-3815,3823` | ⬜ 待修 |
+| **DEF-175** | `PinInformationalSeverityBrushes` 匿名订阅 `ActualThemeChanged` 永不退订（有界） | `Navigation.cs:1399` | ⬜ 待修 |
+| **DEF-176** | 发布版残留 TEMP DimDiag 探针（每次选择变化格式化签名串 + 面板扫描） | `FileSurfaceContent.ItemVisuals.cs:2812-2944,2947-2954` | ✅ 已修（Round 02：探针整段删除，`src/` 下零残留） |
+| **DEF-177** | 死入口 `TryPrepare`（零调用点）与在用 `TryPrepareDeferred` 语义冲突 | `FileItemDragPackage.cs:170,278-281` | ⬜ 待修 |
+| **DEF-178** | retained 选择模式用 `_excludedPaths` 算「全选」指示，与实际选择不符 | `DesktopOrganizationPreviewCard.xaml.cs:404` | ⬜ 待修 |
+| **DEF-179** | Recycle Bin 枚举失败码被无条件覆盖为 S_OK | `native/deskbox-native/src/recycle_bin.rs:140` | ⬜ 待修 |
+| **DEF-180** | `native/README.md`「空可选字段显式应用」与实现不一致 | `native/README.md:77` ↔ `shortcut.rs` | ⬜ 待修 |
+| **DEF-181** | 启动失败通知的阶段名几乎恒为同一值（`startupPhase` 只赋 2 次） | `App.xaml.cs` 启动致命路径 | ⬜ 待修 |
+| **DEF-182** | JumpList 待处理参数目录无上限、无孤儿回收 | `App.xaml.cs` / JumpList 相关 | ⬜ 待修 |
+| **DEF-183** | 音频会话匹配文本丢弃代理对字符（`normalize_match_text`） | `native/deskbox-native/src/music_volume.rs` | ⬜ 待修 |
+| **DEF-184** | 更新器超时后强杀安装器进程树，可能留下半装状态 | `src/DeskBox.Updater/Program.cs` | ⬜ 待修 |
+| **DEF-185** | 门禁 `rg()` docstring 与返回值不符、无 rg 回退两套扩展集不同 | `scripts/quality/static_gate.py:40-44,98-109` | ⬜ 待修 |
+| **DEF-186** | 截图窗口 `Ctrl+Z`/`Ctrl+C` 加速键不判 `IsTextInputFocused` → 文本编辑中撤销标注/复制图像 | `ScreenshotCaptureWindow.xaml.cs:234-261` vs `:231` | ⬜ 待修 |
+| **DEF-187** | `PinSelectionAsync` 失败后钉窗仍留在 `App.ScreenshotPins`（仅进程退出时清理） | `App.Screenshot.cs:22-58` | ⬜ 待修 |
+| **DEF-188** | `CreateCompatibleDC` 返回值未检查 → GDI 句柄耗尽时返回全黑帧而非 `null` | `ScreenCaptureService.cs:99,324` | ⬜ 待修 |
+
+### 已知模式新位点（并入既有编号，不新立案）
+
+- **async void 静默失败家族**（全局 `OnUnhandledException` 无条件 `e.Handled = true` 放大）：本轮新增位点 6 处 —— `SettingsWindow.Maintenance.cs:399`（`OpenBackupFolderButton_Click`，本轮新增且未走 `RunGuardedAsync`）、`ContentWidgetWindow.NativeDragDrop.cs:1496`（lambda 内 async void）、`SettingsWindow.Navigation.cs:984/1008/1032`、`Maintenance.cs:65/485/560` 裸 `ShowAsync` 链。
+- **错误静默吞家族**：`Maintenance.cs:460-472`、`BackupRuntime.cs:164-170`、`SettingsService.cs:1088`（`catch (IOException) { }`，本轮新增）、`ContentWidgetWindow.NativeDragDrop.cs:1661`（`catch { }`，本轮新增）、`FileSurfaceContent.ItemVisuals.cs:3005`（诊断探针空 catch，本轮新增）。
+- **门禁棘轮失真家族**：DEF-150/151/152/185 四条同根，建议 Round-18 合并为「质量门禁有效性」议题一次处理。
+
+### 存量条目状态变更（round-17 复核）
+
+- **本轮不适用**：协议禁止 SubAgent 读取 `docs/quality/**`，所有结论独立得出，无法与历史 DEF 编号逐条比对。历史条目维持原状态；Round-18 由主流程做一次「历史条目 × round-17 新结论」交叉映射（重点：DEF-078/080/092/097/116/123 家族是否被本轮新位点覆盖）。
+- **正面结论（独立复核）**：Rust 生产模块（ABI 2 / capability 511 / 十导出）unsafe、句柄所有权、COM 配对、宽字符串、错误码逐条核对**未发现 UB**；`panic = "abort"` 使 panic 跨 C ABI 物理不成立；头文件 / `lib.rs` / C# 三处 ABI 完全一致；13 语言 3220 键与占位符一致；零售离线保证成立。**P0 = 0。**
+
+---
+
+### round-17 整改批（2026-10-27，随轮完成）
+
+- **方案与复核**：`docs/quality/rectify/R17-remediation-plan.md`（v2，含独立复核处置表）＋ 独立复核 `docs/quality/rectify/R17-remediation-plan-review.md`（首轮 NO-GO，5 项阻塞/建议全部处置后 GO）。执行报告：`docs/quality/rectify/R17-remediation-report.md`。
+- **本轮修复（4 条）**：
+  - **DEF-133（P1）**：`Controls/ScreenshotAnnotationRasterizer.cs:1245-1252` 覆盖度只取绿通道（`coverage[i] = buffer[offset + 1]`）＋ `:1116-1127` 注释纠错；新增用例 `Render_TextPaintsGlyphCoverageInsteadOfAFilledBox`（120×60 白底、`"HH"`、scale 1.0，断言紧包围盒内仍有背景像素且暗像素 < 50%）。**红/绿双向证明**：把实现改回 `max(green, blue)` 时该用例失败（`the text box must keep background pixels between the glyph strokes`），修复版通过。
+  - **DEF-134（P3）**：`App.xaml.cs` `MarkCleanExit()` 与 `ArmShutdownExitBackstop(150s)` 移入 `try`，异常不再逃逸出 `async void ExitApplication`。
+  - **DEF-135（P2）**：删除 `ShutdownCoreAsync` 末尾 `ShutdownStep.Sync("single-instance", …)` 步骤（互斥体唯一释放点回到 `ShutdownApplicationAsync` 的 `finally`，位于托盘/钉窗/日志落盘之后）；同步 `:6939-6940` 注释与 `docs/architecture/architecture-optimization-progress-20260922.md:527/:1866` 旧设计描述。
+  - **DEF-151（P2）**：`SettingsWindow.Maintenance.cs:399` `async void` → `void` + `_ = RunGuardedAsync("open-backup-folder", …)`（`async void` 计数 258→257）；三处新增空 catch 补说明注释（`SettingsService.cs:1088`、`ContentWidgetWindow.NativeDragDrop.cs:1661`、`FileSurfaceContent.ItemVisuals.cs:3005`，空 catch 117→113）；`static_gate.py` 加「FAIL 时拒绝写基线 + 基线不存 `failures` 运行态」门闩；删除 `static-baseline.json` 尾部 `failures` 死键。
+- **本轮撤出（2 条）**：DEF-152（修好 `tests/` 排除后 `contract_misses` 15→110，95 条需三分类，且与「拒绝写基线」门闩互锁）；DEF-150（`DoesNotContain` 接线会让切片作用域假阳性立刻 FAIL，需结构性改造）。二者与 DEF-185 合并为 Round-18「质量门禁有效性」议题。
+- **本轮新立案（1 条）**：DEF-189（P2，截图栅格化器 P/Invoke 越域，见上表）。
+- **门禁四件套**：构建 `dotnet build .\src\DeskBox\DeskBox.csproj -c Debug --no-restore -p:Platform=x64` → **0 错误 / 20 警告**（存量），产物 `src\DeskBox\bin\x64\Debug\net10.0-windows10.0.22621.0\DeskBox.dll` 14,234,624 B / 04:54:27；定向回归 `ScreenshotAnnotationRasterizerTests` **9/9**；x64 全量回归 **6202 通过 / 11 失败 / 1 跳过 / 6214**（11 条全部为环境或存量：5× `DesktopOrganizationTests` 直写真实 `%LOCALAPPDATA%\DeskBox` 被拒、1× 注册表 HKCU 被拒、1× WinRT 无打包上下文、3× 缩略图通道不可用、1× DEF-189）；`static_gate.py` **PASS**（`async void 257 = 基线 257`、`empty catch 113 < 116`、`sync_wait 193`、`reflection 3`、契约重放 5837/失联 15/新增 0）。留档：`.tmp-test/static-gate-r17-after.json`。
+- **未执行**：新实例启动验证（外部实例 `E:\DeskBox-dev\app5\DeskBox.exe` 持单实例锁，本轮未杀进程）。
+## round-18 十路全量代码缺陷深度审查（2026-10-27，10 路并行 + Lead 独立复核）
+
+> 纯静态审查：未运行应用、未执行测试、未修改任何源码（本节为审查结果录入）。
+> 10 份分段报告 + 总报告 + Lead 复核记录见 `docs/quality/rounds/round-18/`（`S1-…`…`S10-…`、`ROUND-18-总报告.md`、`LEAD-VERIFICATION.md`）。
+> 本轮协议明令禁止 SubAgent 读取 `docs/quality/**` 历史结论，全部条目从代码独立得出；与历史 `DEF-xxx` 的交叉比对在下一轮做。
+> 规模：10 段 100% 模式扫描，深读约 95,000 行。**P0=0，P1=3（Lead 复核后 1），P2=33（复核后 35），P3=53，合计 89 条**；观察项 100+。
+> 编号规则：`R18-S{n}-nn`（分段 + 序号），不与历史 `DEF-xxx` 混用。
+> Lead 复核改动：**R18-S2-01 P1→P2**（两个调用方都有 `catch(Exception)` 兜底 + 下次 `Stop()` 作废迟到线程）、**R18-S6-01 P1→P2**（`App.xaml.cs:6991` 无条件 `Handled=true`，不崩只静默）、**R18-S2-07 P2→P3**（`GetInvalidFileNameChars` 含 `\` `/`，无法多级回溯）、**R18-S8-01 P2→P3**（分段自查：写盘走无 `_isDisposed` 守卫的纯转发）。唯一 P1 = **R18-S1-001**（已用线上 `stable.json` 实证缺 `arm64Sha256`）。
+
+### 新增缺陷（89 条）
+
+#### S1
+
+| 编号 | 标题 | 级别 | 状态 |
+|---|---|---|---|
+| **R18-S1-001** | ARM64 上「检查更新」恒定失败：`arm64Sha256` 缺失时用空串覆盖 `sha256` | P1 | ✅ 已修（R18-B，加诊断日志；复核后 P2） |
+| **R18-S1-002** | `_lastDownloadedSha256` 取自调用方原始 manifest，与下载核心实际校验的架构哈希不同源 | P2 | ✅ 已修（R18-B） |
+| **R18-S1-003** | `HasUserDocuments` 漏判 `quick-capture.json` / `desktop-organization-history.json`，可能永久删除只含快记数据的目录 | P2 | ✅ 已修（R18-B） |
+| **R18-S1-004** | `ArchiveZipService.WriteZip` 缺少「排除自身归档」，多选父目录+子项时压缩必然失败（TAR 分支有该保护） | P3 | ⬜ 待修 |
+| **R18-S1-005** | `ExecuteTransferPlanAsync` 的 `allowShellElevation` 分支静默丢弃 `onItemError` / `skippedItems`，违反同方法内写明的契约 | P3 | ⬜ 待修 |
+| **R18-S1-006** | `FolderWatcherService` 两个 debounce 定时器回调直接 `Invoke` 事件，无异常隔离 | P3 | ⬜ 待修 |
+| **R18-S1-007** | `DesktopAutoOrganizationWatcher.BeginEnabledCycle` 每次启用泄漏一个 linked `CancellationTokenSource` | P3 | ⬜ 待修 |
+
+#### S2
+
+| 编号 | 标题 | 级别 | 状态 |
+|---|---|---|---|
+| **R18-S2-01** | `ReservedHotkeyHookService.TryStartAsync` 超时分支是死代码，超时后抛异常且跳过 `Stop()`，全局钩子留在"装了但不路由"状态 | P1 | ⬜ 待修 |
+| **R18-S2-02** | `HookHealthWatchdog` 的恢复退避最多只能升一级，稳态在 90s/180s 之间振荡，8 分钟上限不可达 | P2 | ⬜ 待修 |
+| **R18-S2-03** | `MusicSessionService` 在同一 app 存在 ≥2 个 SMTC 会话时把 SessionId 塌缩成 ordinal 0，多会话选择器指向错误会话 | P2 | ⬜ 待修 |
+| **R18-S2-04** | `SearchEngineService` 在后台线程直接枚举 UI 线程可变 `List<WidgetConfig>`，并发增删 widget 时抛 `InvalidOperationException` | P2 | ⬜ 待修 |
+| **R18-S2-05** | `MusicVolumeService` 的 `ISimpleAudioVolume` / `IAudioSessionControl2` RCW 从不释放 | P3 | ⬜ 待修 |
+| **R18-S2-06** | `TodoWidgetStore.DeleteForWidgetAsync` 绕过路径级信号量，删除后仍可能被并发写者重建 | P3 | ⬜ 待修 |
+| **R18-S2-07** | `TodoWidgetStore.SanitizeWidgetId` 放行 `"."` 与 `".."`，`Path.Combine` 可逃出 widgets 目录 | P3 | ⬜ 待修 |
+| **R18-S2-08** | `SearchEngineService.Dispose()` 先 Dispose 再被事件源读取 `.Token`，`ObjectDisposedException` 冒泡进保存路径 | P3 | ⬜ 待修 |
+| **R18-S2-09** | `HotkeyRecorderHookService.Stop()` 在钩子线程尚未登记 threadId 时永久泄漏消息泵线程，录制器此后无法启动 | P3 | ⬜ 待修 |
+| **R18-S2-10** | `NativeAppNotificationService.Register` 无并发保护，双重订阅导致一次点击触发两次激活 | P3 | ⬜ 待修 |
+| **R18-S2-11** | `SearchSettingsCoordinator.StopCoreAsync` 在 `finally` 里 `_enableGate.Dispose()`，与 `SetEnabledAsync` 的 `Release()` 竞争 | P3 | ⬜ 待修 |
+| **R18-S2-12** | `MusicSessionService.AttachCurrentSession` 无同步，三个事件可被重复订阅 | P3 | ⬜ 待修 |
+
+#### S3
+
+| 编号 | 标题 | 级别 | 状态 |
+|---|---|---|---|
+| **R18-S3-01** | z-order 延迟调度体是 async void，且忽略 `TryEnqueue` 返回值 | P2 | ⬜ 待修 |
+| **R18-S3-02** | `_widgetsRaisedFromTray` 被直接赋值，绕过 `SetWidgetsRaisedFromTray` 的状态通知 | P2 | ⬜ 待修 |
+| **R18-S3-03** | 组变更回滚快照漏捕屏幕绑定三字段，回滚后成员屏幕绑定停留在组的值 | P2 | ⬜ 待修 |
+| **R18-S3-04** | `InvalidateBackdropSampleAfterMove` 是领先沿合并，注释描述的却是尾沿合并 | P2 | ⬜ 待修 |
+| **R18-S3-05** | `RaiseVisibleWidgetsTemporarily` / `ActivateAllVisibleWidgetsFromTitle` 的抬升循环无保护，租约与回落定时器在循环之后 | P2 | ⬜ 待修 |
+| **R18-S3-06** | `ApplyTrayAnimationGroupOffset` 的逐窗偏移设置无 try/catch，失败会留下屏幕外的残留偏移 | P3 | ⬜ 待修 |
+| **R18-S3-07** | `WidgetGroupTransientState.IsEmpty` 恒为 false，空状态清理分支不可达 | P3 | ✅ 已修（R18-B） |
+| **R18-S3-08** | `SwitchContentWidgetGroupMemberInPlaceAsync` 在 `finally` 里 `await loadingDelay`，非 OCE 异常会顶替原始异常 | P3 | ⬜ 待修 |
+| **R18-S3-09** | `RegisterBoundsTransition` 的容量闸门是死代码 | P3 | ⬜ 待修 |
+| **R18-S3-10** | `TryCommitBatch` 失败时放弃 `HDWP` 事务块，逐帧泄漏 | P3 | ⬜ 待修 |
+| **R18-S3-11** | `CloseAll` 未清 `WidgetLayerService.BackdropSampleInvalidationRequested` 静态回调 | P3 | ⬜ 待修 |
+| **R18-S3-12** | 组拖拽驻留计时器从未 Dispose，`CloseAll` 也不停 | P3 | ✅ 已修（R18-B） |
+| **R18-S3-13** | `RefreshVisibleWidgetDesktopLayers` 在 `_isTogglingWidgetsDesktopLayer` 期间用无上限、无取消的 250ms 自续轮询 | P3 | ⬜ 待修 |
+| **R18-S3-14** | `ApplyCapsuleArrangementIfChanged` 在重入或拖拽会话期间静默丢弃请求，一致性自愈的票据被消耗 | P3 | ⬜ 待修 |
+| **R18-S3-15** | 组解散路径不清 `_widgetGroupMemberInactiveSince` / `_widgetGroupTransientStates` | P3 | ⬜ 待修 |
+
+#### S4
+
+| 编号 | 标题 | 级别 | 状态 |
+|---|---|---|---|
+| **R18-S4-01** | 恢复默认设置先改内存后落盘，落盘失败不回滚且丢弃返回值 | P2 | ⬜ 待修 |
+| **R18-S4-02** | 重置组件外框覆盖后没有任何宿主刷新，按钮点了界面不变 | P2 | ⬜ 待修 |
+| **R18-S4-03** | 材质持久化不按当前 OS 支持集校验，Win10 上可落到不存在的选项 | P2 | ⬜ 待修 |
+| **R18-S4-04** | 备份运行时用"丢弃"处理刷新重入，并发保存会静默丢失配置变更 | P2 | ⬜ 待修 |
+| **R18-S4-05** | 抑制标志一律"无条件置 false"，21 处不可重入（同仓仅 3 处写法正确） | P3 | ⬜ 待修 |
+| **R18-S4-06** | `ResetWidgetChromeOverrides` 的 `mode` 形参完全未被使用 | P3 | ✅ 已修（R18-B） |
+| **R18-S4-07** | `FormatBytes` 误用 `string.Format`：culture 实参无效，且本地化串含花括号即抛异常 | P3 | ⬜ 待修 |
+| **R18-S4-08** | `Dispose` 只退订了 10 个事件，19 个订阅残留（含外观提交链路） | P3 | ⬜ 待修 |
+| **R18-S4-09** | Todo 的"今天/逾期"派生状态没有跨日触发器 | P2 | ⬜ 待修 |
+
+#### S5
+
+| 编号 | 标题 | 级别 | 状态 |
+|---|---|---|---|
+| **R18-S5-01** | 搜索弹窗重命名对话框的 `ShowAsync` 在异常边界之外，可致进程崩溃 | P2 | ⬜ 待修 |
+| **R18-S5-02** | 引导流程的错误对话框在 `catch` 块内再次 `await ShowAsync()`，异常二次逃逸 | P2 | ⬜ 待修 |
+| **R18-S5-03** | `UpdateFooterState` 无条件重新启用「下一步」，可与完成流程并发导致双次 `Close()` | P2 | ⬜ 待修 |
+| **R18-S5-04** | `RootGrid_Drop` 是 `async void` 且 `try` 只有 `finally` 没有 `catch` | P2 | ⬜ 待修 |
+| **R18-S5-05** | 右键拖放取消分支在 UI 线程同步递归删除临时目录 | P2 | ⬜ 待修 |
+| **R18-S5-06** | 规则转移成功提示被内层刷新覆盖，用户永远看不到反馈 | P3 | ⬜ 待修 |
+| **R18-S5-07** | `_isRefreshing` 用裸赋值而非 `try/finally`，一次异常永久锁死设置分区 | P3 | ⬜ 待修 |
+| **R18-S5-08** | `AutoOrganizationToggle_Toggled` 无重入保护，快速连点可交错基线与保存结果 | P3 | ⬜ 待修 |
+| **R18-S5-09** | 标题重命名编辑器的 `e.Handled` 在 `await` 之后才置位 | P3 | ⬜ 待修 |
+| **R18-S5-10** | 「上移/下移堆栈」在历史 key 存在时静默无效，而菜单仍显示可用 | P3 | ⬜ 待修 |
+
+#### S6
+
+| 编号 | 标题 | 级别 | 状态 |
+|---|---|---|---|
+| **R18-S6-01** |  | P1 | ⬜ 待修 |
+| **R18-S6-02** |  | P2 | ⬜ 待修 |
+| **R18-S6-03** |  | P2 | ⬜ 待修 |
+| **R18-S6-04** |  | P2 | ⬜ 待修 |
+| **R18-S6-05** |  | P2 | ⬜ 待修 |
+| **R18-S6-06** |  | P2 | ⬜ 待修 |
+| **R18-S6-07** |  | P3 | ⬜ 待修 |
+| **R18-S6-08** |  | P3 | ⬜ 待修 |
+| **R18-S6-09** |  | P3 | ⬜ 待修 |
+| **R18-S6-10** |  | P3 | ⬜ 待修 |
+| **R18-S6-11** |  | P3 | ⬜ 待修 |
+| **R18-S6-12** |  | P3 | ⬜ 待修 |
+
+#### S7
+
+| 编号 | 标题 | 级别 | 状态 |
+|---|---|---|---|
+| **R18-S7-01** | 模式切换后两套布局同时常驻可视树 | P3 | ⬜ 待修 |
+| **R18-S7-02** | 名称展开浮层每次调用新建两支 `SolidColorBrush`，违反共享样式缓存收敛决定 | P3 | ⬜ 待修 |
+| **R18-S7-03** | 列表模式重命名编辑框的 `Math.Clamp` 上下界可能倒置并抛 `ArgumentException` | P3 | ⬜ 待修 |
+| **R18-S7-04** | 多选命令栏永久折叠，5 个 `async void` 处理器与忙碌态写入成为不可达代码 | P3 | ⬜ 待修 |
+
+#### S8
+
+| 编号 | 标题 | 级别 | 状态 |
+|---|---|---|---|
+| **R18-S8-01** | 最后一次写盘发生在不被等待的 `async void` 生命周期钩子里，进程退出即可能丢失 | P3 | ⬜ 待修 |
+| **R18-S8-02** | `TodoWidgetContent` 两个只写字段：`_selectionPreviewItems` 与 `_copyTapGeneration` | P3 | ⬜ 待修 |
+| **R18-S8-03** | `WidgetGroupTitleSwitcher` 的悬停切换 `CancellationTokenSource` 从不 `Dispose` | P3 | ✅ 已修（R18-B） |
+| **R18-S8-04** | 附件拖放失败时把原始异常消息直接呈现给用户 | P3 | ⬜ 待修 |
+| **R18-S8-05** | 笔记「取消」不取消在飞的自动保存，被丢弃的草稿仍会落盘 | P3 | ⬜ 待修 |
+| **R18-S8-06** | `AppUpdateManifest` 的集合属性对显式 JSON `null` 无防护，`HasReleaseNotes` 会 NRE | P3 | ✅ 已修（R18-B） |
+
+#### S9
+
+| 编号 | 标题 | 级别 | 状态 |
+|---|---|---|---|
+| **R18-S9-01** | 系统音量读取失败仍上报成功，音乐控件把 0% 当成真实读数 | P2 | ⬜ 待修 |
+| **R18-S9-02** | 关闭序列的 `abortFollowingStepsOnTimeout` 跳过其后**全部**收尾步骤，未落盘设置与日志尾部丢失 | P2 | ⬜ 待修 |
+| **R18-S9-03** | 回收站恢复与快速访问固定：`InvokeVerb` 投递成功即上报「已恢复/已固定」 | P2 | ⬜ 待修 |
+| **R18-S9-04** | 回收站精确恢复在长路径父目录下不可用，QUERY 还会静默退化为「0 匹配」 | P2 | ⬜ 待修 |
+| **R18-S9-05** | 快捷方式读取：任一字段的访问器失败都会让整次读取变成 `OPERATION_FAILED` | P2 | ⬜ 待修 |
+| **R18-S9-06** | 用 `SHELL_NAMESPACE_TARGET` 写出的 IDList 型快捷方式无法被读回 | P2 | ⬜ 待修 |
+| **R18-S9-07** | 回收站扫描跳过坏项后仍把 `enumerate_hresult` 覆写为 `S_OK` | P3 | ⬜ 待修 |
+| **R18-S9-08** | `deskbox_recycle_bin_v1`（能力位 `1<<8`）在生产代码中没有任何调用者，与文档/能力声明不符 | P3 | ⬜ 待修 |
+
+#### S10
+
+| 编号 | 标题 | 级别 | 状态 |
+|---|---|---|---|
+| **R18-S10-01** | 缩略图缓存按 decode 宽度互相驱逐（P2 / 高） | P2 | ✅ 已修（R18-B） |
+| **R18-S10-02** | `DEVMODE` 结构截断，刷新率恒回落默认 60 Hz（P2 / 中） | P2 | ⬜ 待修 |
+| **R18-S10-03** | `SHGetFileInfo` 兜底路径丢弃 `rejectPaddedShortcutIcon`（P3 / 确定） | P3 | ⬜ 待修 |
+| **R18-S10-04** | 本地启动观察标记在失败分支不完成，15 秒后必发误导日志（P3 / 确定） | P3 | ⬜ 待修 |
+| **R18-S10-05** | Move-only 源在成功导入后收到 `DROPEFFECT_NONE` 回执（P3 / 中） | P3 | ⬜ 待修 |
+| **R18-S10-06** | 延迟拖放完成回调拿不到 dataObject（与同步路径契约不对称）+ 死变量（P3 / 确定） | P3 | ⚠️ 部分（R18-B：死变量显式化，行为未变） |
+
+
+### round-18 整改批（R18-B 已完成 2026-10-27，方案见 `docs/quality/rectify/R18-remediation-plan.md` §实施记录）
+
+| 批次 | 内容 | 条目 | 状态 |
+|---|---|---|---|
+| B1 | 更新链路：站点清单检查项 + 缺失字段诊断日志 + `_lastDownloadedSha256` 同源 | R18-S1-001（代码侧）、R18-S1-002 | ✅ 已修（B1.1 仅诊断日志，行为不变） |
+| B2 | 数据保全：`HasUserDocuments` 改为按 `ShouldIncludeInBackup` 枚举全部文件（根因修复） | R18-S1-003 | ✅ 已修 |
+| B3 | 反序列化健壮性：`AppUpdateManifest` 集合属性 null 归一 + 2 条单测 | R18-S8-06 | ✅ 已修 |
+| B4 | 资源泄漏与卸载丢保存：Glance `OnUnloaded` await flush、悬停切换 CTS Dispose、组拖拽计时器停用 | R18-S6-07、S8-03、S3-12 | ✅ 已修 |
+| B5 | 死代码与契约漂移清理：未用形参、恒未赋值变量、恒 false 判据 | R18-S4-06、S10-06、S3-07 | ✅ 已修（S10-06 仅显式化） |
+| B6 | 待决策（不动代码）：异步停用契约、快照字段集、屏幕坐标原点、`FireAndForget` 统一入口、`WaitAsync` 死分支、`DEVMODE` 截断 | S8-01、S3-03、S6-05、S3-01/05、S2-01、S10-02 | 🧭 待决策 |
+
+### round-18 新增高价值候选（复核后应优先纳入后续批次）
+
+| 编号 | 一句话 | 建议批次 |
+|---|---|---|
+| R18-S9-02 | 关闭序列 `abortFollowingStepsOnTimeout` 超时即跳过其后全部步骤，连带跳过 `settings-flush`/`log-drain`/`service-container` → 关闭瞬间设置与日志尾部丢失 | B7（P2 高） |
+| R18-S9-01 | `music_volume` 读系统音量失败仍返回 `STATUS_OK/S_OK`，控件把「不可读」显示成 0% | B7 |
+| R18-S9-03 | `recycle_bin`/`quick_access` 把 `InvokeVerb` 投递成功当作状态已改变，恢复/固定失败仍报成功 | B8（需实机） |
+| R18-S9-08 | 零售 AOT 无「精确回收站恢复」生产调用者，与 `native/README.md`/AGENTS.md 声明相悖 | B8（文档或接线二选一） |
+| R18-S10-01 | 缩略图缓存 `pathPrefix` 不含 decode 段，同路径不同宽度互相驱逐 → 缓存命中率退化 | ✅ 已修（R18-B6） |
+| R18-S10-02 | `DEVMODE` 托管结构 188 vs 原生 220 字节，`dmSize` 据此传入 → 刷新率检测失效 | B9（需实机） |
+| R18-S2-04 | `SearchEngineService` 后台线程枚举 UI 线程可变 `List<WidgetConfig>` | B7 |
+| R18-S2-08 | `SearchEngineService.Dispose()` 后事件源仍读 `.Token` | B7 |
+| R18-S3-03 | 组变更回滚快照漏捕屏幕绑定三字段 | B10（决策后） |
+
+### round-18 修复批 R18-B 记录（2026-10-27）
+
+> 执行者：Lead；依据 `docs/quality/rectify/R18-remediation-plan.md`（v2，已吸收独立复核 7 项阻断 + 6 项建议）。
+> 约束：用户要求「仅静态审查、不执行运行测试」，本批未启动 GUI 实例；构建 + 单测属门禁验证，不属于运行测试。
+
+| 编号 | 修复落点 | 关键代码 | 验证 |
+|---|---|---|---|
+| R18-S1-002 | `src/DeskBox/Services/AppUpdateService.cs` | `_lastDownloadedSha256 = SelectInstallerForArchitecture(manifest, CurrentInstallerArchitectureSuffix)?.Sha256 ?? manifest.Sha256` —— 记账与下载校验同源，补齐 `arm64Sha256` 后不再重下-重删 | 定点 562 通过 |
+| R18-S1-003 | `src/DeskBox/Services/DeskBoxDataBackupService.cs` | `HasUserDocuments` 改为枚举目录全部文件 + `ShouldIncludeInBackup(相对路径,'/')`；枚举异常保守返回 `true` | 定点 562 通过 |
+| R18-S8-06 | `src/DeskBox/Models/AppUpdateManifest.cs` | `Summary`/`ReleaseNotes` 改支撑字段 + `set => value ?? []` | 新增 `AppUpdateManifestNullToleranceTests`（2 条）通过 |
+| R18-S6-07 | `src/DeskBox/Views/SettingsSections/GlanceWidgetSettingsSection.xaml.cs` | `OnUnloaded` → `async void` + `await RunGuardedAsync("on-unloaded", FlushPendingSavesAsync)` | 定点通过 |
+| R18-S8-03 | `src/DeskBox/Controls/WidgetGroupTitleSwitcher.xaml.cs` | 新增 `CancelAndDisposeHoverSwitch()`，三处调用统一先 Cancel 再 Dispose、字段先置空 | 定点通过 |
+| R18-S3-12 | `src/DeskBox/Services/WidgetManager.cs` | `CloseAll` 停用并置空 `_groupDragDwellTimer` | 定点通过 |
+| R18-S4-06 | `src/DeskBox/ViewModels/SettingsViewModel.AppearanceOptions.cs` + `tests/DeskBox.Tests/SettingsViewModelChromeModeTests.cs` | 删除未读形参 `string? mode = null`，两处测试调用点同步 | 3 条 ChromeMode 测试通过 |
+| R18-S3-07 | `src/DeskBox/Services/WidgetManager.Groups.cs` | 删除恒 `false` 的 `IsEmpty`，判据收敛为 `state is null` | 定点通过 |
+| R18-S10-01 | `src/DeskBox/Helpers/IconHelper.cs` | `RemoveStaleThumbnailEntries` 增加 `decodePixelWidth` 并追加 `:decode={width}` 后缀匹配 | 定点通过 |
+| R18-S10-06 | `src/DeskBox/Helpers/NativeDropTarget.cs` | 删除恒未赋值局部变量，`ResolveCompletionEffect(..., createdShellApplicationLinks: false)` 显式传常量 | 定点通过 |
+
+**评级/结论修正（复核推翻分段结论，需在下一轮继承）**
+
+| 条目 | 分段结论 | 复核结论 |
+|---|---|---|
+| R18-S1-001 | P1「ARM64 检查更新恒失败」 | **P2**：站点清单判失败后 `CheckForUpdatesAsync` 会回退 GitHub 发布检查（`AppUpdateService.cs:209-224`），ARM64 用户仍可拿到更新；代码侧只加诊断日志，不改行为 |
+| R18-S1-002 | P2 | **P1 潜在路径**：一旦站点补齐 `arm64Sha256`，原始 manifest 记账值必然与下载校验值不一致 → 无限重下-重删 |
+| R18-S10-05 | P3「`ResolveCompletionEffect` 永不返回 Move」 | **误报**：`NativeDropEffectPolicy` 注释明确说明返回 MOVE 会让拖拽源删除源文件（check-then-disappear 竞态），COPY 是故意设计 |
+| R18-S10-06 | P3「死变量 + 延迟路径拿不到 dataObject」 | **部分成立**：变量确实被 `:705` 读取（恒 `false`），非未读死代码；延迟路径 `DataObject:0` 是 OLE 规范行为，不是缺陷 |
+
+**本轮环境基线（供下一轮对照，勿误判为回归）**
+
+- 全量测试：6204 通过 / 11 失败 / 1 跳过 / 6216。11 条失败均与本批改动无关：8 条沙箱令牌拒绝写 `%LOCALAPPDATA%\DeskBox\data` 与 `HKCU\Software\DeskBox.Tests`；3 条 `QuickCaptureServiceTests` 缩略图断言（`BitmapDecoder` 在受限令牌下返回空）；1 条 `ModuleBoundaryContractTests.PlatformInterop_StaysInsideThePlatformDomain` 指向工作区**未跟踪**文件 `src/DeskBox/Controls/ScreenshotAnnotationRasterizer.cs`（12 处 P/Invoke，`scripts/quality/static-baseline.json` 未更新）→ 已列入 R19 必读项。
+- 测试需把 `TEMP`/`TMP` 指向工作区内目录（如 `E:\DeskBox\.artifacts\test-temp`），否则测试宿主无法写用户 Temp，会出现 1600+ 条 `UnauthorizedAccessException` 假失败。
+
+---
+
+## Round 19（2026-10-27，十路专项静态审查）
+
+- 输入：`docs/quality/rounds/round-19/` 十份分报告 + `ROUND-19-总报告.md`
+- 立案 **115** 条：P0 0 / P1 5→**1**（复核改判 4 条）/ P2 27→**34** / P3 78→**80**（S3 五条原文未标级别，按证据补标 3×P2 + 2×P3）
+- 状态：全部「待修」，本轮未修改任何源码；Lead 已逐条复核 P1 与关键 P2（见 `docs/quality/rounds/round-19/LEAD-VERIFICATION.md`）
+- 编号规则：`R19-S{段号}-{序号}`；段号与分报告一致（S1 数据安全与更新链路、S2 Widget 管理与窗口会话、S3 Views 与应用主壳、S4 ViewModels、S5 Controls 根层与内容宿主、S6 WidgetContents、S7 Services 与 Helpers、S8 持久化与序列化、S9 原生层、S10 契约/Helpers/同步）
+
+| ID | 级别 | 位点 | 一句话结论 | 状态 |
+|---|---|---|---|---|
+| `R19-S1-01` | P1 | src/DeskBox/Services/AppUpdateService.cs:409-411（建立 10 分钟总超时）、:439-450（用 linkedToken 读/写正文）、:464-488（四个 catch ... | (见报告) | 待修 |
+| `R19-S1-02` | P2 | src/DeskBox/Services/DeskBoxDataBackupService.cs:2988（SingleOrDefault）、:3017（catch 过滤器）、:2768（调用点）、同根已修位点 :187... | (见报告) | 待修 |
+| `R19-S1-03` | P2 | src/DeskBox/Services/FolderWatcherService.cs:954-955（重连 tick 调用 StartAsync）、:245（StartAsync 内部 Stop()）、:623-63... | (见报告) | 待修 |
+| `R19-S1-04` | P2 | src/DeskBox/Services/FolderWatcherService.cs:980-1003（QueueChange，尤其 :995-998）、:1002（每条事件都重启防抖计时器）、:1023-1027（... | (见报告) | 待修 |
+| `R19-S1-05` | P2 | src/DeskBox/Services/ArchiveZipService.cs:86-94（zip 的 FileMode.CreateNew + ZipArchive(Create)）、:135-140（tar 同样... | (见报告) | 待修 |
+| `R19-S1-06` | P2 | src/DeskBox/Services/CloudBackupService.cs:720-747（ApplyRetentionAsync，关键 :739 的 Skip(Math.Max(1, options.Rete... | (见报告) | 待修 |
+| `R19-S1-07` | P3 | src/DeskBox/Services/FileTransferSessionRegistry.cs:93-98（GroupBy(SourcePath, OrdinalIgnoreCase).Select(group ... | (见报告) | 待修 |
+| `R19-S1-08` | P3 | src/DeskBox/Services/DeskBoxDataBackupService.cs:545（DeletePendingRestoreCore()）、:549（ExtractAndValidateRestor... | (见报告) | 待修 |
+| `R19-S1-09` | P3 | src/DeskBox/Services/FolderWatcherService.cs:1054（FolderChanged?.Invoke(batch)）、:1071-1074（FolderIconChanged?.... | (见报告) | 待修 |
+| `R19-S1-10` | P3 | src/DeskBox/Services/AppUpdateService.cs:356（DownloadCompleted?.Invoke(result)）、:1039（CheckCompleted?.Invoke(r... | (见报告) | 待修 |
+| `R19-S1-11` | P3 | src/DeskBox/Services/PersistenceFileMutations.cs:1（namespace DeskBox.Core.Persistence;）与文件物理路径 src/DeskBox/Ser... | (见报告) | 待修 |
+| `R19-S1-12` | P3 | src/DeskBox/Services/DeskBoxDataBackupService.cs:32-37 | (见报告) | 待修 |
+| `R19-S2-01` | P1 | src/DeskBox/Services/WidgetManager.cs:2274（配合 :2237-2285 的整个 try/finally） | (见报告) | 待修 |
+| `R19-S2-02` | P2 | src/DeskBox/Services/SettingsService.cs:1320-1384（WriteSettingsTempFileAsync 的 lock (_lock) + JsonSerializer.S... | (见报告) | 待修 |
+| `R19-S2-03` | P3 | src/DeskBox/Services/WidgetManager.cs:206（声明）、:2758（CloseAll 批量 Add，永不移除）、:3206（CloseFailedCreatedWindow 的 Add... | (见报告) | 待修 |
+| `R19-S2-04` | P3 | src/DeskBox/Services/WidgetManager.Groups.cs:3514-3544 TransferCapsuleIdentity | (见报告) | 待修 |
+| `R19-S2-05` | P3 | src/DeskBox/Services/WidgetManager.cs:2358-2361 | (见报告) | 待修 |
+| `R19-S2-06` | P3 | src/DeskBox/Services/WidgetManager.cs:3276-3289（shouldCaptureAnchor） | (见报告) | 待修 |
+| `R19-S2-07` | P3 | src/DeskBox/Services/WidgetManager.Groups.cs:3220-3224 | (见报告) | 待修 |
+| `R19-S2-08` | P3 | src/DeskBox/Services/WidgetSessionManager.cs:81-86（MarkDesktopResting）、:99-104（MarkHidden） | (见报告) | 待修 |
+| `R19-S2-09` | P3 | src/DeskBox/Services/SearchEngineService.cs:46-54（OnQuickCaptureChanged）、:424-462（EnsureDeskBoxContentSnapshot... | (见报告) | 待修 |
+| `R19-S2-10` | P3 | src/DeskBox/Services/SettingsService.cs:1104-1116（SaveAsync 通知语义）、:1415-1473（SaveDebounced） | (见报告) | 待修 |
+| `R19-S3-01` | P? |  | 未处理异常在生命线建立后被完全静默吞没，用户无任何可见反馈 | 待修 |
+| `R19-S3-02` | P? |  | `ShowInfoDialogAsync` 缺 XamlRoot 守卫、无 catch，且 33 处调用绕过仓库为修崩溃而写的 `ShowDialogWhenFreeAsync` | 待修 |
+| `R19-S3-03` | P? |  | 恢复默认设置失败时部分生效、不持久化、且无任何用户反馈 | 待修 |
+| `R19-S3-04` | P? |  | `_overlayDragCuePollTimer` 从不解除 Tick 订阅也不置空，违反本文件自己的定时器释放契约 | 待修 |
+| `R19-S3-05` | P? |  | async void 事件处理器漏斗：多处转调路径无任何异常出口 | 待修 |
+| `R19-S4-01` | P2 |  | Todo 的跨日/逾期派生状态没有任何刷新触发点 | 待修 |
+| `R19-S4-02` | P2 | src/DeskBox/ViewModels/TodoWidgetViewModel.cs:773-783（早退）与 :810-829（被跳过的插入块）。 | `ApplyExternalStoreChange` 的早退 `return` 吞掉重复任务的"下一次出现" | 待修 |
+| `R19-S4-03` | P2 |  | 通知动作后的 `RefreshAsync` 直接等于整表重载，静默清空详情页/创建草稿 | 待修 |
+| `R19-S4-04` | P2 | src/DeskBox/ViewModels/TodoWidgetViewModel.EditingAndUndo.cs:261-297。 | `UndoLastActionAsync` 是整表还原而非逆操作，丢弃快照之后的新增项 | 待修 |
+| `R19-S4-05` | P3 | src/DeskBox/ViewModels/SettingsViewModel.SettingsSync.cs:66-69（置位）与 :146-150（复位）。 | 抑制标志 `_isApplyingSettingsSnapshot` 复位不对称（当前被兄弟标志掩盖） | 待修 |
+| `R19-S4-06` | P3 | src/DeskBox/ViewModels/TodoItemViewModel.cs:391 — public string MarkerGlyph => HasRedMarker ? "\uE915" : "\uE9... | `MarkerGlyph` 两个分支返回同一个字形 | 待修 |
+| `R19-S4-07` | P3 | src/DeskBox/ViewModels/TodoWidgetViewModel.cs:836-839 — else { OnPropertyChanged(nameof(IsInitialized)); } | 用 raise `IsInitialized` 当"重绘信号" | 待修 |
+| `R19-S4-08` | P3 | src/DeskBox/ViewModels/TodoWidgetViewModel.cs:798-807。 | `ApplyExternalStoreChange` 对 `IsCompleted` 的重复写入 | 待修 |
+| `R19-S4-09` | P3 | src/DeskBox/ViewModels/WidgetViewModel.Operations.cs:1022-1028。 | `DeleteDroppedPathsForBinAsync` 的失败项记录错位 | 待修 |
+| `R19-S4-10` | P3 |  | QuickCapture 的 bounds/锁定落盘使用默认 `notifySubscribers: true` | 待修 |
+| `R19-S4-11` | P3 |  | 多处 `DispatcherQueue.TryEnqueue(...)` 返回值被忽略 | 待修 |
+| `R19-S4-12` | P3 |  | Weather/Music VM 在 `Dispose()` 中处置**注入**的 service（所有权倒置） | 待修 |
+| `R19-S4-13` | P3 | src/DeskBox/ViewModels/QuickCaptureWidgetViewModel.ItemSync.cs:81-166。 | `QuickCaptureWidgetViewModel.SyncVisibleItems` 增量插入分支未登记索引 | 待修 |
+| `R19-S4-14` | P3 | src/DeskBox/ViewModels/TodoWidgetViewModel.ItemOperations.cs:146（Items.Insert(Math.Clamp(currentIndex + 1, 0, ... | `SetCompletedAsync` 插入下一 occurrence 前未归一化排序号 | 待修 |
+| `R19-S4-15` | P3 | src/DeskBox/ViewModels/QuickCaptureWidgetViewModel.ViewScheduling.cs:88-108 — _ = Task.Run(async () => { try {... | `CurrentViewSaveTimer_Tick` 用 `Task.Run` 做落盘 | 待修 |
+| `R19-S4-16` | P3 |  | `*ItemsSource` 每次 get 返回新数组，使 `SynchronizeVisibleItems` 的增量同步白做 | 待修 |
+| `R19-S5-01` | P2 | src/DeskBox/Controls/WidgetShellContentHost.cs:226-244（catch 块）；对照 WidgetShellContentHost.cs:202-213（成功路径）、Wid... | 内容宿主初始提交失败时回滚漏清壳内容 | 待修 |
+| `R19-S5-02` | P3 | src/DeskBox/Controls/WidgetShell.xaml.cs:370（字段）、5627-5631（??= DispatcherQueue.CreateTimer() + Tick -=/+= + St... | 标题栏点击折叠定时器不随卸载释放、不记账 | 待修 |
+| `R19-S5-03` | P3 | src/DeskBox/Controls/WidgetShell.xaml.cs:4759（唯一调用点 ApplyActionButtonSurface(false);）、4791-4798（方法体三元）、5341-53... | `ApplyActionButtonSurface` 参数恒为 false，overlay 分支为死代码并产生无谓分配 | 待修 |
+| `R19-S5-04` | P3 | src/DeskBox/Controls/WidgetShell.xaml.cs:3483-3485 | 两个 `static readonly` 画刷字段零引用，且属跨实例共享可变画刷反模式 | 待修 |
+| `R19-S5-05` | P3 | src/DeskBox/Controls/WidgetGroupTitleSwitcher.Interaction.cs:931-937；元素定义 src/DeskBox/Controls/WidgetGroupTitl... | `CapsuleChrome` 永久不可见，却每次都被赋主题画刷 | 待修 |
+| `R19-S5-06` | P3 | src/DeskBox/Controls/WidgetGroupTitleSwitcher.Interaction.cs:924-952（UpdateInteractionChrome），字段 :27，清理 :417/:... | `_interactionChromeStoryboard` 缺少 `Completed` 收口 | 待修 |
+| `R19-S5-07` | P3 | src/DeskBox/Controls/WidgetShell.xaml.cs:5203-5215（定义），调用点 4953、5018、5070 | `QueueCompactActionRegionRefreshAfterExit` 无 `IsLoaded` / 代际守卫 | 待修 |
+| `R19-S5-08` | P3 | src/DeskBox/Controls/WidgetShell.xaml.cs:3255 | `ApplyCompactLiveState` 中恒假三元分支 | 待修 |
+| `R19-S5-09` | P3 | src/DeskBox/Controls/WidgetShell.xaml.cs:5711-5734（OverlayDragHandle_PointerMoved，判定用字面量 25）；具名常量 WidgetShell.... | 拖拽手柄移动判定硬编码阈值，绕过具名常量 | 待修 |
+| `R19-S5-10` | P3 | src/DeskBox/Controls/WidgetShell.xaml.cs:5095 | 高频悬停路径用 `App.Log` 打印控件标题文本 | 待修 |
+| `R19-S5-11` | P3 | src/DeskBox/Controls/WidgetGroupTitleSwitcher.Tabs.cs:616（ObserveDragHoverSwitch 内 DispatcherQueueTimer timer ... | 两处 `DispatcherQueueTimer` 未做 `Tick` 解除与生命周期记账 | 待修 |
+| `R19-S5-12` | P3 | src/DeskBox/Controls/WidgetGroupTitleSwitcher.Tabs.cs:45-70（((SolidColorBrush)resources[key]).Color = color;），... | `SetTabForegroundColors` 依赖硬类型转换与索引器，契约脆弱 | 待修 |
+| `R19-S5-13` | P3 | src/DeskBox/Controls/WidgetShellContentHost.cs:354-362（DisposeContent）；对照 :202（提交时对 outgoing 调 OnDeactivated）、... | `DisposeContent` 对过渡中的 outgoing 内容不调用 `OnDeactivated` | 待修 |
+| `R19-S5-14` | P3 | src/DeskBox/Controls/AttachmentTileStrip.xaml.cs（AttachmentTile_Loaded、AttachmentTile_DataContextChanged，均 pri... | `AttachmentTileStrip` 两个 `async void` 无异常兜底 | 待修 |
+| `R19-S5-15` | P3 | src/DeskBox/Controls/WidgetFeedbackPresenter.xaml.cs（AnimateOut 内 storyboard.Completed += (_,_) => FinishHide(... | `WidgetFeedbackPresenter` 淡出动画 `Completed` 不解除且无代际守卫 | 待修 |
+| `R19-S6-01` | P2 |  | [P2] 内容层没有 `Dispose` 期 flush 契约：详情/笔记草稿的收尾只能靠 `async void` 抢跑 | 待修 |
+| `R19-S6-02` | P2 |  | [P2] 笔记保存失败在"切换条目 / 切换筛选"路径上完全静默 | 待修 |
+| `R19-S6-03` | P2 |  | [P2] 自动保存的 `SemaphoreSlim.WaitAsync()` 无取消无超时，而 UI 路径 `await` 该门 → 一次卡住的存储写会连带挂死交互 | 待修 |
+| `R19-S6-04` | P2 |  | [P2] 附件缩略图预览的两个 `async void` 无 try/catch，缩略图链路只有 `finally` 没有 `catch` | 待修 |
+| `R19-S6-05` | P2 |  | [P2] 拖放失败时把原始异常 `Message` 直接显示给用户，违反本层既有的"异常文本只进日志"约定 | 待修 |
+| `R19-S6-06` | P2 |  | [P2] 剪切态永不失效：无 `Clipboard.ContentChanged` 监听、无所有权校验，剪切标记与真实剪贴板会长期脱节 | 待修 |
+| `R19-S6-07` | P3 | src/DeskBox/Controls/WidgetContents/TodoWidgetContent.DragDrop.cs:985-996（BuildDroppedTodoTitle 末行 return stri... | [P3] 拖入附件生成的待办标题硬编码英文 `"Attachment"`，绕过 13 语言资源 | 待修 |
+| `R19-S6-08` | P3 |  | [P3] 两个拖放 `async void` 只有 `finally` 没有 `catch` | 待修 |
+| `R19-S6-09` | P3 |  | [P3] `_lifetimeCancellation.Dispose()` 之后仍有成员读取 `.Token` | 待修 |
+| `R19-S6-10` | P3 |  | [P3] Glance / Weather 内容层订阅 `ViewModel.PropertyChanged` 永不退订，且 leaf 不实现 `IDisposable`，Adapter 也不触碰 leaf | 待修 |
+| `R19-S6-11` | P3 | src/DeskBox/Controls/WidgetContents/FileSurfaceContent.xaml.cs:2212-2217 | [P3] 列表模式重命名编辑器：`Math.Clamp` 的下界（80）高于 `contentWidth` 的自有下限（60） | 待修 |
+| `R19-S6-12` | P3 | src/DeskBox/Controls/WidgetContents/WidgetContentAdapterBase.cs（protected void ReleaseView() 只清 _view 引用）；View... | [P3] `WidgetContentAdapterBase.ReleaseView()` 是死代码：全仓零调用点，`_view` 缓存永不释放 | 待修 |
+| `R19-S6-13` | P3 |  | [P3] `SpacePreviewBroker` 被 `static readonly` 共享，但类注释声称"每个 broker 实例拥有自己的粘性后端" | 待修 |
+| `R19-S6-14` | P3 |  | [P3] 内容层 `catch` 后把异常"记日志即结束"，缺少统一的可观测失败通道（静默失败面） | 待修 |
+| `R19-S7-01` | P2 | src/DeskBox/Helpers/ShellContextMenuProxy.cs:249-278（Prewarm，关键行 :255 取 gate、:267 释放 gate、:274 DisposeServer()... | (见报告) | 待修 |
+| `R19-S7-02` | P3 | src/DeskBox/Helpers/ShellContextMenuProxy.cs:845-867（SendCommandAsync，取消分支 :858-866）。 | (见报告) | 待修 |
+| `R19-S7-03` | P3 | src/DeskBox/Helpers/ShellContextMenuProxy.cs:975-976（ParseProtocolLine 的 case "warm":）与 :261-263（Prewarm 只接受 W... | (见报告) | 待修 |
+| `R19-S7-04` | P3 | src/DeskBox/Helpers/ShellContextMenuProxy.cs:135-152（ShowAsync 的 pending/cancel 登记）与 :199-215（CancelOpenMenu 发... | (见报告) | 待修 |
+| `R19-S7-05` | P3 | src/DeskBox/Helpers/ShellContextMenuProxy.cs:897-902（ReadProtocolLineAsync 把子进程 stdout 的每一行原样写入 App.Log）。 | (见报告) | 待修 |
+| `R19-S7-06` | P3 | src/DeskBox/Helpers/ShellContextMenuProxy.cs:911-941（ProxyServer.Dispose）、:804-832（ProcessId/HasExited 的 catch... | (见报告) | 待修 |
+| `R19-S7-07` | P3 | src/DeskBox/Helpers/ShortcutNativeBackend.cs:1017（CaptureDiagnosticState），其中 :1029 调 ReadPeArchitecture(module... | (见报告) | 待修 |
+| `R19-S7-08` | P3 | src/DeskBox/Helpers/ShortcutNativeBackend.cs:1017 起（CaptureDiagnosticState）使用常量 AbiVersion（声明于 :147，internal c... | (见报告) | 待修 |
+| `R19-S7-09` | P3 | src/DeskBox/Services/CompositorClockBoostCoordinator.cs:83：_ = Win32Helper.TrySetHighResolutionTimer(enabled);... | (见报告) | 待修 |
+| `R19-S7-10` | P2 | src/DeskBox/Platform/Win32Helper.cs:2631-2658（[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]... | (见报告) | 待修 |
+| `R19-S8-01` | P1 |  | (见报告) | 待修 |
+| `R19-S8-02` | P1 |  | (见报告) | 待修 |
+| `R19-S8-03` | P2 |  | (见报告) | 待修 |
+| `R19-S8-04` | P2 |  | (见报告) | 待修 |
+| `R19-S8-05` | P2 |  | (见报告) | 待修 |
+| `R19-S8-06` | P3 |  | (见报告) | 待修 |
+| `R19-S8-07` | P3 |  | (见报告) | 待修 |
+| `R19-S8-08` | P3 |  | (见报告) | 待修 |
+| `R19-S8-09` | P3 |  | (见报告) | 待修 |
+| `R19-S8-10` | P3 |  | (见报告) | 待修 |
+| `R19-S8-11` | P3 |  | (见报告) | 待修 |
+| `R19-S9-01` | P2 | src/DeskBox/Platform/JumpListNativeMethods.cs:12-15；消费方 src/DeskBox/Services/JumpListService.cs:28-29 | `SetCurrentProcessExplicitAppUserModelID` 被声明为 `bool`，实为 `HRESULT`；调用方还无条件打印成功 | 待修 |
+| `R19-S9-02` | P2 | native/deskbox-thumbnail-proxy/src/main.rs:1630-1633（构造），使用于 :1652-1656 | 右键菜单 `lpDirectory` 用 UTF-8 字节填充，而该字段是 ANSI（系统 ACP） | 待修 |
+| `R19-S9-03` | P3 | native/deskbox-native/src/shortcut.rs:637-760（五个 capture_field(...)? 串行） | `read_stored_raw` 任一字段失败即整次读取作废 | 待修 |
+| `R19-S9-04` | P3 | native/deskbox-native/src/shortcut.rs:761-823（return Err(DESKBOX_NATIVE_S_FALSE)）；消费于 :503-626 execute_shortcu... | `read_effective_diagnostic` 用成功码 `S_FALSE` 表示失败，该码被原样上报为失败原因 | 待修 |
+| `R19-S9-05` | P3 | native/deskbox-native/src/shortcut.rs:444 | `IPersistFile::Save` 用 `!= S_OK` 判定成功，把 `S_FALSE` 当失败 | 待修 |
+| `R19-S9-06` | P3 | native/deskbox-native/src/shortcut.rs:839 | 截断判定启发式在"恰好 capacity−1 个字符"时误报 | 待修 |
+| `R19-S9-07` | P3 | native/deskbox-thumbnail-proxy/src/main.rs:1754、:1841 | 宿主"重命名"菜单项用 UTF-8 字节长度做 256 上限判断，长 CJK 标签被静默丢弃 | 待修 |
+| `R19-S9-08` | P3 | native/deskbox-native/src/lib.rs:640-657（is_valid_music_input_string 允许 length_chars == 0 + 空指针）、:812-843（vali... | ABI 与 C# 包装层都接受空音乐身份串；空身份会落到"唯一会话"回退，可能命中无关应用 | 待修 |
+| `R19-S9-09` | P3 | native/deskbox-native/src/music_volume.rs:413-448（matching_kind 的规则优先级）与 find_session 中的 return Ok(Some(...))（... | `matching_kind` 的优先级只在单个会话内生效，首个命中即返回，弱匹配可压过强匹配 | 待修 |
+| `R19-S9-10` | P3 | native/deskbox-thumbnail-proxy/src/main.rs:333（install_menu_mouse_hook），MouseHookGuard 的 Drop（PostThreadMessag... | 鼠标钩子线程在 2 秒握手超时后被遗弃，可能留下永久 WH_MOUSE_LL 钩子 | 待修 |
+| `R19-S9-11` | P3 | src/DeskBox/Platform/ComVtable.cs（Slot<T> 实现） | `ComVtable.Slot<T>` 每次调用都新建委托，COM 热路径上产生持续分配 | 待修 |
+| `R19-S10-01` | P1 |  | (见报告) | 待修 |
+| `R19-S10-02` | P2 |  | (见报告) | 待修 |
+| `R19-S10-03` | P2 |  | (见报告) | 待修 |
+| `R19-S10-04` | P2 |  | (见报告) | 待修 |
+| `R19-S10-05` | P3 |  | (见报告) | 待修 |
+| `R19-S10-06` | P3 |  | (见报告) | 待修 |
+| `R19-S10-07` | P3 |  | (见报告) | 待修 |
+| `R19-S10-08` | P3 |  | (见报告) | 待修 |
+| `R19-S10-09` | P3 |  | (见报告) | 待修 |
+| `R19-S10-10` | P3 |  | (见报告) | 待修 |
+| `R19-S10-11` | P3 |  | (见报告) | 待修 |
+
+**评级/结论修正（Lead 复核，需在下一轮继承）**
+
+| 条目 | 分段结论 | 复核结论 |
+|---|---|---|
+| R19-S1-01 | P1「10 分钟总超时只取消 linked CTS，裸 `OperationCanceledException` 不匹配任何 catch 过滤器」 | **P2**：未观察异常被 `App` 的 `Handled = true` 全局吞掉（R18 C-3），实际表现为静默失败 + `.tmp` 残留，而非崩溃；"无提示"仍成立 |
+| R19-S8-01 | P1「`widgets` 数组含 `null` 元素 → 归一化链空引用 → 整份设置回默认并覆盖原文件」 | **P2**：触发需"外部损坏但可解析"的本地文件，应用自身不会写出 `null` 元素；后果不可逆，修复优先级仍高 |
+| R19-S8-02 | P1「`Normalize` 在反序列化回调内抛异常 → 整份 Todo 被隔离」 | **P2**：同上，且 `.corrupt-*` 隔离 + `.bak` 回退提供了恢复通道（S8-03 指出隔离只留 2 份） |
+| R19-S3-01…05 | 原文未标注级别 | **补标**：S3-01/02/03 = P2，S3-04/05 = P3（依据各条 §2 影响段与证据强度） |
+| R19-S10-01 | P1 | **维持 P1**：远端快照删除不可逆；判定路径（`CloudBackupService.cs:346-371`、`:596-616`、`:720-747`）已逐行复核与报告一致 |
+| R19-S2-01 | P1「`WidgetManager` 删除路径丢弃 `SaveAsync` 返回值」 | **P2（且报告表述需更正）**：`:2274` 是 `await _settingsService.SaveAsync()`，该方法签名是 `Task SaveAsync(bool notifySubscribers = true)`（`SettingsService.cs:1104-1116`），**没有 bool 返回值**；失败被内部吞掉（`SaveToFileOnlyAsync()` 的 bool 只用于清 `_hasPendingSave`）。真实缺陷 = "写盘失败对调用方不可见 + store 删除先于写盘"；`_hasPendingSave` 保持 1 使后续保存会重试，影响面有限，且用户本意即删除该 Widget → P2 下沿 |
+| R19-S5-01 | P2 | **维持 P2**：`WidgetShellContentHost.cs:226-244` 回滚分支确实漏 `_clearContent()`，但"已释放内容仍在视觉树"的可见窗口取决于失败瞬间的呈现路径，影响面按 P2 下沿 |
+
+**本轮环境基线（供下一轮对照，勿误判为回归）**
+
+- 本轮**未运行** build/test（十路均为纯静态审查）。基线沿用 R18 收尾值：全量测试 6204 通过 / 11 失败 / 1 跳过 / 6216；11 条失败为沙箱令牌写 `%LOCALAPPDATA%`/`HKCU` 与未跟踪文件 `src/DeskBox/Controls/ScreenshotAnnotationRasterizer.cs` 的契约基线噪声，与任何修复无关。
+
+## R19 整改批（2026-10-27，11 条已修 + 6 条复核改判）
+
+**已修（代码已落地，构建 0 错误 / 22 既有警告；`cargo check` 通过）**
+
+| 条目 | 级别 | 改动位置 | 做法 |
+|---|---|---|---|
+| `R19-S2-01` | P2 | `src/DeskBox/Services/WidgetManager.cs`（`DeleteWidgetAsync`） | 用既有 `SettingsService.SaveCheckedAsync()` 先落盘，失败记日志并 `return`（不再先删 store）；`persistFailed` 在 `try` 前声明，失败时 `finally` 保留 `_deletedWidgetIds` 墓碑，避免下次启动复活 |
+| `R19-S10-01` | P1 | `src/DeskBox/Services/CloudBackupService.cs` | 保留清理改为三分支（取消/未校验/正常）；`ApplyRetentionAsync` 只统计并删除**本机自有**快照（`IsOwnedSnapshotName` 按 8 位设备后缀），并始终保留"上一次已验证可用"的自有快照；未校验时整体跳过清理 |
+| `R19-S8-01` | P2 | `src/DeskBox/Services/SettingsService.cs` | 新增 `PreserveSettingsFileBeforeDefaults()`：加载失败回默认前把 `settings.json` 复制为 `settings.recovered-{时间戳}.json` |
+| `R19-S1-02` | P2 | `src/DeskBox/Services/DeskBoxDataBackupService.cs` | 归档内重复 `manifest.json` 不再抛 `InvalidOperationException`（`SingleOrDefault` → 取首条 + 日志） |
+| `R19-S1-03` | P2 | `src/DeskBox/Services/FolderWatcherService.cs` | `_preserveReconnectAttempt` 让重连退避不再被 `Stop()` 清零（指数退避恢复生效） |
+| `R19-S1-04` | P2 | `src/DeskBox/Services/FolderWatcherService.cs` | 变更缓冲超 64 条时先 `Clear()` 再置全量重载标志 |
+| `R19-S1-05` | P2 | `src/DeskBox/Services/ArchiveZipService.cs` | 归档改为 tmp + `File.Move` 原子落盘，失败删临时文件 |
+| `R19-S5-01` | P2 | `src/DeskBox/Controls/WidgetShellContentHost.cs` | `CommitPreparedContent` catch 中 `outgoingContent is null` 时补 `_clearContent()` |
+| `R19-S7-10` | P2 | `src/DeskBox/Platform/Win32Helper.cs` | `DEVMODE` 补齐尾部 8 个成员 → 220 字节（`dmSize` 随之正确） |
+| `R19-S9-01` | P2 | `src/DeskBox/Platform/JumpListNativeMethods.cs`、`Services/JumpListService.cs` | AUMID 入口改 `int` 返回 HRESULT，调用方按 `hr < 0` 记失败 |
+| `R19-S9-02` | P2 | `native/deskbox-thumbnail-proxy/src/main.rs`、`Cargo.toml` | 新增 `encode_ansi_path()`（`WideCharToMultiByte(CP_ACP)`），`lpDirectory` 不再塞 UTF-8 字节 |
+
+**复核改判（详细依据见 `docs/quality/rounds/round-19/LEAD-VERIFICATION.md` §14–§22）**
+
+| 条目 | 改判 | 依据 |
+|---|---|---|
+| `R19-S2-01` | P1 → **P2** | `SettingsService.SaveAsync` 返回 `Task`（无 bool），"丢弃返回值"不成立；真实缺陷为"写盘失败对调用方不可见 + 先删 store" |
+| `R19-S8-01` | P1 → **P2** | `ResilientJsonStore` 对可重试读失败保留原文件、对反序列化失败隔离（`:84-94`/`:99`/`:114`） |
+| `R19-S8-02` | P1 → **撤销** | `TodoWidgetStore.cs:314-326` 已过滤 null 并 GroupBy 去重 |
+| `R19-S3-03` | P2 → **P3** | `App.xaml.cs:501` 订阅 `SettingsService.PersistenceFailed`，写盘失败已有 5 分钟节流的用户可见警告（`:4215-4238`） |
+| `R19-S7-10` | 维持 P2，**机理更正** | 手算证明 `dmDisplayFrequency` 偏移 184..188 本就正确；真实缺陷是结构在 188 截断、`dmSize` 少报 32 字节 |
+| `R19-S1-03` | 维持 P2（**与复核员分歧**） | 复核员称"退避本就封顶"；实测 `Stop()` 在 `:631` 无条件清零 `_reconnectAttempt`，且 `StartAsync` 在 `:245` 调用 `Stop()` |
+
+**因本次语义变更同步更新的测试契约**
+
+- `tests/DeskBox.Tests/CloudBackupTransportTests.cs` `RunBackupNow_PrunesRemoteBeyondRetention`：种子快照改用真实 8 位设备后缀，新增"他设备快照必须保留"的断言，期望文件数 3 → 4。
+- `tests/DeskBox.Tests/TodoOrphanCleanupContractTests.cs` 首条用例更名 `RemoveWidgetAsync_PersistsRemovalBeforeDeletingTodoStore`：契约由"先删 store 再判剩余"改为"先落盘、再删 store"，仍保留"禁用 feature 前必须检查剩余 Todo"的断言。
+- `tests/DeskBox.Tests/ModuleBoundaryContractTests.cs` 破坏性文件变更清单：新增 `ArchiveZipService.cs = 2`、`SettingsService.cs` 2 → 3（附 R19 说明）。---
+
+## Round 20（2026-10-27，十路专项静态审查；S1–S8 已到货，S9/S10 待补）
+
+审查方式与 R18/R19 一致：十路 SubAgent 并行静态审查（纯代码阅读），Lead 对 P0/P1 全部与 P2 抽样逐条复核。分段报告在 `docs/quality/rounds/round-20/`，复核记录 `LEAD-VERIFICATION.md`，总报告 `ROUND-20-总报告.md`。
+
+**S1–S8 合计 122 条：P0 0 / P1 1 / P2 38 / P3 83；经 Lead 复核后 P1 归零（`R20-S6-01` 降 P2）。**
+| 编号 | 级别 | 段 | 一句话结论 |
+|---|---|---|---|
+| `R20-S1-01` | P2 | 1 | 复核确认（延续 R19-S1-01 / DEF-163）：10 分钟总下载超时以裸 `OperationCanceledException` 逃出，更新下载静默失败 | 已修
+| `R20-S1-02` | P2 | 1 | 新立：scoped 恢复的域替换是"先删后拷"，取消点位于拷贝循环内部，重试预算耗尽后连恢复载荷一起删除 | 已修
+| `R20-S1-03` | P2 | 1 | 新立：`TryRecoverStrandedRollback` 的门控与调用点使 `restore-rollback/` 副本成为永久孤儿（对用户等价于数据丢失） |
+| `R20-S1-04` | P2 | 1 | 新立：WebDAV `ResolveUri` 保留 `..` 段，`RemotePath` 未校验 → retention 删除可落到配置目录之外 | 已修
+| `R20-S1-05` | P3 | 1 | 复核确认（延续 R19-S1-09 / R18-S1-006）：`FolderWatcherService` 两个 debounce tick 裸 `Invoke`，且事件负载已先清空 |
+| `R20-S1-06` | P3 | 1 | 复核确认（延续 R19-S1-08 / DEF-144）：`Prepare*RestoreAsync` 在解包校验新归档**之前**无条件销毁上一个待确认恢复 |
+| `R20-S1-07` | P3 | 1 | 复核确认（延续 R18-S1-005）：`allowShellElevation` 分支丢弃 `onItemError` 与 `skippedItems` |
+| `R20-S1-08` | P3 | 1 | 复核确认（延续 DEF-139）：JSON store 提交路径无 `WriteThrough`/`Flush(true)`，断电后"已提交"的主文件可能为零长度或半写 |
+| `R20-S1-09` | P3 | 1 | 复核确认（延续 R18-S1-004）：`ArchiveZipService.WriteZip` 缺少"排除自身归档"，与 `WriteTar` 不对称 |
+| `R20-S1-10` | P3 | 1 | 新立：`CloudBackupService.DownloadSnapshotAsync` 直接以最终名落盘，无 tmp+rename、无长度回验 |
+| `R20-S1-11` | P3 | 1 | 新立：自动/手动"立即备份"在数据目录为空时返回 `Skipped` 且无原因，与 `ExportBackupAsync` 的抛错语义不一致 |
+| `R20-S1-12` | P3 | 1 | 复核确认（延续 R19-S1-10）：`AppUpdateService` 三处事件裸 `Invoke`，且状态已先行变更 |
+| `R20-S2-01` | P2 | 2 | 交互深度被静默清零，导致显示拓扑门永久关闭与看门狗 epoch 失效 | 已修
+| `R20-S2-02` | P2 | 2 | 删除路径的用户数据销毁仍早于持久化提交 |
+| `R20-S2-03` | P2 | 2 | `RequestCompactState` 用过渡态比较丢弃反向请求，持久态与窗口实际态分叉 |
+| `R20-S2-04` | P2 | 2 | 复合保存在 layout 半失败时仍提交 settings.json，违反「false = 什么都没落盘」契约 |
+| `R20-S2-05` | P2 | 2 | 折叠动画提交失败后宣告完成且不重试几何，展开方向无补偿 |
+| `R20-S2-06` | P3 | 2 | `OnCompactVisualStateChanged` 早于 `_compactState` 赋值，同态分支重复回调 |
+| `R20-S2-07` | P3 | 2 | `MoveWindowWithoutPersisting` 用单槽位字段承载逐帧回调，排队路径可丢弃先前回调 |
+| `R20-S2-08` | P3 | 2 | `CleanupWidgetCollapse` 不清 `_compactExpansionReadyCallbacks` |
+| `R20-S2-09` | P3 | 2 | `WidgetLayoutStore.SaveAsync` 公开且不检查 `CanWrite` |
+| `R20-S2-10` | P3 | 2 | FeatureWidgets 两处清理路径在锁外改 `Settings.Widgets` 且不删 per-widget store |
+| `R20-S2-11` | P3 | 2 | `HideAndCloseFeatureWidgetAsync` 名为 Async 实为 void 且只关第一个窗口；三条启停路径绕过更新锁 |
+| `R20-S2-12` | P3 | 2 | `CloseFeatureWidgetInstance` 非 UI 线程丢弃 Task 并空 catch |
+| `R20-S2-13` | P3 | 2 | `InteractionActiveChanged` 的匿名订阅永不退订 |
+| `R20-S3-01` | P2 | 3 | P2 · 未处理异常在启动生命线建立后被完全静默吞没 |
+| `R20-S3-02` | P2 | 3 | P2 · `ShowInfoDialogAsync` 缺 `XamlRoot` 守卫、无 catch、不排队，35 处 `ShowAsync` 只有 3 处走协调器 | 已修
+| `R20-S3-03` | P2 | 3 | P2 · 本地备份恢复无重入互斥，且「确认」与「实际应用」之间无身份绑定 | 已修
+| `R20-S3-04` | P3 | 3 | P3 · `SettingsSections/` 内两处裸 `ShowAsync`（一处无 `XamlRoot` 判空、一处整句在 `try` 外） |
+| `R20-S3-05` | P3 | 3 | P3 · post-await 生命周期守卫 `_isClosed` 在 `SettingsWindow` 各 partial 间系统性不一致 |
+| `R20-S3-06` | P3 | 3 | P3 · 13 处把原始 `ex.Message` 拼进本地化对话框正文 |
+| `R20-S3-07` | P3 | 3 | P3 · `ShowGlanceSection` 命中导航早退，切换 glance widget 后设置列表不刷新 |
+| `R20-S3-08` | P3 | 3 | P3 · 启动收尾 `_ = Task.Run(...)` 无 `try/catch`，四步收尾失败只经 GC 记一行 |
+| `R20-S3-09` | P3 | 3 | P3 · storm-guard 延迟启动 timer 不入字段、匿名 Tick 永不解绑，关闭竞态下对已 Dispose 的 watcher 调 `Start()` |
+| `R20-S3-10` | P3 | 3 | P3 · 备份快照列表把 `FailedBody` 当摘要 + finally 无条件解禁按钮 |
+| `R20-S3-11` | P3 | 3 | P3 · 搜索结果右键菜单在 UI 线程同步做 `File.Exists` 与 PE 探测 |
+| `R20-S3-12` | P3 | 3 | P3 · 启动失败通知的阶段名几乎恒为同一值 |
+| `R20-S4-01` | P2 | 4 | [P2] Todo 变更命令忽略 `SaveAsync` 返回值，"成功"语义与实际落盘脱钩 |
+| `R20-S4-02` | P2 | 4 | [P2] 复核确认（延续 R19-S4-01）：Todo 日界/逾期派生状态无任何刷新触发点 |
+| `R20-S4-03` | P2 | 4 | [P2] 复核确认（延续 R19-S4-02）：`ApplyExternalStoreChange` 早退 `return` 吞掉下一次重复项插入 |
+| `R20-S4-04` | P2 | 4 | [P2] 复核确认（延续 R19-S4-03）：`RefreshAsync` 与 `InitializeAsync` 完全同体，通知动作触发整表重载 |
+| `R20-S4-05` | P2 | 4 | [P2] 复核确认（延续 R19-S4-04）：`UndoLastActionAsync` 以整表快照恢复 |
+| `R20-S4-06` | P3 | 4 | [P3] 复核确认（延续 R19-S4-05）：`_isApplyingSettingsSnapshot` 无保存/恢复，且快照应用可同步递归 |
+| `R20-S4-07` | P3 | 4 | [P3] 复核确认（延续 R19-S4-06）：`MarkerGlyph` 两个分支返回同一字形 |
+| `R20-S4-08` | P3 | 4 | [P3] 复核确认（延续 R19-S4-07）：用 raise `IsInitialized` 当作"重绘信号" |
+| `R20-S4-09` | P3 | 4 | [P3] 复核确认（延续 R19-S4-08）：`ApplyExternalStoreChange` 对完成态重复写入 |
+| `R20-S4-10` | P3 | 4 | [P3] 复核确认（延续 R19-S4-09）：`DeleteDroppedPathsForBinAsync` 把整批失败都记在 `targets[0]` 上 |
+| `R20-S4-11` | P3 | 4 | [P3] 复核确认（延续 R19-S4-15）：`CurrentViewSaveTimer_Tick` 用 `Task.Run` 落盘且无写入序号 |
+| `R20-S4-12` | P3 | 4 | [P3] 复核确认（延续 R19-S4-16）：`*ItemsSource` 每次 get 返回新数组，增量同步白做 |
+| `R20-S4-13` | P3 | 4 | [P3] 复核确认（延续 R19-S4-14）：插入下一 occurrence / 外部插入后不 `NormalizeSortOrders` |
+| `R20-S4-14` | P3 | 4 | [P3] 新发现：SearchPopup 失败分支缺代数守卫，过期失败会覆盖新结果的状态文本 |
+| `R20-S4-15` | P3 | 4 | [P3] 新发现：`CancelCurrentSearch` 立即 `Dispose()` CTS，而在飞操作仍持有其 token |
+| `R20-S4-16` | P3 | 4 | [P3] 新发现：日界计时器用 wall-clock tick 差算间隔，DST 春季跳变日会晚 1 小时 |
+| `R20-S4-17` | P3 | 4 | [P3] 新发现：`ClearSearch()` 与 `OnPopupHidden()` 的选择态清理不对称 |
+| `R20-S4-18` | P3 | 4 | [P3] 新发现：文件栈预览扫描在线程池上枚举"活的"设置图，且取消路径不重置 loading |
+| `R20-S4-19` | P3 | 4 | [P3] 新发现：线程封送约定在同一层内存在三套，语言变更 handler 缺守卫 |
+| `R20-S5-01` | P2 | 5 | P2　路由 Drop 抢打"完成戳"，回执只有一处出口 → 落点在非文件表面时拖放静默丢失 |
+| `R20-S5-02` | P2 | 5 | P2　`CompleteTransition` 抛异常后 host 永久卡在"有活动过渡"，只有关窗口能恢复 |
+| `R20-S5-03` | P3 | 5 | P3　两处 storyboard 未回写基值，`Stop()` 后视觉跳变/永久残留 |
+| `R20-S5-04` | P3 | 5 | P3　紧凑层键盘焦点只刷新操作按钮，不刷新重排手柄；且每次 Tab 触发一次淡出淡入 |
+| `R20-S5-05` | P3 | 5 | P3　`OverlayDragHandle_PointerPressed` 丢弃 `CapturePointer` 返回值，捕获失败即状态机卡死 |
+| `R20-S5-06` | P3 | 5 | P3　`InstallNativeFileDropBridge` 异常路径无法释放已挂满回调的 `NativeDropTarget` |
+| `R20-S5-07` | P3 | 5 | P3　`AnimateOpacity` 用动画进行中的当前值判等，中途改目标会被误判"已到位" |
+| `R20-S5-08` | P3 | 5 | P3　`CollapsedChromeLayer_SizeChanged` 的 650ms 走马灯延迟被随后入队的 300ms 覆盖 |
+| `R20-S5-09` | P3 | 5 | P3　走马灯宽度探针不复制 `FlowDirection`/`Language`，RTL 下测量偏差 |
+| `R20-S5-10` | P3 | 5 | P3　`OverlayIdentityHost` 整棵子树永久不可见（死 UI），`OverlayTitle` DP 全链路空转 |
+| `R20-S5-11` | P3 | 5 | P3　`IsPointOverGroupTitleBar` 裸 `catch { return false; }` 吞掉一切异常 |
+| `R20-S5-12` | P3 | 5 | P3　`SetContent` 的入队尺寸通知无 `IsLoaded`/代际守卫，会向"换人后"的 content 重发旧尺寸 |
+| `R20-S5-13` | P3 | 5 | P3　`UpdateCompactActionRegionWidth` 在布局路径上做两次 LINQ 分配 |
+| `R20-S5-14` | P3 | 5 | P3　`Localized` 的失败诊断只写 `Debug.WriteLine`，发布版完全静默；`Track` 为全表线性扫描 |
+| `R20-S6-01` | P1 | 6 | 缩略图加载三层均无异常边界，`async void` 逃逸到 UI 线程 → 进程终止 |
+| `R20-S6-02` | P2 | 6 | 缓存复用钩子 `PrepareForReuse()` 是 `void` 空默认，QuickCapture/Todo 未覆写 → 组内切换无同步 flush 点 |
+| `R20-S6-03` | P2 | 6 | 弹层打开期间切换 stack，延迟打开请求被静默丢弃 |
+| `R20-S6-04` | P2 | 6 | 弹层宿主窗口被系统关闭后内容层不知情，弹层永久不可用 |
+| `R20-S6-05` | P2 | 6 | 原始异常文本直呈用户 |
+| `R20-S6-06` | P2 | 6 | 保存闸门 `WaitAsync()` 无取消、无超时 | 已修
+| `R20-S6-07` | P2 | 6 | 弹层隐藏不归还前台，关闭后主表面键盘导航失效 |
+| `R20-S6-08` | P3 | 6 | Todo 笔记「取消」不取消在飞保存，被丢弃的草稿仍会落盘 |
+| `R20-S6-09` | P3 | 6 | `_stackPopoverPopupClosing` 恒为 false 的死判据 |
+| `R20-S6-10` | P3 | 6 | close-button 交互租约在 `ReleaseStackPopover()` 路径上不释放 |
+| `R20-S6-11` | P3 | 6 | `BeginStackPopoverTitleRename` 无异常边界 |
+| `R20-S6-12` | P3 | 6 | `_lifetimeCancellation.Dispose()` 之后仍可能读 `.Token` |
+| `R20-S6-13` | P3 | 6 | Glance / Weather 内容层订阅 `ViewModel.PropertyChanged` 永不退订 |
+| `R20-S6-14` | P3 | 6 | 剪切态无剪贴板失效钩子（纯视觉陈旧） |
+| `R20-S6-15` | P3 | 6 | `Math.Clamp(availableWidth, 80, contentWidth)` 上下界可倒置 |
+| `R20-S6-16` | P2（待确认） | 6 | Todo 步骤写路径丢弃 `SaveAsync()` 返回值 |
+| `R20-S6-17` | P3 | 6 | 附件名回退硬编码英文 `"Attachment"` |
+| `R20-S6-18` | P3 | 6 | `WidgetContentAdapterBase.ReleaseView()` 死代码 |
+| `R20-S6-19` | P3 | 6 | `SpacePreviewBroker` 为 `static readonly`，与类注释的生命周期描述矛盾 |
+| `R20-S7-01` | P2 | 7 | 置信度：高 · 去重：新立案（对应 R19 §7 遗留「`SettingsService` 的反向锁序」，**结论修正**见下） |
+| `R20-S7-02` | P2 | 7 | 置信度：高 · 去重：新立案（与 R19-S10-02 同族、不同位点） |
+| `R20-S7-03` | P2 | 7 | 置信度：高 · 去重：**复核确认（延续 R19-S10-02）** |
+| `R20-S7-04` | P2 | 7 | 置信度：高 · 去重：新立案 |
+| `R20-S7-05` | P2 | 7 | 置信度：中 · 去重：新立案（关联 R19 C-2′ 共性问题） |
+| `R20-S7-06` | P2 | 7 | 置信度：高 · 去重：**复核确认（延续 R19-S2-10）** |
+| `R20-S7-07` | P2 | 7 | 置信度：中 · 去重：新立案 |
+| `R20-S7-08` | P2 | 7 | 置信度：高 · 去重：新立案 |
+| `R20-S7-09` | P3 | 7 | 置信度：高 · 去重：**复核确认（延续 R19-S2-02）** |
+| `R20-S7-10` | P3 | 7 | 置信度：高 · 去重：**复核确认（延续 R19-S2-09）** |
+| `R20-S7-11` | P3 | 7 | 置信度：高 · 去重：新立案 |
+| `R20-S7-12` | P3 | 7 | 置信度：高 · 去重：新立案 |
+| `R20-S7-13` | P3 | 7 | 置信度：中 · 去重：新立案 |
+| `R20-S7-14` | P3 | 7 | 置信度：高 · 去重：新立案 |
+| `R20-S7-15` | P3 | 7 | 置信度：高 · 去重：新立案 |
+| `R20-S7-16` | P3 | 7 | 置信度：高 · 去重：新立案 |
+| `R20-S7-17` | P3 | 7 | 置信度：高 · 去重：新立案 |
+| `R20-S7-18` | P3 | 7 | 置信度：高 · 去重：新立案 |
+| `R20-S7-19` | P3 | 7 | 置信度：高 · 去重：新立案 |
+| `R20-S7-20` | P3 | 7 | 置信度：高 · 去重：新立案 |
+| `R20-S7-21` | P3 | 7 | 置信度：高 · 去重：新立案 |
+| `R20-S8-01` | P2 | 8 | `settings.json` 含 `null` widget 元素仍在 layout 合并前炸穿，整份设置回默认（复核确认，延续 R19-S8-01；证据升级） | 已修
+| `R20-S8-02` | P2 | 8 | `DesktopOrganizationHistoryStore.Normalize` 对 `items:[null]` 无防护，异常发生在 `ResilientJsonStore` 回调之外 → 整份设置回默认（新） | 已修
+| `R20-S8-03` | P2 | 8 | `DesktopOrganizationRecoveryJournal.Items` 显式 `null` → 撤销事务 NRE，桌面整理不可撤销（新；R19-S8-06 同族） | 已修
+| `R20-S8-04` | P3 | 8 | 多个 `JsonSerializerContext` 缺 `UseStringEnumConverter`，落盘枚举为整数（新） |
+| `R20-S8-05` | P2 | 8 | `ViewMode` / `WidgetSortMode` 无降级转换器，未知值使整份 layout 被隔离（复核确认，延续 R19-S8-04） |
+| `R20-S8-06` | P2 | 8 | `MsnWeatherResponse` 裸 `string` + `DescriptionToWmoCode(string)` 不接 `null` → 天气刷新静默失败（复核确认 R19-S8-06 的 MSN 部分，附可达链） |
+| `R20-S8-07` | P3 | 8 | `WidgetLayoutSettingsSlice.CopyFrom` 逐属性赋值导致集合引用共享（复核确认，延续 R19-S8-07） |
+| `R20-S8-08` | P3 | 8 | `WidgetConfig` 的三个集合属性对显式 `null` 无归一，且 `NormalizeStructure` 不覆盖（复核确认，延续 R19-S8-08 的 `FileAddedAtByPath` 部分） |
+| `R20-S8-09` | P3 | 8 | `schemaVersion` 探测硬编码 camelCase 且大小写敏感，PascalCase 文件会被当作 v0 重放全部 15 步迁移（新） |
+| `R20-S8-10` | P3 | 8 | settings 写盘 `stream.Flush()` 缺 `flushToDisk: true`，与 layout 写入不一致（复核确认 DEF-139 同族，settings 侧位点） |
+| `R20-S8-11` | P3 | 8 | `WriteSettingsTempFileAsync` 注释"11 wire keys"与实际 15 个 layout 属性不符（新，可维护性） |
+| `R20-S8-12` | P3 | 8 | `MsnWeatherResponse`/`WeatherData` 的并行数组契约无长度/一致性校验（新，契约不变量） |
+| `R20-S9-01` | P2 | 9 | `InitializeProcThreadAttributeList` 的 `PSIZE_T` 被声明为 `ref int`（栈越界写） | 已修
+| `R20-S9-02` | P2 | 9 | 上下文菜单服务器路径以 TAB/LF 作带内分隔符，注释前提错误 |
+| `R20-S9-03` | P2 | 9 | `ShowAsync` 的 pending-request 接力把新菜单的结果返回给旧调用的调用方 |
+| `R20-S9-04` | P3 | 9 | AOT 冒烟未覆盖 `WriteShellNamespaceShortcut` 与 `ReadEffectiveDiagnostic` |
+| `R20-S9-05` | P3 | 9 | `ComVtable.Slot<T>` 无空指针校验，且每次调用新建委托 |
+| `R20-S9-06` | P3 | 9 | `HdropDataObjectNativeMethods.GlobalFree` 声明为 `void`，丢弃真实返回类型 |
+| `R20-S9-07` | P3 | 9 | 拖放描述写入器把剪贴板格式 ID 截断到 `ushort` 且不校验 0 |
+| `R20-S9-08` | P3 | 9 | `Prewarm` 在释放门锁之后才 `DisposeServer()`，可误杀并发菜单轮 |
+| `R20-S9-09` | P3 | 9 | `StorageMigrationNativeMethods.Extended()` 对相对路径产出非法 `\\?\relative` |
+| `R20-S9-10` | P3 | 9 | AUMID 整改残留：HRESULT 型 API 仍带 `SetLastError = true` | 已修
+| `R20-S9-11` | P3 | 9 | `read_stored_raw` 五字段串行 `?`，任一失败整次读取作废（第二个生产消费者已确认） |
+| `R20-S9-12` | P3 | 9 | `read_effective_diagnostic` 用成功码 `S_FALSE` 表示失败 |
+| `R20-S9-13` | P3 | 9 | `IPersistFile::Save` 用 `== S_OK` 而非 `>= 0` 判定 |
+| `R20-S9-14` | P3 | 9 | `capture_field` 的截断判定在"恰好 259 字符"时误报 |
+| `R20-S9-15` | P3 | 9 | 自定义菜单标签长度上限按 UTF-8 字节数校验 |
+| `R20-S9-16` | P3 | 9 | 音乐音量空身份字符串落到"唯一会话"回退 |
+| `R20-S9-17` | P3 | 9 | `find_session` 弱匹配可压过强匹配 |
+| `R20-S9-18` | P3 | 9 | `MouseHookGuard::Drop` 超时后遗弃线程，可能残留低级鼠标钩子 |
+| `R20-S10-01` | P2 | 10 | 更新器超时强杀安装器后，安装目录停在"新旧混合 + 旧清单"状态且无回滚 · P2 |
+| `R20-S10-02` | P2 | 10 | 更新器在缺少 `--installer-sha256` 时静默跳过完整性校验（fail-open） · P2 | 已修
+| `R20-S10-03` | P3 | 10 | 用户主动取消 UAC 被归类为 `failed` 而非 `cancelled` · P3 |
+| `R20-S10-04` | P3 | 10 | 更新器自定义退出码 3/4/8/9 与 Inno Setup 官方退出码语义重叠 · P3 |
+| `R20-S10-05` | P3 | 10 | 更新器参数解析：未识别开关会吞掉下一个实参；缺值静默丢弃 · P3 |
+| `R20-S10-06` | P3 | 10 | 等待父进程 120s 超时后，若父进程仍存活则无任何日志地继续安装 · P3 |
+| `R20-S10-07` | P3 | 10 | 卸载器的"期望路径"守卫恒真（同一表达式自我比较），只剩叶名校验 · P3 |
+| `R20-S10-08` | P3 | 10 | 本地化契约对"重复键"与"重复占位符"存在两条静默通道 · P3 |
+| `R20-S10-09` | P3 | 10 | `UserFacingFailureSurfaces_DoNotExposeRawExceptionMessages` 是可被重排绕过的精确空格文本否定断言 · P3 |
+| `R20-S10-10` | P3 | 10 | AOT 冒烟门禁契约漏登记 3 个 runner，且只钉脚本变量不钉 summary 实际写出值 · P3 |
+| `R20-S10-11` | P3 | 10 | ARM64 ABI 门禁测试在非 ARM64 环境零断言通过 · P3（建议由 P2 复议降级） |
+| `R20-S10-12` | P3 | 10 | `AGENTS.md` 把 `publish-aot-retail.ps1` 说成零售包产出者，与实际唯一入口不符 · P3 |
+| `R20-S10-13` | P3 | 10 | 三份发布摘要的校验强度不一致：唯一携带 `auditFindings` 的 AOT 审计摘要只校验"文件存在" · P3 |
+
+### R20 整改批（2026-10-27，首批 4 条已修）
+
+| 编号 | 级别 | 修法 | 文件 | 状态 |
+| --- | --- | --- | --- | --- |
+| `R20-S9-01` | P2 | `InitializeProcThreadAttributeList` 的 `PSIZE_T` 由 `ref int` 改为 `ref IntPtr`，调用处改用 `IntPtr attributeListSize` | `src/DeskBox/Platform/ShellUnelevatedLaunch.cs:91/325`、`DragDropPermissionNativeMethods.cs:49` | 已修 |
+| `R20-S9-10` | P3 | 去掉 `SetCurrentProcessExplicitAppUserModelID` 上的 `SetLastError = true`（HRESULT 入口不设 last error） | `src/DeskBox/Platform/JumpListNativeMethods.cs:16` | 已修 |
+| `R20-S10-02` | P2 | 下载时把摘要写入 `<installer>.sha256`；安装前解析摘要，缺失即拒绝安装；更新器缺 `--installer-sha256` 即拒绝执行 | `src/DeskBox/Services/AppUpdateService.cs`（sidecar 读写 + 安装前 fail-closed）、`src/DeskBox.Updater/Program.cs:91` | 已修 |
+| `R20-S3-03` | P2 | 视图加 `_isRestoring` 单入口守卫；`DeskBoxRestorePreparation` 增 `ArchivePath`/`PreparedAtUtc`；`ConfirmPendingFullRestoreAsync` 比对身份，不符即拒绝并记日志 | `src/DeskBox/Views/SettingsWindow.Maintenance.cs:221-320`、`SettingsWindow.xaml.cs:74`、`src/DeskBox/Services/DeskBoxDataBackupService.cs:1628/3812` | 已修 |
+
+- 构建：`dotnet build .\src\DeskBox\DeskBox.csproj -p:Platform=x64` → 0 错误 / 20 警告；`DeskBox.Updater` → 0 错误 / 0 警告。
+- 定向测试：`--filter "FullyQualifiedName~DataBackup|~Update|~Restore"` → **447 通过 / 1 失败 / 448**，唯一失败是既有环境基线（`DesktopOrganizationTests` 需要真实 shell 令牌写 `%LOCALAPPDATA%`）。
+- 方案修订：`docs/quality/rectify/R20-remediation-plan.md` §6（v2，按 `R20-remediation-plan-review.md` 的 10 条阻断逐条改写修法）。
+### R20 整改批（2026-10-27，7 条已修 + 4 条复核改判/撤回）
+
+| 编号 | 原级别 | 处置 | 位点 |
+| --- | --- | --- | --- |
+| R20-S9-01 | P2 | 已修 | `src/DeskBox/Platform/ShellUnelevatedLaunch.cs:91`（`PSIZE_T` 由 `ref int` 改 `ref IntPtr`，调用处 `IntPtr attributeListSize`）；`Platform/DragDropPermissionNativeMethods.cs:49` 同族声明同步改正 |
+| R20-S9-10 | P3 | 已修 | `src/DeskBox/Platform/JumpListNativeMethods.cs:16`（HRESULT 入口去掉 `SetLastError`） |
+| R20-S10-02 | P2 | 已修 | `src/DeskBox/Services/AppUpdateService.cs`（下载后写 `<installer>.sha256`、安装前解析摘要并 fail-closed、非空即无条件校验）；`src/DeskBox.Updater/Program.cs:91`（缺 `--installer-sha256` 即拒绝执行） |
+| R20-S3-03 | P2 | 已修 | `Views/SettingsWindow.xaml.cs:74` + `Views/SettingsWindow.Maintenance.cs:221`（`_isRestoring` 单入口守卫）；`Services/DeskBoxDataBackupService.cs:1628`（`ConfirmPendingFullRestoreAsync` 增 `expectedArchivePath`/`expectedPreparedAtUtc` 身份比对）+ `:3812`（`DeskBoxRestorePreparation` 携带身份） |
+| R20-S1-02 | P2 | 已修 | `Services/DeskBoxDataBackupService.cs:1482-1522`（逐文件 `<dest>.restore-tmp` → `File.Move(overwrite: true)`，全部成功后才删除快照中不存在的 live 文件） |
+| R20-S8-01 | P2 | 已修 | `Services/SettingsService.cs:2821-2831`（`settings.Widgets ??= []` + `RemoveAll(widget => widget is null)`） |
+| R20-S6-06 | P2 | 已修 | `Controls/WidgetContents/TodoWidgetContent.DetailNotesAndSteps.cs:17-21/274-285`（`_notesSaveGate.WaitAsync()` 改 10 秒上限，超时记日志并跳过本次保存） |
+| R20-S5-02 | P2 | **撤回** | 既有契约测试 `WidgetShellContentHostTests.CompletePresenterFailure_RemainsRollbackCapable` 明确要求抛出 + 回滚；两处调用点均 catch 后 `Rollback()`，无永久卡死路径 |
+| R20-S7-05 | P2 | 降 P3 | `ResilientJsonStore.cs:92/228-247/366` 已有「读失败先保留主文件再覆盖」+ 反序列化失败隔离；残余仅为可观测性 |
+| R20-S7-06 | P2 | 降 P3 | 写盘失败有独立通道 `PersistenceFailed`（`SettingsService.cs:483/1216/1308/1332`）+ App 侧 5 分钟节流提示；`SettingsChanged` 语义是「内存已变，请刷新」 |
+| R20-S4-01 | P2 | 降 P3 | `TodoWidgetViewModel.SaveAsync()` 已返回 `Task<bool>` 且失败触发 `SaveFailed` 横幅；命令返回 false 会与「内存权威、下次保存补齐」设计冲突 |
+
+- 门禁：`DeskBox` 0 错误 / 20 警告（基线一致）；`DeskBox.Updater` 0 错误；定向测试 182/1（唯一失败为未跟踪文件基线）。
+- 因修复同步上调的契约清单：`ModuleBoundaryContractTests` 破坏性文件操作 `DeskBoxDataBackupService.cs` 12 → 13；`SettingsSliceOwnershipContractTests` 门面直通 `SettingsService.cs` 623 → 625。
+### R20 整改批·第三批（2026-10-27，2 条已修 + 2 条复核降级/撤回）
+
+| 编号 | 原级别 | 处置 | 位点与修法 |
+| --- | --- | --- | --- |
+| R20-S1-01 | P2 | 已修 | `Services/AppUpdateService.cs`：`DownloadUpdateCoreAsync` 新增 `catch (OperationCanceledException)`，把 `OverallDownloadTimeout` 取消 linked token 产生的裸 OCE 归类为 `Network` 并清理 `.tmp`（原实现该异常不匹配任何过滤器，直接逃出方法，而调用方只有 try/finally） |
+| R20-S1-04 | P2 | 已修 | `Services/WebDavBackupTransport.cs:169-186`：`ResolveUri` 逐段拒绝 `.`/`..` 后再转义（原实现 `new Uri(baseUri, escaped)` 会把点段归一化掉，保留清理的 Delete 可能落到配置目录之外） |
+| R20-S1-03 | P2 | 降 P3 | `ApplyPendingRestoreAsync` 开头无条件调 `TryRecoverStrandedRollback()`（`:1284`，启动链 `App.xaml.cs:1235` 每次都走），门控 `HasUserDocuments` 在 `DataDirectory` 不存在时返回 false（`:2668-2671`）→ 恢复路径可达；「默认 settings.json 触发门控」不成立（该步骤早于设置加载） |
+| R20-S8-06 | P2 | 撤回 | 声称的 `Cap` null → `WeatherCodeMapper` `Trim()` NRE 不存在：唯一 `Trim()`（`Helpers/WeatherCodeMapper.cs:138`）前有 `IsNullOrWhiteSpace` 守卫（`:132-135`），`MsnDescriptionOrIconToWmoCode`（`:208`）回落到 icon 映射 |
+
+- 门禁：`DeskBox` 0 错误 / 20 警告；定向（Update/WebDav/DataBackup/CloudBackup）**326 通过 / 0 失败**；全量 **6204 / 11 / 1 / 6216**，与基线逐条一致。
+## R20 整改批（2026-10-27，第三批：6 条已修 + 2 条复核撤回）
+
+| ID | 级别 | 处置 | 位点与要点 |
+|---|---|---|---|
+| `R20-S1-01` | P2 → 已修 | 下载总超时归类网络失败并清理临时文件 | `src/DeskBox/Services/AppUpdateService.cs` `DownloadUpdateCoreAsync` 新增 `catch (OperationCanceledException)`：`OverallDownloadTimeout` 取消的是 linked token，`ReadAsync`/`WriteAsync` 抛裸 OCE 不匹配 `when (cancellationToken.IsCancellationRequested)`，逃出方法后调用方只有 `try/finally` → 静默失败 + `.tmp` 残留。 | 已修
+| `R20-S1-04` | P2 → 已修 | WebDAV 路径先逐段拒绝 `.`/`..` 再转义 | `src/DeskBox/Services/WebDavBackupTransport.cs:169-186`；原实现 `new Uri(base, escaped)` 会归一化点段，保留清理的 `Delete` 可落到配置目录之外。 | 已修
+| `R20-S8-02` | P2 → 已修 | 历史记录元素级 null 过滤 | `src/DeskBox/Services/DesktopOrganizationHistoryStore.cs:173-186`：`entry.Items` 在 `foreach` 前 `RemoveAll(item => item is null)`（`Normalize` 在 resilient-store 回调之外，null 元素会逃出隔离协议并让设置整体回默认）。 | 已修
+| `R20-S8-03` | P2 → 已修 | 恢复日志在反序列化回调内归一 | `src/DeskBox/Services/DesktopOrganizationRecoveryStore.cs`：新增 `NormalizeJournal`，`Items`/`CreatedWidgetIds` 为 null 时 `?? []` 并滤 null 元素。 | 已修
+| `R20-S2-01` | P2 → 已修 | 交互深度清零时补发 `InteractionActiveChanged` | `src/DeskBox/Services/WidgetSessionManager.cs` `MarkDesktopResting`/`MarkHidden`：原实现清零不通知，泄漏看门狗（`WidgetManager.ZOrder.cs:509-518`）永不停止、`Tick` 因 `IsInteractionActive == false` 每轮直接 return。**机理更正**：报告所称「DisplayTopologyGate 的 UserInteraction 永不复位」不成立（该事件唯一订阅者是看门狗）。 | 已修
+| `R20-S3-02` | P2 → 已修 | 信息对话框统一走协调器 | `src/DeskBox/Views/SettingsWindow.DataTools.cs` `ShowInfoDialogAsync` 改为 `ShowDialogWhenFreeAsync(() => …)`（复用 `SettingsWindow.DialogCoordination.cs:18-64` 的 XamlRoot 判空 + 重试 + `InvalidOperationException`/`COMException 0x80000019` 兜底），覆盖 30+ 个异步续延调用点。 | 已修
+| `R20-S1-03` | P2 → P3（撤回修复） | 恢复残留目录门控可达性成立 | `ApplyPendingRestoreAsync` 开头**无条件**调 `TryRecoverStrandedRollback()`（`DeskBoxDataBackupService.cs:1284`），启动链每次经 `RunOptionalStartupStepAsync("apply-pending-restore")`；`HasUserDocuments` 在目录不存在时直接 false → 门控不阻断。 |
+| `R20-S8-06` | P2 → 撤回（伪缺陷） | 天气 `Cap` null 不导致 NRE | `src/DeskBox/Helpers/WeatherCodeMapper.cs` 唯一 `Trim()` 在 `:138`，前置 `:132-135` 已 `if (string.IsNullOrWhiteSpace(description)) return -1;` → 只降级不抛。 |
+
+**门禁**：`DeskBox` 构建 0 错误 / 20 既有警告；全量测试 **6204 通过 / 11 失败 / 1 跳过 / 6216**，11 条失败与 R18/R19 基线逐条一致（沙箱 `%LOCALAPPDATA%`/`HKCU` + 未跟踪文件 `ScreenshotAnnotationRasterizer.cs`）。定向（Update/WebDav/DataBackup/CloudBackup）326 通过 0 失败；`FeatureWidgetsSettingsCoordinatorTests` 并行下单条 flaky，单跑 6/6 通过。
+### R20 整改批（第五批，2026-10-27，2 条已修 + 1 条记录不修）
+
+| 编号 | 级别 | 处置 | 说明 |
+|---|---|---|---|
+| `R20-V5-01` | P2 | 已修 | `WidgetManager.RemoveWidgetAsync` → `Task<bool>`，`ContentWidgetWindow.Commands.cs:1007-1030` 失败时弹 `Widget.DeleteWidgetFailed` 反馈并复位 pending；修复"删除静默失败、重启复活" | 已修
+| `R20-V5-03` | P2 | 已修 | `CloudBackupService` 新增 `OwnedDeviceSuffix`（身份缺失为 null）+ `IsOwnedSnapshotName` 用其判定；身份缺失时不再认领 `nodevice` 快照，避免多台设备互删备份 | 已修
+| `R20-V5-02` | P2 | 记录不修 | 换机后旧设备快照永不删除导致云端增长；先实现的"180 天清理"被契约测试否决，判定删除对端唯一备份风险更高，保留"仅删本机快照"并在 `ApplyRetentionAsync` 注释说明取舍 |
+
+### round-21（Round 21 全量循环审查，2026-10-27）
+
+- 审查方式：10 路 SubAgent 并行纯静态审查（不运行应用、不构建、不改源码）；S1–S8 报告已到，S9（原生层与 Platform）/S10（构建发布与本地化）待补。
+- 立案 82 条：**P0 0 / P1 1 / P2 21 / P3 60**；另记已排除候选 90+、观察项若干（见各段报告 §4/§5）。
+- 总报告：`docs/quality/rounds/round-21/ROUND-21-总报告.md`
+- 本轮汇总期间已修 3 条：`R21-S4-01`（P1，多选块拖拽顺序，抽出 `ApplyBlockReorder` + 2 个回归测试，`FileItemMultiDragTests` 106 通过）、`R21-S8-02`（`quick-capture.json`/glance preferences 版本号 `Math.Max` 保序）、`R21-S3-02`（恢复默认设置改 `Task<bool>` + 失败弹窗）。
+- 结构性主题：C-1″ 取消语义分层未贯通、C-3 `Handled = true` 吞异常、C-4「成功」语义被下层污染、C-5 记账漏项、C-6 只读不变量依赖「绑定成功」。
+
+| ID | 级别 | 位点 | 一句话结论 | 状态 |
+| --- | --- | --- | --- | --- |
+| `R21-S1-01` | P2 | (见报告) | **取消跨卷目录移动时把未完成的移动当作"已完成结果"上报，3 个消费者不复核 → UI 计数、撤销收据、列表移除三处状态错误** | 待修 |
+| `R21-S1-02` | P3 | `src/DeskBox/Services/FileService.cs:1841-1859`（`completedPaths` 填充在 `1841-1848`，抛异常在 `1856-1859`） | **`DeleteEntriesWithShell` 部分成功后抛 `Win32Exception`，已完成删除的路径集合随异常丢失** | 待修 |
+| `R21-S1-03` | P3 | `src/DeskBox/Services/DeskBoxDataBackupService.cs:545`、`:643` | **`PrepareRestoreAsync` / `PrepareScopedRestoreAsync` 在校验新归档之前就删除已排队的恢复（R20-S1-06 未修，原位复核）** | 待修 |
+| `R21-S1-04` | P3 | (见报告) | **`ArchiveZipService.WriteZip` 缺少"排除自身归档"逻辑，与 `WriteTar` 不对称（R20-S1-09 未修）** | 待修 |
+| `R21-S1-05` | P3 | `src/DeskBox/Services/ArchiveZipService.cs:227-270`（`ExtractAllAsync`）、`:325-370`（`ExtractEntry`） | **`ArchiveZipService.ExtractAllAsync` 无条目数/总字节上限，且失败时残留部分解压目录** | 待修 |
+| `R21-S1-06` | P3 | `src/DeskBox.Updater/Program.cs:695-730`，关键行 `:721-726` | **更新器 `UpdateOptions.Parse` 把任何未知 token 当作"带值开关"，会吞掉紧随其后的已知开关** | 待修 |
+| `R21-S1-07` | P3 | `src/DeskBox/Services/AppUpdateService.cs:685-730` | **`PrepareDetachedUpdaterHelper` 先递归删除所有旧 helper 目录，再复制新 helper；复制失败即本次更新无法安装** | 待修 |
+| `R21-S2-01` | P2 | (见报告) | **标题**：`PersistCompletedWidgetResize` 抛出后缩放清理链整体跳过，`_compactInteractionDepth` 永不清零 → Smart 折叠对该窗口永久失效 | 待修 |
+| `R21-S2-02` | P2 | (见报告) | **标题**：`ResolveCompactWorkArea` 的 `DisplayArea.GetFromPoint` 无异常兜底，是折叠/展开/缩放全部热路径的唯一 choke point | 待修 |
+| `R21-S2-03` | P2 | (见报告) | **标题**：`RenameWidgetCoreAsync` 磁盘改名成功、settings 落盘失败时只记日志 → 下次启动 widget 指向不存在的文件夹 | 待修 |
+| `R21-S2-04` | P2 | (见报告) | **标题**：胶囊排列在退化工作区（0 尺寸）下 `arranged[id]` 抛 `KeyNotFoundException`，且 `ApplyCapsuleArrangementIfChanged` 无 catch | 待修 |
+| `R21-S2-05` | P3 | (见报告) | **标题**：`WaitForCompactExpansionWarmupGateAsync` 的 `SemaphoreSlim` 取消竞态可泄漏**进程级静态闸**许可，导致全进程胶囊预热退化 | 待修 |
+| `R21-S2-06` | P3 | (见报告) | **标题**：`UiDispatch.RunOrDefer(Action)` 被传入 `async` lambda，形成无 try/catch 的 `async void` 派发（2 处），破坏「延迟动作按序重放」契约 | 待修 |
+| `R21-S2-07` | P3 | (见报告) | **标题**：`RemoveWidget(string)` 丢弃 `RemoveWidgetAsync` 的 Task，删除失败（含不可逆的回收站/移出桌面动作）完全静默 | 待修 |
+| `R21-S2-08` | P3 | (见报告) | **标题**：`GetOrphanManagedStorageFolders` 的目录枚举无 try/catch，卷掉线时异常直抛设置页 | 待修 |
+| `R21-S2-09` | P3 | (见报告) | **标题**：`WidgetLayoutStore.SaveAsync` 仍是 `public` 且不检查 `CanWrite`（**R20-S2-09 未修，残留**） | 待修 |
+| `R21-S2-10` | P3 | (见报告) | **标题**：`RepairLegacyContentFeatureFileShells` / `DeduplicateFeatureWidgets` 在组闸外改 `Settings.Widgets` / `DeletedWidgetIds`，且不删 per-widget … | 待修 |
+| `R21-S2-11` | P3 | (见报告) | **标题**：`HideAndCloseFeatureWidgetAsync` 名 Async 实 void；`CloseFeatureWidgetInstance` 丢弃 Task + 空 catch（**R20-S2-11 / -12 未修，残留**） | 待修 |
+| `R21-S2-12` | P3 | (见报告) | **标题**：`NormalizeWidgetBounds` 的 `DisplayArea.GetFromRect` 无 try/catch，且被 `CreateContentWidgetFromConfigAsync` 在 try 块之外调用 | 待修 |
+| `R21-S2-13` | P3 | (见报告) | **标题**：`PinAllWidgetSurfacesToScreenAsync` 直接遍历含墓碑的 `Settings.Widgets` / `Settings.WidgetGroups`，给已删除 widget 写屏幕绑定 | 待修 |
+| `R21-S2-14` | P3 | (见报告) | **标题**：`ExecuteTrayVisibilityOperationAsync` 的 `_trayVisibilityOperationGate.WaitAsync()` 无 CancellationToken、无超时 | 待修 |
+| `R21-S2-15` | P3 | (见报告) | **标题**：`TryReorderCapsuleBarMember` 重排后不刷新 `session.MemberSlots`，槽位几何与 `MemberOrder` 索引脱钩 | 待修 |
+| `R21-S2-16` | P3 | (见报告) | **标题**：`FindConfig` 不过滤 `IsDeleted`，被 40+ 处调用，构成墓碑泄漏的长期陷阱 | 待修 |
+| `R21-S3-01` | P2 | (见报告) | **标题**：引导页功能开关的持久化链可被永久毒化，"完成"与"跳过"双双永久失效 | 待修 |
+| `R21-S3-02` | P2 | (见报告) | **标题**："恢复默认设置"失败后静默无反馈，内存与磁盘分叉，下次启动悄悄回滚 | 已修 |
+| `R21-S3-03` | P2 | (见报告) | **标题**：确认类/破坏性对话框绕过 `ShowDialogWhenFreeAsync`，`XamlRoot` 被占用时按钮表现为"点了没反应" | 待修 |
+| `R21-S3-04` | P3 | `src/DeskBox/Views/SearchPopupWindow.xaml.cs:4011` | **标题**：仅修改大小写的重命名被静默跳过 | 待修 |
+| `R21-S3-05` | P3 | `src/DeskBox/Views/SearchPopupWindow.xaml.cs:1344-1351` | **标题**：保存的弹窗边界只要与工作区"有交集"就原样应用，可开出几乎不可见的窗口 | 待修 |
+| `R21-S3-06` | P3 | (见报告) | **标题**：6 处 `DispatcherQueue.TryEnqueue(async () => …)` 的 async-void lambda 无 try，异常直达全局吞异常，其中右键拖放落地流程会停在中途 | 待修 |
+| `R21-S3-07` | P3 | `src/DeskBox/Views/ScreenshotCaptureWindow.xaml.cs:1826-1832` | **标题**：截图导出在 `Close()` 之后仍由 `finally` 操作已关闭窗口的控件 | 待修 |
+| `R21-S3-08` | P3 | (见报告) | **标题**：协调器 3 秒放弃 + 设置窗"隐藏而非关闭"策略，使更新安装确认可能永远等不到空闲 `XamlRoot` | 待修 |
+| `R21-S3-09` | P3 | (见报告) | **标题**：虚拟拖放临时目录的递归删除有 7 处在 UI 线程同步执行（其中 2 处经 `ContinueWith` 默认调度器绕回 UI 线程），与同文件自己写明的"递归删除必须离开 dispatcher turn"契约冲突 | 待修 |
+| `R21-S4-01` | P1 | (见报告) | **标题**：多选块移动在"向前拖动"时把块打散并落到错误位置，且结果被持久化 | 已修 |
+| `R21-S4-02` | P2 | (见报告) | **标题**：开始一次拖拽（即使随即取消）即永久把控件切到"手动排序"并落盘 | 待修 |
+| `R21-S4-03` | P3 | (见报告) | **标题**：拖入回收站的删除路径不刷新手动顺序快照，且批量失败只报告第一个路径 | 待修 |
+| `R21-S4-04` | P3 | (见报告) | **标题**：`CloneTodoItem` 漏克隆 `TodoItem.DeviceId`，删除+撤销会把所有条目的设备来源抹成"本机" | 待修 |
+| `R21-S4-05` | P3 | (见报告) | **标题**：`SettingsViewModel.Dispose()` 不退订 App 级单例的两个更新事件，每次开设置窗口泄漏一个 VM | 待修 |
+| `R21-S4-06` | P3 | (见报告) | **标题**：`SortItems` 仍是 O(n²)（每元素一次 `Items.IndexOf`），同一根因在栈投影里还有一处 | 待修 |
+| `R21-S4-07` | P3 | (见报告) | **标题**：剪贴板重试循环末尾的 `throw lastException` 不可达，`lastException` 是只写死变量，最终失败无日志 | 待修 |
+| `R21-S4-08` | P3 | (见报告) | **标题**：`SetSortMode` 用 `Items.Clear()` + 重填切换排序，销毁 ListView 选中与滚动位置，且与同文件明确声明的设计原则相反 | 待修 |
+| `R21-S4-09` | P3 | (见报告) | **标题**：删除附件时忽略 `SaveAsync()` 的失败结果，仍删除受管文件 → 元数据与磁盘不一致 | 待修 |
+| `R21-S4-10` | P3 | (见报告) | **标题**：到期日预设的"本周/下周一"日期数学被复制三份，任一处修正都需同步三处 | 待修 |
+| `R21-S4-11` | P3 | (见报告) | **标题**：`TodoItemViewModel` 构造函数把 `Recurrence` 实例同时交给模型与 VM，与自身注释和 setter 行为矛盾，store 归一化后二者静默分叉 | 待修 |
+| `R21-S4-12` | P3 | (见报告) | **标题**：音乐进度计时器在首次 SMTC 时间轴同步前用 `default(DateTimeOffset)` 外推，进度条直接跳到满格 | 待修 |
+| `R21-S4-13` | P3 | (见报告) | **标题**：`MusicAccentBrush` / `PlayPauseButtonBackgroundBrush` 每次读属性都新建 `SolidColorBrush` | 待修 |
+| `R21-S4-14` | P3 | (见报告) | **标题**：系统音量设置被拒绝后 UI 保留未生效的值，无回滚 | 待修 |
+| `R21-S4-15` | P3 | (见报告) | **标题**：`SettingsViewModel` 构造函数发起两个无人观察的异步任务，异常将完全静默 | 待修 |
+| `R21-S4-16` | P3 | (见报告) | **标题**：Todo 的筛选计数与"剩余 N 项"绕过 `LocalizationService.Format`，与其它计数文案不一致 | 待修 |
+| `R21-S5-01` | P2 | (见报告) | **`async` lambda 直接交给 `DispatcherQueue.TryEnqueue`，等价 `async void` 且无任何兜底** | 待修 |
+| `R21-S5-02` | P3 | (见报告) | **`_suppressNextTitleBarClickCollapse` 是一次性抑制标志，在"双击第二击后转为拖拽 / 指针捕获丢失"路径上不会被清除，导致下一次合法的标题栏单击被吞掉** | 待修 |
+| `R21-S5-03` | P3 | (见报告) | **`SetOverlayChromeVisible(bool isVisible, bool animateButtons = true)` 的 `animateButtons` 参数在默认值 `true` 下完全无效，6 个调用点里 5 个都在传默认值** | 待修 |
+| `R21-S5-04` | P3 | (见报告) | **`WidgetShellContentHost` 的内容生命周期回调在"未激活窗口"与"过渡中 outgoing 内容"两个分支上不配对** | 待修 |
+| `R21-S5-05` | P3 | (见报告) | **`WidgetShell.xaml.cs` 有两处裸 `catch` 直接吞掉异常并返回 `false`，无日志、无注释，且都落在标题栏交互路径上** | 待修 |
+| `R21-S5-06` | P3 | (见报告) | **`CompleteNativeFileDropFallbackAsync` 只捕获 `OperationCanceledException`，其余异常从被丢弃的 `Task` 逃逸为未观察任务异常** | 待修 |
+| `R21-S5-07` | P3 | (见报告) | **`Localized.PruneDeadTargets()` 全仓零调用（死 API），而 `UntrackTree` 只有 1 个调用点——弱引用台账的显式回收契约只被一个窗口遵守** | 待修 |
+| `R21-S5-08` | P3 | (见报告) | **"瞬时 UI 计时器"的性能台账契约没有收口设施，43 处 `CreateTimer()` 只有 10 处记账，且不记账的位点里有两个连 `Tick` 都不解绑** | 待修 |
+| `R21-S6-01` | P2 | (见报告) | **QuickCapture 明细保存闸门仍是无界等待，R20-S6-06 只修了 Todo 一半** | 待修 |
+| `R21-S6-02` | P2 | (见报告) | **Todo 笔记闸门超时后「完成」按钮完全无响应（R20-S6-06 修复引入的新分支）** | 待修 |
+| `R21-S6-03` | P2 | (见报告) | **弹层关闭按钮的交互租约在 `ReleaseStackPopover` 路径不归还（R20-S6-10 半修）** | 待修 |
+| `R21-S6-04` | P3 | (见报告) | **`SelectStackMembers` 在弹层已打开时静默失效（R20-S6-03 同族）** | 待修 |
+| `R21-S6-05` | P3 | (见报告) | **撤销按钮丢弃 `UndoLastActionAsync` 返回值，无条件提示「已撤销」** | 待修 |
+| `R21-S6-06` | P3 | (见报告) | **DimDiag 临时诊断探针留在生产热路径** | 已修（Round 02 删除；审计见 `doc/audit-20261029-093210/round-02-总报告.md`） |
+| `R21-S6-07` | P3 | (见报告) | **`CreateMultiItemFlyout` 的 `anchor` 参数是死参数** | 待修 |
+| `R21-S6-08` | P3 | (见报告) | **`PickCustomDueDateAsync` 是假异步，且缩进错误** | 待修 |
+| `R21-S6-09` | P3 | (见报告) | **`StackSurface_DragOver` 在校验 sender 之前就 `e.Handled = true`** | 待修 |
+| `R21-S6-10` | P3 | (见报告) | **`TodoTab_Drop` 缺 catch，与同文件其它 Drop 处理器不一致** | 待修 |
+| `R21-S6-11` | P3 | (见报告) | **Glance / Weather 订阅 `ViewModel.PropertyChanged` 从不退订（R20-S6-13 仍在）** | 待修 |
+| `R21-S7-01` | P2 | (见报告) | **`Migration_11_To_12` 未守卫 `settings.Widgets`，`null` 值使迁移链永久停在 v11** | 待修 |
+| `R21-S7-02` | P2 | (见报告) | **`Migration_9_To_10` 的"durable checkpoint"承诺不成立：`WaitForPendingPersist()` 在写入失败时也正常返回，旧音乐字段永久丢失** | 待修 |
+| `R21-S7-03` | P2 | (见报告) | **`settings.json` / `widget-layout.json` 的临时文件从不 `flushToDisk`，掉电后可能得到零长度或截断的正式文件** | 待修 |
+| `R21-S7-04` | P2 | (见报告) | **`ResilientJsonStore.s_unreadablePrimaries` 只在"保存时"清除，一次瞬时读失败会让该存储**永久**失去 `.bak` 冗余** | 待修 |
+| `R21-S7-05` | P2 | (见报告) | **`QuickCaptureSettingsCoordinator` 的 `Changed`/`DiagnosticsChanged` 裸广播：一个订阅者抛异常会截断其后所有订阅者，并把异常抛回设置写入方** | 待修 |
+| `R21-S7-06` | P2 | (见报告) | **Jump List 的 AUMID 只写到 `{userprograms}` 快捷方式；机器级安装下 Jump List 永不出现，且日志显示"成功"** | 待修 |
+| `R21-S7-07` | P3 | (见报告) | **`TodoWidgetStore.SanitizeWidgetId` 放过 `..`，且空结果回退到随机 Guid 会让删除目标与写入目标错位** | 待修 |
+| `R21-S7-08` | P3 | (见报告) | **`QuickCaptureStore.Normalize` 无条件把 `Version` 压回 4，高版本文档被静默降级覆盖** | 待修 |
+| `R21-S7-09` | P3 | (见报告) | **`WeatherCacheStore.Normalize` 丢弃高版本缓存后，`UpdateAsync` 立即以 v1 覆盖** | 待修 |
+| `R21-S7-10` | P3 | (见报告) | **Jump List 的"切换 Widget"入口绕过 `ToggleWidgetsFromTrayAsync` 的串行状态机：TOCTOU + 无 parity 折叠** | 待修 |
+| `R21-S7-11` | P3 | (见报告) | **`QuickCaptureSettingsCoordinator.StopCoreAsync` 的 wait-then-release 屏障后立即 `Dispose()`，排队中的 waiter 会在已释放的信号量上 `Release()`** | 待修 |
+| `R21-S7-12` | P3 | (见报告) | **`JumpListService.ConfigureAsync` 先 `Clear()` 再逐项 `AddItem`（异常被逐项吞掉），全部失败时仍 `SaveAsync()` 一个空 Jump List** | 待修 |
+| `R21-S8-01` | P2 | (见报告) | **标题**：新版本 `settings.json` 反序列化失败时，「新版本只读」不变量不可达，旧构建以默认值覆盖更新版本的 profile | 待修 |
+| `R21-S8-02` | P2 | (见报告) | **标题**：`quick-capture.json` 与 glance preferences 无条件把 `Version` 回写为当前值，降级后静默丢弃更新版本的字段 | 已修 |
+| `R21-S8-03` | P3 | (见报告) | **标题**：`shortcut-native-abi-v2.md` 的「当前」能力掩码与导出清单仍停在阶段 3C 早期，与代码/头文件不一致 | 待修 |
+
+### round-21 追加（S9 原生层与 Platform、S10 构建发布与本地化，2026-10-27）
+
+- S9 立案 5 条（P2 1 / P3 2 / P4 2）：Rust 层无可触发内存安全或 ABI 错位缺陷，全部落在托管↔原生壳边界。
+- S10 立案 8 条（P2 1 / P3 7）：四条硬契约（离线自足、清单安全、锁一致性、13 语言一致）复核通过，问题集中在发布门禁机制缺口。
+- Round 21 合计 **95 条：P0 0 / P1 1 / P2 23 / P3 69 / P4 2**。
+
+| ID | 级别 | 位点 | 一句话结论 | 状态 |
+| --- | --- | --- | --- | --- |
+| `R21-S9-01` | P2 | `src/DeskBox/Helpers/NativeDropTarget.cs:2213-2225`（`ReadVirtualFileDescriptors` 的容量夹紧）；越界读发生在 `:2234-2238`。 | **触发**：拖放源提供 `FileGroupDescriptorW`（`CFSTR_FILEDESCRIPTORW`）时用 **0 字节 HGLOBAL**：`GlobalSize`（`OleDropTargetNativeMethods.cs` 的 `GlobalSiz… | 待修 |
+| `R21-S9-02` | P3 | `src/DeskBox/Helpers/NativeDropTarget.cs:856`（`Marshal.AddRef`）↔ `:894`（`finally` 中的 `Marshal.Release`）；丢弃点在 `src/DeskBox/Platform/UiDisp… | **触发**：shell 命名空间 / AppsFolder 拖放（`shellApplicationDrop \|\| shellNamespaceDrop`）走 `:844-912` 的延迟分支。`:856` 先 `AddRef`，然后把"提取 → `WritePerf… | 待修 |
+| `R21-S9-03` | P3 | `src/DeskBox/Platform/Win32Helper.cs:3445-3455`，拼串在 `:3447`：`"/select,\"{path}\""`。 | **触发**：`path` 以目录分隔符结尾。可达路径之一：用户把备份目录配成 `D:\DeskBoxBackup\`，`src/DeskBox/Views/SettingsWindow.Maintenance.cs:424-426` 把它原样交给 `ShowInExplo… | 待修 |
+| `R21-S9-04` | P4 | `src/DeskBox/Platform/ShellUnelevatedLaunch.cs:325-333`。 | **触发**：第一次探测调用的返回值被丢弃： | 待修 |
+| `R21-S9-05` | P4 | `docs/architecture/shortcut-native-abi-v2.md:11-13`。 | **触发**：文档写"当前完整模块能力掩码为 63"，而实际模块是**能力 511、十个导出**：`native/README.md:7-8`、`:21-22`；`native/deskbox-native/src/lib.rs:1092-1416` 的十个导出；`docs… | 待修 |
+| `R21-S10-01` | P2 | (见报告) | **位置** | 待修 |
+| `R21-S10-02` | P3 | (见报告) | **位置** | 待修 |
+| `R21-S10-03` | P3 | (见报告) | **位置** | 待修 |
+| `R21-S10-04` | P3 | (见报告) | **位置** | 待修 |
+| `R21-S10-05` | P3 | (见报告) | **位置** | 待修 |
+| `R21-S10-06` | P3 | (见报告) | **位置** | 待修 |
+| `R21-S10-07` | P3 | (见报告) | **位置** | 待修 |
+| `R21-S10-08` | P3 | (见报告) | **位置** | 待修 |
+
+### round-21 修复批 R21-B（2026-10-27，累计 15 条已修 + 3 条契约测试修复）
+
+| 编号 | 级别 | 状态 | 落点 |
+| --- | --- | --- | --- |
+| R21-S4-01 | P2 | 已修 | `WidgetViewModel.SortingAndWatchers.cs` 抽出 `internal static ApplyBlockReorder(...)`，多选块拖拽保持连续；新增 2 条单测（`FileItemMultiDragTests` 106/106） |
+| R21-S8-02 | P2 | 已修 | QuickCapture/Glance 版本号与计数守卫改为 `Math.Max(...)` 单次求值 |
+| R21-S3-02 | P2 | 已修 | `RestoreDefaultPreferencesAsync` → `Task<bool>`；视图侧 try/catch + `SaveFailed` 提示 |
+| R21-S7-01 | P2 | 已修 | `SettingsMigrationService.cs:397` 补 `settings.Widgets` 空守卫（v11 `"widgets": null` 曾把迁移永久钉在 v11） |
+| R21-S7-02 | P3 | 已修 | `MusicSettingsStore` 增 `_persistFailed` + `WaitForPendingPersist()`；迁移在写失败时保留 v9 检查点 |
+| R21-S7-03 | P3 | 已修 | `SettingsService.cs:1425/1453` `Flush(flushToDisk: true)` |
+| R21-S1-02 | P2 | 已修 | `DeskBoxDataBackupService` 新增 `DeletePreviousPendingRestore`，不再误删新 payload |
+| R21-S9-01 | P2 | 已修 | `NativeDropTarget.cs:2213` 0 字节 HGLOBAL 时也夹紧声明计数，消除最多 2.42 MB 越界读 |
+| R21-S10-01 | P2 | 已修 | `publish-aot-retail.ps1` restore 加 `-p:RestoreLockedMode=true` |
+| R21-S2-02 | P2 | 已修 | （前批）组拖拽计时器与交互泄漏看门狗 |
+| R21-S5-01 | P3 | 已修 | （前批）宿主 `TryEnqueue(async …)` 无 try 的包装 |
+| R21-S8-01 | P3 | 待裁决 | 方案 §2.1 A′（`Utf8JsonReader` 只读 `schemaVersion`） |
+| R21-S1-01 / S4-02 / S3-01 / S2-01 | P2 | 未落地 | 见 `R21-remediation-plan.md` §7.4 |
+
+**契约测试修复（改代码不改基线）**：抽出 `TryReadPendingRestoreMarker()` 让 `JsonSerializer` 调用点回到 12/3；`SettingsMigrationService` 切片访问回到 58（`FacadePassthroughAccess_OnlyShrinks` 恢复绿）。
+
+**本轮门禁基线**：全量 **失败 11 / 通过 6206 / 跳过 0 / 总计 6218**，11 条失败与 R19/R20 基线逐条同源（沙箱 ACL 8、未跟踪文件基线漂移 1、受限令牌缩略图 3→实为 3 条中 2 条归此类、HKCU 1）。
+### round-21 修复批 R21-C（2026-10-27，B1/B2 剩余四条）
+
+| 编号 | 级别 | 状态 | 落点与要点 |
+| --- | --- | --- | --- |
+| R21-S1-01 | P2 | 已修 | `FileSurfaceContent.xaml.cs` 取消分支 + `WidgetViewModel.Operations.cs:542` 均改为只认 `FileService.IsCompletedShellMove` 为真的条目；不改 `FileTransferResult` 契约 |
+| R21-S4-02 | P2 | 已修 | `FileSurfaceContent` 记住拖拽前排序模式，手势结束且未移动任何条目时恢复；取消拖拽不再永久关闭自动排序 |
+| R21-S3-01 | P2 | 已修 | `OnboardingWindow.TaskFlow.cs` 兜底 `SaveAsync` 独立 try/catch，任务链不再 faulted |
+| R21-S2-01 | P2 | 已修（修法二次修正） | `CommitInteractiveResizeBounds` 内部 catch 持久化异常并记日志；首版 `try/finally` 形状被 `Windows10WidgetMotionContractTests` 拦下，保持调用点文本不变 |
+
+**契约测试教训**：`Windows10WidgetMotionContractTests` 按源码文本断言缩进与出现次数，任何改变调用点形状的重构都会红；同类修法应优先改「被调方内部行为」而非「调用点结构」。
+
+**门禁**：构建 0 错误 / 20 警告；全量 **11 失败 / 6206 通过 / 0 跳过 / 6218**（与基线逐条同源）。累计 R21 已修 19 条；仅剩 `R21-S8-01` 待裁决。
+### round-21 修复批 R21-D（2026-10-27）
+
+| 编号 | 级别 | 状态 | 落点与要点 |
+| --- | --- | --- | --- |
+| R21-S8-01 | P2 | 已修（A′） | `SettingsService.TryReadRawSchemaVersion` 在加载器**之前**读原始 `schemaVersion`；类型绑定失败时 `_loadedDiskSchemaVersion` 不再塌陷为 0，「新版本 profile 只读」不变量恢复可达；新增回归测试 `LoadAsync_NewerSchemaThatFailsToDeserializeStillStaysReadOnly` |
+
+**R21 累计已修 20 条**；方案 §1 内条目全部落地。门禁：构建 0 错误 / 20 警告；全量 11 失败 / 6207 通过 / 6219（11 条为环境基线）。
+### round-21 修复批 R21-E（2026-10-27，复审驱动 13 条）
+
+复审来源：`docs/quality/rounds/round-21/verification/V6..V10-*.md`。判定分布：真修好 6 条（S10-01/S7-02/S7-03/S4-01/S3-02/S8-02）、部分修好 6 条（S1-01/S1-02/S7-01/S8-01/S9-01/S4-02/S3-01）、误修未落地 2 条（S5-01/S3-06）、台账虚标 1 条（S2-02）。
+
+| 条目 | 处置 | 落点 |
+| --- | --- | --- |
+| V8-01/V8-02/V8-05/V8-04 | 已修 | 整叠分支去掉多余 `SetSortMode(Manual)`；`CommitSurfaceReorder` 用 try/finally；新增 `RestoreSortModeAfterCancelledReorder`（含降序）；`SetEnabled` 移入内层 try |
+| V7-01/V7-03 | 已修 | `MemberIds`/`Surfaces` 显式 null 归一；加载异常只在旧版本时清零 `_loadedDiskSchemaVersion` |
+| V6-02/V6-03/V6-04/V6-05 | 已修 | 撤销收据只认落盘条目；count 读取在尺寸守卫之后；marker 先写后删 + `DeletePreviousPendingRestore(keep, previous)`；新增 `IsCompletedShellTransfer` |
+| V9-01/V9-04 | 已修 | `MoveItemForReorder` 插入索引语义；`ApplyBlockReorder` 阶段 2 补 `currentIndex < 0` 守卫 |
+| V9-02 | 已修 | 6 处 `TryEnqueue(async …)` 补 try/catch（右键拖放失败同时清挂起插入 + 临时文件） |
+| V9-03 | 已修 | `ResolveCompactWorkArea` 三级回退（Nearest → Primary → 1920x1080），覆盖 7 个几何调用点 |
+| V10-02 | 已修 | 两处注释字面 `async void` 改词，静态门禁 `async_void_count` 不再被注释污染 |
+| R21-S2-02 | 台账更正 | 原标注的「看门狗」属 R18-B4；真实缺陷是 `WidgetWindowBase.Collapse.cs:3108` `GetFromPoint(...).WorkArea` 裸调用，**本批已按 V9-03 修复**，状态改「已修（V9-03）」 |
+| R21-S5-01 / R21-S3-06 | 状态改「已修（V9-02）」 | 原标已修但 6 处调用点未落地，本批补齐 |
+| R21-S4-02 / R21-S1-01 / R21-S1-02 / R21-S7-01 | 状态改「已修（复审后补强）」 | 见方案 §7.9 表 |
+| V6-01 | 台账更正 | 备份条目真 ID 是 R21-S1-03；`FileService.cs:1856-1859` 的 P3 另立 `R21-S1-04`，状态保持「待修」 |
+| V6-06 / V7-06 | 待补测试 | 四条修复与 `_persistFailed` 均无行为回归测试，列入 Round 22 整改批 |
+| V7-02 | 待清理 | `_settingsSchemaNewerThanBuild` 仅日志使用，死字段 |
+| V10-01 | 记录 | `MusicSettingsStore.cs:149` 新增同步等待使 `sync_wait_count` 193/193 零余量 |
+| V10-03 | 环境 | 未跟踪 `src/DeskBox/Controls/ScreenshotAnnotationRasterizer.cs`（12 处 P/Invoke）使 `PlatformInterop_StaysInsideThePlatformDomain` 红，非 R21 引入 |
+
+**门禁**：构建 0 错误 / 20 既有警告；定向 422/422（备份+整理+文件服务+拖放+VM+多选拖拽+窗口运动）、177/177（排序+引导+文件面+VM+运动契约）、208/208（设置+迁移+音乐设置+切片）。
+
+**未决（需用户裁决）**：① `async_void_count` 258 vs 基线 257 差 1；② `sync_wait_count` 零余量；③ `packages.aot.lock.json` 仍记 2.4.0 而 csproj 为 2.5.1（零售发布 NU1004）。
+
+### round-22（Round 22 全量循环审查，2026-10-27；按文件簇十段）
+
+- 审查方式：10 路 SubAgent 并行纯静态审查（禁构建/禁运行/禁改源码/禁读 `docs/quality/**`），按**文件簇**分段，把 R18–R21 累计未逐行读的大文件一次吃透。S3/S6 首派失效（与 12:16 那批同样的静默死亡），15:11 重派后于 15:26/15:29 交付，**十段齐全**。
+- 立案 **134 条**：P0 0 / P1 1 / P2 38 / P3 89 / P4 6（Lead 改判 `R22-S1-01` P2→P3 后为 P2 37 / P3 90）；合计逐行深读约 11.4 万行。
+- 总报告：`docs/quality/rounds/round-22/ROUND-22-总报告.md`；Lead 复核：`docs/quality/rounds/round-22/LEAD-VERIFICATION.md`（8 条高价值条目 + 1 条结转项）。
+- **本轮为审查轮，未产生任何源码改动**（最近一次代码改动是 R21 第五批，12:41–12:56）。
+- 结构性主题：C-1 非交互路径的静默降级；C-2 状态标志缺少单一复位点；C-3 异常兜底依赖 `async void` 逃逸；C-4 顺序/排序双基准（`_stackOrder` 无单一权威）；C-5 契约与文档漂移。
+
+| ID | 级别 | 位点 | 一句话结论 | 状态 |
+|---|---|---|---|---|
+| `R22-S7-01` | **P1** | `Services/WidgetLayerService.cs:955` | 标题点击抬升路径缺少 #553「前台已属本带即跳过」守卫（兄弟方法 `:899-905` 有），`TrySetForegroundWindow` 无非阻塞保护 → 可再次挂死 UI 线程 | 待修（Lead 维持 P1） |
+| `R22-S1-01` | P2 → **P3** | `App.xaml.cs:4576-4582` | `OnLanguageChanged` 缺 `HasThreadAccess` 重投 → 托盘文字停留旧语言（显示层，Lead 改判） | 待修 |
+| `R22-S1-02` | P2 | `App.Tray.cs:1516-1521` | `OpenManagedStorageFromTray` 无异常守卫，经两条 `async void` 逃逸后被 `OnUnhandledException` 吞掉 → 点了没反应 | 待修 |
+| `R22-S1-03` | P2 | `App.xaml.cs:6967-6984` | 非 abort 的 `Bounded` 超时被计为成功 → `settings-flush` 超时仍 `TrySetResult(true)`，互斥体可能提前释放（不产生文件损坏） | 待修（Lead 复核） |
+| `R22-S2-01` | P2 | `FileSurfaceContent.StackPopover.cs:454-497` | 「待显示栈键」永久滞留 → 该栈浮层再也打不开（切别的栈可恢复，不升 P1） | 待修（Lead 复核） |
+| `R22-S2-02` | P2 | `FileSurfaceContent*.cs` | `_stackProjectionTransitionPending` 在异常路径上永久置位 → 拖放插入点永久失效 | 待修 |
+| `R22-S2-03` | P2 | `FileSurfaceContent.ItemVisuals.cs:2388-2391` | 取得 deferral 后用未保护的 `Path.GetFullPath` → deferral 永不 Complete，OLE 事务悬挂 | 待修（Lead 更正影响描述） |
+| `R22-S2-04` | P2 | `FileSurfaceContent*.cs` | `AbandonPendingBoxSelectionPress` 把浮层框选结算到主视图 | 待修 |
+| `R22-S2-05` | P2 | `FileSurfaceContent*.cs` | 粘贴被取消时剪切态与「已移出」通知双双跳过 | 待修 |
+| `R22-S2-06` | P2 | `FileSurfaceContent*.cs` | `TryEnqueue(async …)` 无异常兜底 | 待修 |
+| `R22-S3-01` | P2（分支下 P1） | `Controls/WidgetShell.xaml.cs:4805-5159` vs `:4043-4050`/`:5841-5852` | `StoryboardSlot` 停止后是否回落基值，同一文件两套互斥假设（动画基值/动画值混用） | 待修 + 定级待裁决 |
+| `R22-S4-01` | P2 | `Controls/ScreenshotAnnotationRasterizer.cs` | 导出光栅化在 UI 线程同步执行（4K 选区 ~100MB） | 待修 |
+| `R22-S4-02` | P2 | 截图导出文本层 | GDI 文本超 8192px 静默丢弃 | 待修 |
+| `R22-S5-01` | P2 | `Services/QuickCaptureService.cs:2087-2108` | 降低最近条目上限会不可逆丢弃超限记录及其图片 | 待修 |
+| `R22-S5-02` | P2 | 便签缩略图缓存 | 缓存以文件名主干为键 → 跨条目串图 | 待修 |
+| `R22-S5-03` | P2 | `Services/DeskBoxDataBackupService.cs:2494` | 恢复期整篇重写暂存 JSON：丢未知字段 + 枚举降级为数字（`CreateDataJsonOptions` 无 `UseStringEnumConverter`） | 待修 |
+| `R22-S5-04` | P2 | 备份快照清单 | 枚举自定义目录下全部 `*.zip`，删除仅校验目录与后缀 → 可删用户自己的 zip | 待修 |
+| `R22-S5-05` | P2 | scoped replace | 逐文件覆盖且失败不回滚已应用域 → 可留半恢复态 | 待修 |
+| `R22-S5-06` | P2 | todo 重映射 | 在保存目标库之前就删除暂存源目录 | 待修 |
+| `R22-S5-07` | P2 | 恢复替换主文件 | 不轮转 `.bak` → 回退源仍是恢复前内容 | 待修 |
+| `R22-S6-01` | P2 | `Services/SettingsService.cs:2907` 等 6 处 | 顶层集合无守卫解引用，`"widgets": null` 触发 NRE → 被 `:1027` 捕获后整份设置回落默认（同构数据在 `WidgetLayoutStore` 有 `??=` 保护） | 待修 |
+| `R22-S6-03` | P2 | `Services/MusicSettingsStore.cs` | 缓存与写链是实例级，而该 store 至少 3 处独立实例化 → 读-改-写互相覆盖 | 待修 |
+| `R22-S6-05` | P2 | `Services/SettingsMigrationService.cs:830/843` | 9→10 检查点仅 `File.Exists` 判定；`WaitForPendingPersist()` 在 `SettingsService.cs:922` 持锁路径上同步阻塞 = UI 线程持锁等待；`MigrateAsync` 无调用方 | 待修 |
+| `R22-S7-02` | P2 | `Services/WidgetManager.cs:2202/2204` | 删除路径忽略组摘除结果、`config is null` 时跳过组清理 → 可持久化悬空 memberId，下次启动 `Normalize` 丢弃 2 成员组 | 待修 |
+| `R22-S7-03` | P2 | `WidgetManager*.cs` | 组摘除回滚快照不覆盖拓扑布局服务 | 待修 |
+| `R22-S7-04` | P2 | `WidgetManager.Groups.cs:918/955` | 合并回滚用深克隆整表替换，破坏引用同一性（与摘除路径的引用保持式回滚语义相反） | 待修 |
+| `R22-S7-05` | P2 | 屏幕绑定写入 | 含完全相同的 if/else 死分支；成员绑定原地改写不发通知 | 待修 |
+| `R22-S8-01` | P2 | `Services/FileService.cs:1831-1841` | 无窗口句柄删除同时带 `FofSilent/FofNoErrorUi/FofNoConfirmation` → 回收站不可用时静默永久删除（Lead 取证：Rust 层不接管删除，零售包同样适用） | 待修 |
+| `R22-S8-02` | P2 | `Services/FileService.cs:2135` | ≥260 字符路径 `PathExists` 把探测失败当可用，冲突消解返回已存在且不可访问的名字；`app.manifest` 无 `longPathAware` | 待修 |
+| `R22-S8-03` | P2 | `ViewModels/WidgetViewModel.Operations.cs:999-1002` | 零句柄时「拖到回收站」静默返回 0 条删除，无失败无提示 | 待修 |
+| `R22-S9-01` | P2 | `/select` 参数拼接 | 反斜杠结尾路径被 `CommandLineToArgvW` 误解 → 资源管理器定位静默失败 | 待修 |
+| `R22-S9-02` | P2 | UNC 回退路径 | 同类引号缺陷 | 待修 |
+| `R22-S9-03` | P2 | 进程属性列表 | `DeleteProcThreadAttributeList` 对未初始化缓冲区无条件调用 | 待修 |
+| `R22-S10-01` | P2 | `ViewModels/WidgetViewModel.ItemHydration.cs:743-751` | 计数水合循环用 `return` 代替 `continue` → 一项消失即终止整代（Lead 已复核） | 待修 |
+| `R22-S10-02` | P2 | `ViewModels/WidgetViewModel.Operations.cs:232-313` | 拖入批量异常后排序模式永久停留 Manual（恢复逻辑在 `try/finally` 之外） | 待修 |
+| `R22-S10-03` | P2 | `ViewModels/WidgetViewModel.Stacks.cs:1551-1577` | `MoveStackUp/Down` 与 `CanMoveStackUp/Down` 顺序基准不一致 → 菜单可点但不动 | 待修 |
+| `R22-S10-04` | P2 | `_stackOrder` | 只增不减，`Item:` 死键永久累积 | 待修 |
+| `R22-S10-05` | P2 | `SetSortMode` | 不重置 `_stackOrder` | 待修 |
+| `R22-S10-06` | P2 | `FileStackGroupByDateAdded` | 读写两侧被静默改写为 Kind | 待修 |
+
+（P3 89 条、P4 6 条见各段报告 §2；本轮未逐条录入表格，R22 整改方案落地时按批次回填。）
+
+**R21 三条未决项结项（本轮实测）**
+
+| 项 | 结论 |
+|---|---|
+| `async_void_count` 258 vs 基线 257 | **已结项**：R21 第五批把 `GlanceWidgetSettingsSection.xaml.cs` 的 `OnUnloaded` 改回非 async（注释同步改词），`python scripts/quality/static_gate.py` **PASS** |
+| `sync_wait_count` 193/193 零余量 | 维持记录：`MusicSettingsStore.cs:149` 的 `GetAwaiter().GetResult()` 为唯一增量，属已知债务 |
+| `packages.aot.lock.json` 记 2.4.0 → 零售发布 NU1004（R-1） | **已不成立**：两份 AOT 锁现均为 `[2.5.1, )`/`2.5.1`，与 `DeskBox.csproj:181` 一致（见 `LEAD-VERIFICATION.md` 结转项复核） |

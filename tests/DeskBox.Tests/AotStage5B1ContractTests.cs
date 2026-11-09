@@ -1,4 +1,4 @@
-namespace DeskBox.Tests;
+﻿namespace DeskBox.Tests;
 
 public sealed class AotStage5B1ContractTests
 {
@@ -134,14 +134,14 @@ public sealed class AotStage5B1ContractTests
         string launcher = ReadRepositoryFile("scripts/start-aot-preview.ps1");
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
 
-        Assert.Contains("$auditProfileVersion = 63", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 65", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B1SourceFiles", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B1MissingRunnerPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B1MissingSmokeScriptPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B1UnsafeRunnerPatterns", audit, StringComparison.Ordinal);
-        Assert.Contains("stage5B1ExpectedWmc1510Count = 742", audit, StringComparison.Ordinal);
-        Assert.Contains("$RequiredAuditProfileVersion = 63", launcher, StringComparison.Ordinal);
+        Assert.Contains("stage5B1ExpectedWmc1510Count = 808", audit, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 65", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("Native AOT stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("shortcut AOT-to-Rust smoke", project, StringComparison.OrdinalIgnoreCase);

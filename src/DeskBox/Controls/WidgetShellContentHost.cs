@@ -227,7 +227,14 @@ public sealed class WidgetShellContentHost
         {
             CurrentContent = outgoingContent;
             DisposeContentOnce(content);
-            if (outgoingContent is not null)
+            if (outgoingContent is null)
+            {
+                // R19-S5-01: the failed content is disposed already, but the
+                // shell would otherwise keep its visual tree and keep routing
+                // pointer/layout/automation input into a disposed view.
+                _clearContent();
+            }
+            else
             {
                 _rollbackTransition(outgoingContent);
                 outgoingContent.OnWindowVisibilityChanged(_isWindowVisible);
@@ -394,6 +401,12 @@ public sealed class WidgetShellContentHost
         // to the outgoing content.
         if (transition.OutgoingContent is not null)
         {
+            // R20-S5-02 (refuted, see LEAD-VERIFICATION §16): the presenter
+            // failure must propagate — both call sites in
+            // ContentWidgetWindow.ContentSwitching.cs catch it and call
+            // Rollback(), which clears _activeTransition. Swallowing it here
+            // would break that documented rollback contract
+            // (WidgetShellContentHostTests.CompletePresenterFailure_*).
             _completeTransition();
         }
 

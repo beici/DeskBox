@@ -5,6 +5,52 @@ namespace DeskBox.Tests;
 public sealed class WidgetAnimationFramePacingPolicyTests
 {
     [Theory]
+    [InlineData(165, 60)]
+    [InlineData(144, 60)]
+    [InlineData(144, 30)]
+    [InlineData(60, 120)]
+    public void UserCap_KeepsRequestedAverageCadenceWithoutDividingLateFrames(int refreshHz, int cap)
+    {
+        double budget = WidgetAnimationFramePacingPolicy.ResolveFrameBudget(1000d / refreshHz, cap);
+        var policy = new WidgetAnimationFramePacingPolicy();
+        policy.Reset(0, budget);
+        int submissions = 0;
+        for (int tick = 0; tick < refreshHz; tick++)
+        {
+            double timestamp = tick * 1000d / refreshHz;
+            if (policy.ShouldSubmit(timestamp, budget))
+            {
+                policy.RecordSubmission(timestamp, 0.5);
+                submissions++;
+            }
+        }
+        int expected = Math.Min(refreshHz, cap);
+        Assert.InRange(submissions, expected - 1, expected + 1);
+        for (int tick = 1; tick <= 5; tick++)
+        {
+            double timestamp = 1000 + tick * 50;
+            Assert.True(policy.ShouldSubmit(timestamp, budget));
+            policy.RecordSubmission(timestamp, 0.5);
+        }
+    }
+
+    [Fact]
+    public void NewTransition_DoesNotInheritAnEarlierWorkOverload()
+    {
+        var policy = new WidgetAnimationFramePacingPolicy();
+        double budget = 1000d / 144;
+        policy.Reset(0, budget);
+        for (int frame = 0; frame < 12; frame++)
+        {
+            policy.RecordSubmission(frame * 50, 35);
+        }
+        Assert.True(policy.TargetIntervalMilliseconds > budget);
+        policy.Reset(0, budget);
+        Assert.Equal(budget, policy.TargetIntervalMilliseconds);
+        Assert.True(policy.ShouldSubmit(0, budget));
+    }
+
+    [Theory]
     [InlineData(60)]
     [InlineData(144)]
     [InlineData(240)]

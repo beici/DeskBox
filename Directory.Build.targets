@@ -1,0 +1,25 @@
+<Project>
+  <ItemGroup Condition="'$(PublishAot)' == 'true'">
+    <KnownILCompilerPack Update="Microsoft.DotNet.ILCompiler">
+      <ILCompilerPackVersion Condition="'%(KnownILCompilerPack.TargetFramework)' == 'net10.0'">$(DeskBoxAotRuntimeVersion)</ILCompilerPackVersion>
+    </KnownILCompilerPack>
+    <FrameworkReference Update="Microsoft.NETCore.App"
+                        RuntimeFrameworkVersion="$(DeskBoxAotRuntimeVersion)" />
+    <LinkerArg Include="/PDBALTPATH:%_PDB%" />
+  </ItemGroup>
+  <!-- Tests launch the proxy beside the app produced by their own build graph.
+       Capture the evaluated path instead of guessing bin/TFM/RID directories. -->
+  <Target Name="ResolveDeskBoxTestAppOutputDirectory"
+          BeforeTargets="GetAssemblyAttributes"
+          Condition="'$(MSBuildProjectName)' == 'DeskBox.Tests'">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)src\DeskBox\DeskBox.csproj"
+             Targets="GetTargetPath"
+             Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=$(RuntimeIdentifier)">
+      <Output TaskParameter="TargetOutputs" ItemName="_DeskBoxTestAppTarget" />
+    </MSBuild>
+    <ItemGroup>
+      <AssemblyMetadata Include="DeskBoxAppOutputDirectory"
+                        Value="@(_DeskBoxTestAppTarget->'%(RootDir)%(Directory)')" />
+    </ItemGroup>
+  </Target>
+</Project>

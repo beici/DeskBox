@@ -75,9 +75,17 @@ public sealed partial class QuickCaptureWidgetViewModel
         OnPropertyChanged(nameof(MaterialBlueText));
         OnPropertyChanged(nameof(SearchScopeText));
         OnPropertyChanged(nameof(SearchScopeVisibility));
-        foreach (var item in Items)
+        // The cache covers every live item VM, including ones outside the
+        // current view (other tabs or filtered out by search): those keep
+        // their cached display text and would otherwise come back in the
+        // old language when the view switches.
+        foreach (var item in _itemViewModelCache.Values)
         {
+            // Update() with an unchanged model keeps the cached display
+            // text; the explicit refresh is what retypes it in the new
+            // language.
             item.Update(item.ToModel());
+            item.RefreshLocalizedDisplay();
             item.UpdateSearchText(SearchText);
         }
     }

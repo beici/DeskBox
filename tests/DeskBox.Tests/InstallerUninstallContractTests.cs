@@ -15,7 +15,8 @@ public sealed class InstallerUninstallContractTests
         "french",
         "arabic",
         "bengali",
-        "russian"
+        "russian",
+        "korean"
     ];
 
     private static readonly string[] AppDataChoiceMessages =
@@ -31,6 +32,12 @@ public sealed class InstallerUninstallContractTests
     [
         "ManagedStorageShortcutPrompt",
         "ManagedStorageShortcutCreateFailed"
+    ];
+
+    private static readonly string[] StoreEditionMessages =
+    [
+        "StoreEditionDataPreserved",
+        "StoreEditionStateUnknown"
     ];
 
     private static readonly string[] DependencyMessages =
@@ -192,7 +199,6 @@ public sealed class InstallerUninstallContractTests
             Assert.Contains("#define MyAppPackageSuffix \"\"", content, StringComparison.Ordinal);
             Assert.Contains("{#MyAppPackageSuffix}", content, StringComparison.Ordinal);
             Assert.Contains("DeskBox.InstallManifest.txt", content, StringComparison.Ordinal);
-            Assert.Contains("BeforeInstall: CleanupDeskBoxInstall", content, StringComparison.Ordinal);
             Assert.Contains(
                 $"OutputBaseFilename={{#MyAppOutputBaseName}}_{{#MyAppVersion}}_{(script.EndsWith("arm64.iss", StringComparison.Ordinal) ? "arm64" : "x64")}",
                 content,
@@ -222,6 +228,58 @@ public sealed class InstallerUninstallContractTests
             Assert.Contains("#if DeskBoxBundledRuntime", content, StringComparison.Ordinal);
             Assert.Contains("external runtime dependency setup skipped", content, StringComparison.Ordinal);
         }
+    }
+
+    [Theory]
+    [InlineData("installer/DeskBox.iss")]
+    [InlineData("installer/DeskBox.arm64.iss")]
+    public void DirectInstaller_RunsUpgradeCleanupBeforePayloadWrite(string scriptPath)
+    {
+        string installer = ReadRepositoryFile(scriptPath);
+        string migration = ReadRepositoryFile("installer/DeskBox.Migration.iss");
+
+        // Stage judgement instead of source order: [Files] declarations lexically
+        // precede [Code], and Inno runs every [Files] entry of the install pass after
+        // ssInstall. Only the setup step owning the call proves the timing, so a
+        // renamed helper cannot turn a BeforeInstall-based regression green.
+        Assert.DoesNotContain(
+            "BeforeInstall",
+            StripScriptComments(installer),
+            StringComparison.Ordinal);
+
+        string stepBody = ExtractProcedureBody(installer, "procedure CurStepChanged(CurStep: TSetupStep);");
+        int ssInstallIndex = stepBody.IndexOf("CurStep = ssInstall", StringComparison.Ordinal);
+        int cleanupIndex = stepBody.IndexOf("CleanupDeskBoxInstall;", StringComparison.Ordinal);
+        int ssPostInstallIndex = stepBody.IndexOf("CurStep = ssPostInstall", StringComparison.Ordinal);
+        Assert.True(
+            ssInstallIndex >= 0 &&
+            cleanupIndex > ssInstallIndex &&
+            (ssPostInstallIndex < 0 || cleanupIndex < ssPostInstallIndex),
+            $"{scriptPath} must run CleanupDeskBoxInstall from the ssInstall branch of CurStepChanged, before any post-install step.");
+
+        string[] manifestEntries = ExtractFilesSectionEntries(installer)
+            .Where(entry => entry.Contains("DeskBox.InstallManifest.txt", StringComparison.Ordinal))
+            .ToArray();
+        Assert.True(
+            manifestEntries.Any(entry =>
+                entry.Contains("Flags: dontcopy", StringComparison.Ordinal) &&
+                !entry.Contains("DestDir:", StringComparison.Ordinal)),
+            $"{scriptPath} must stage the new install manifest with dontcopy so the ssInstall cleanup can extract it as a temporary file.");
+        Assert.True(
+            manifestEntries.Any(entry =>
+                entry.Contains("DestDir: \"{app}\"", StringComparison.Ordinal)),
+            $"{scriptPath} must still ship the install manifest to the application directory as payload.");
+
+        string cleanupBody = ExtractProcedureBody(migration, "procedure CleanupDeskBoxInstall;");
+        int extractIndex = cleanupBody.IndexOf(
+            "ExtractTemporaryFile('DeskBox.InstallManifest.txt');",
+            StringComparison.Ordinal);
+        int previousManifestIndex = cleanupBody.IndexOf(
+            "PreviousManifestPath := AddBackslash(WizardDirValue)",
+            StringComparison.Ordinal);
+        Assert.True(
+            extractIndex >= 0 && previousManifestIndex > extractIndex,
+            "CleanupDeskBoxInstall must extract the new manifest before it compares against the previous install manifest.");
     }
 
     [Fact]
@@ -258,6 +316,117 @@ public sealed class InstallerUninstallContractTests
                     messages,
                     StringComparison.Ordinal);
             }
+        }
+    }
+
+    [Fact]
+    public void Uninstall_StoreEditionProbe_IsThreeStateWithPlatformPrecheck()
+    {
+        string code = ReadRepositoryFile("installer/DeskBox.Uninstall.iss");
+
+        Assert.Contains("GetStoreDeskBoxInstallState", code, StringComparison.Ordinal);
+        Assert.Contains("StoreDeskBoxStateNotInstalled", code, StringComparison.Ordinal);
+        Assert.Contains("StoreDeskBoxStateInstalled", code, StringComparison.Ordinal);
+        Assert.Contains("StoreDeskBoxStateUnknown", code, StringComparison.Ordinal);
+        Assert.Contains("Result := StoreDeskBoxStateUnknown;", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("IsStoreDeskBoxInstalled", code, StringComparison.Ordinal);
+
+        // The platform pre-check must decide whether AppX can exist at all
+        // with native Inno Setup probes only, without spawning another process.
+        Assert.Contains(
+            "DirExists(ExpandConstant('{win}\\System32\\WindowsApps'))",
+            code,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "RegKeyExists(HKEY_LOCAL_MACHINE, 'SYSTEM\\CurrentControlSet\\Services\\AppXSvc')",
+            code,
+            StringComparison.Ordinal);
+
+        // The PowerShell probe must stay scoped to the current user's
+        // package registration and keep its documented exit-code contract.
+        Assert.Contains("Get-AppxPackage -Name", code, StringComparison.Ordinal);
+        Assert.Contains("exit 1", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Uninstall_StoreEditionUnknownState_FailsClosed()
+    {
+        string code = ReadRepositoryFile("installer/DeskBox.Uninstall.iss");
+
+        // Both the /PURGEUSERDATA path and the interactive keep-or-remove path
+        // must branch on the tri-state probe and treat Unknown exactly like
+        // installed: the purge stays blocked and the dedicated message is shown.
+        Assert.Equal(2, CountOccurrences(code, "case GetStoreDeskBoxInstallState of"));
+        Assert.Equal(2, CountOccurrences(code, "StoreDeskBoxStateUnknown:"));
+        Assert.Equal(2, CountOccurrences(code, "{cm:StoreEditionStateUnknown}"));
+        Assert.Contains("{cm:StoreEditionDataPreserved}", code, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StoreEditionMessages_AreLocalizedForEveryInstallerLanguage()
+    {
+        string messages = ReadRepositoryFile("installer/DeskBox.UninstallCustomMessages.iss");
+
+        foreach (string language in InstallerLanguages)
+        {
+            foreach (string message in StoreEditionMessages)
+            {
+                Assert.Contains(
+                    $"{language}.{message}=",
+                    messages,
+                    StringComparison.Ordinal);
+            }
+        }
+
+        // The corrected copy must not claim the two editions share one
+        // application-data directory: the Store edition keeps its data in its
+        // own MSIX LocalCache and this uninstaller never touches it.
+        Assert.DoesNotContain(
+            "Both editions share the same application data",
+            messages,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("两个版本共用同一应用数据目录", messages, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UninstallCustomMessages_KeySetsAreAlignedAcrossLanguages()
+    {
+        string messages = ReadRepositoryFile("installer/DeskBox.UninstallCustomMessages.iss");
+        string code = ReadRepositoryFile("installer/DeskBox.Uninstall.iss");
+        var tables = InstallerLanguages.ToDictionary(
+            language => language,
+            _ => new HashSet<string>(StringComparer.Ordinal),
+            StringComparer.Ordinal);
+
+        foreach (string line in messages.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            int dotIndex = line.IndexOf('.');
+            int equalsIndex = line.IndexOf('=');
+            if (dotIndex <= 0 || equalsIndex <= dotIndex)
+            {
+                continue;
+            }
+
+            string language = line[..dotIndex].Trim();
+            if (tables.TryGetValue(language, out HashSet<string>? keys))
+            {
+                keys.Add(line[(dotIndex + 1)..equalsIndex].Trim());
+            }
+        }
+
+        HashSet<string> english = tables["english"];
+        Assert.Contains("StoreEditionDataPreserved", english);
+        Assert.Contains("StoreEditionStateUnknown", english);
+        foreach ((string language, HashSet<string> keys) in tables)
+        {
+            Assert.Equal(
+                english.OrderBy(key => key, StringComparer.Ordinal),
+                keys.OrderBy(key => key, StringComparer.Ordinal));
+        }
+
+        foreach (string message in StoreEditionMessages)
+        {
+            Assert.Contains("{cm:" + message + "}", code, StringComparison.Ordinal);
         }
     }
 
@@ -347,6 +516,7 @@ public sealed class InstallerUninstallContractTests
     [InlineData("arabic", "ar-SA")]
     [InlineData("bengali", "bn-BD")]
     [InlineData("russian", "ru-RU")]
+    [InlineData("korean", "ko-KR")]
     [InlineData("chinesetraditional", "zh-TW")]
     public void InstallerLanguage_IsPassedToFirstAppLaunch(
         string installerLanguage,
@@ -379,6 +549,58 @@ public sealed class InstallerUninstallContractTests
         return System.Text.RegularExpressions.Regex.Matches(value, @"%(?:n|\d+)")
             .Select(match => match.Value)
             .OrderBy(placeholder => placeholder, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        int count = 0;
+        int index = 0;
+        while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+
+        return count;
+    }
+
+    private static string StripScriptComments(string text)
+    {
+        return string.Join(
+            Environment.NewLine,
+            text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                .Where(line =>
+                {
+                    string trimmed = line.TrimStart();
+                    return !trimmed.StartsWith(';') && !trimmed.StartsWith("//", StringComparison.Ordinal);
+                }));
+    }
+
+    private static string ExtractProcedureBody(string text, string signature)
+    {
+        int start = text.IndexOf(signature, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"Procedure '{signature}' was not found.");
+        int end = text.IndexOf("\nend;", start, StringComparison.Ordinal);
+        Assert.True(end > start, $"Procedure '{signature}' has no terminating 'end;'.");
+        return text[start..end];
+    }
+
+    private static string[] ExtractFilesSectionEntries(string text)
+    {
+        int start = text.IndexOf("\n[Files]", StringComparison.Ordinal);
+        Assert.True(start >= 0, "The [Files] section was not found.");
+        int bodyStart = text.IndexOf('\n', start + 1);
+        int end = text.IndexOf("\n[", bodyStart, StringComparison.Ordinal);
+        if (end < 0)
+        {
+            end = text.Length;
+        }
+
+        return text[bodyStart..end]
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .Where(line => line.StartsWith("Source:", StringComparison.Ordinal))
             .ToArray();
     }
 

@@ -14,7 +14,6 @@
     <Grid
         x:Name="RootGrid"
         MinWidth="660"
-        MinHeight="540"
         Padding="40"
         Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
 
@@ -384,7 +383,7 @@
                                             FontSize="11.5"
                                             TextWrapping="Wrap"
                                             svc:Localized.Key="Onboarding.Step4.PinTitle"/>
-                                        <ToggleSwitch
+                                        <ToggleSwitch svc:Localized.AutomationNameKey="Onboarding.Step4.PinTitle"
                                             x:Name="TaskStep3QuickAccessToggle"
                                             Grid.Column="1"
                                             MinWidth="0"
@@ -398,7 +397,7 @@
                                             FontSize="11.5"
                                             TextWrapping="Wrap"
                                             svc:Localized.Key="Settings.ManagedPath.DesktopShortcut.Title"/>
-                                        <ToggleSwitch
+                                        <ToggleSwitch svc:Localized.AutomationNameKey="Settings.ManagedPath.DesktopShortcut.Title"
                                             x:Name="TaskStep3DesktopShortcutToggle"
                                             Grid.Column="1"
                                             MinWidth="0"
@@ -710,7 +709,7 @@
                                         <controls:WidgetTitleIcon IconKind="Todo" Mode="Color" IconSize="16"/>
                                         <TextBlock VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" svc:Localized.Key="Todo.Title"/>
                                     </StackPanel>
-                                    <ToggleSwitch Grid.Column="1" x:Name="TaskStep5TodoToggle" Width="40" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" OnContent="" OffContent="" Tag="Todo" Toggled="TaskStep5FeatureToggle_Toggled"/>
+                                    <ToggleSwitch svc:Localized.AutomationNameKey="Todo.Title" Grid.Column="1" x:Name="TaskStep5TodoToggle" Width="40" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" OnContent="" OffContent="" Tag="Todo" Toggled="TaskStep5FeatureToggle_Toggled"/>
                                 </Grid>
                                 <TextBlock Grid.Row="1" Margin="0,8,0,0" FontSize="11.5" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" svc:Localized.Key="Onboarding.Task.Step5.TodoDescription"/>
                             </Grid>
@@ -722,7 +721,7 @@
                                         <controls:WidgetTitleIcon IconKind="QuickCapture" Mode="Color" IconSize="16"/>
                                         <TextBlock VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" svc:Localized.Key="QuickCapture.Name"/>
                                     </StackPanel>
-                                    <ToggleSwitch Grid.Column="1" x:Name="TaskStep5QuickCaptureToggle" Width="40" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" OnContent="" OffContent="" Tag="QuickCapture" Toggled="TaskStep5FeatureToggle_Toggled"/>
+                                    <ToggleSwitch svc:Localized.AutomationNameKey="QuickCapture.Name" Grid.Column="1" x:Name="TaskStep5QuickCaptureToggle" Width="40" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" OnContent="" OffContent="" Tag="QuickCapture" Toggled="TaskStep5FeatureToggle_Toggled"/>
                                 </Grid>
                                 <TextBlock Grid.Row="1" Margin="0,8,0,0" FontSize="11.5" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" svc:Localized.Key="Onboarding.Task.Step5.QuickCaptureDescription"/>
                             </Grid>
@@ -734,7 +733,7 @@
                                         <controls:WidgetTitleIcon IconKind="Search" Mode="Color" IconSize="16"/>
                                         <TextBlock VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" svc:Localized.Key="Search.Title"/>
                                     </StackPanel>
-                                    <ToggleSwitch Grid.Column="1" x:Name="TaskStep5SearchToggle" Width="40" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" OnContent="" OffContent="" Tag="Search" Toggled="TaskStep5FeatureToggle_Toggled"/>
+                                    <ToggleSwitch svc:Localized.AutomationNameKey="Search.Title" Grid.Column="1" x:Name="TaskStep5SearchToggle" Width="40" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" OnContent="" OffContent="" Tag="Search" Toggled="TaskStep5FeatureToggle_Toggled"/>
                                 </Grid>
                                 <TextBlock Grid.Row="1" Margin="0,8,0,0" FontSize="11.5" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" svc:Localized.Key="Onboarding.Task.Step5.SearchDescription"/>
                             </Grid>
@@ -746,7 +745,7 @@
                                         <controls:WidgetTitleIcon IconKind="Weather" Mode="Color" IconSize="16"/>
                                         <TextBlock VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" svc:Localized.Key="Weather.Title"/>
                                     </StackPanel>
-                                    <ToggleSwitch Grid.Column="1" x:Name="TaskStep5WeatherToggle" Width="40" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" OnContent="" OffContent="" Tag="Weather" Toggled="TaskStep5FeatureToggle_Toggled"/>
+                                    <ToggleSwitch svc:Localized.AutomationNameKey="Weather.Title" Grid.Column="1" x:Name="TaskStep5WeatherToggle" Width="40" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" OnContent="" OffContent="" Tag="Weather" Toggled="TaskStep5FeatureToggle_Toggled"/>
                                 </Grid>
                                 <TextBlock Grid.Row="1" Margin="0,8,0,0" FontSize="11.5" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" svc:Localized.Key="Onboarding.Task.Step5.WeatherDescription"/>
                             </Grid>
@@ -758,7 +757,7 @@
                                         <controls:WidgetTitleIcon IconKind="Music" Mode="Color" IconSize="16"/>
                                         <TextBlock VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" svc:Localized.Key="Music.Title"/>
                                     </StackPanel>
-                                    <ToggleSwitch Grid.Column="1" x:Name="TaskStep5MusicToggle" Width="40" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" OnContent="" OffContent="" Tag="Music" Toggled="TaskStep5FeatureToggle_Toggled"/>
+                                    <ToggleSwitch svc:Localized.AutomationNameKey="Music.Title" Grid.Column="1" x:Name="TaskStep5MusicToggle" Width="40" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" OnContent="" OffContent="" Tag="Music" Toggled="TaskStep5FeatureToggle_Toggled"/>
                                 </Grid>
                                 <TextBlock Grid.Row="1" Margin="0,8,0,0" FontSize="11.5" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" svc:Localized.Key="Onboarding.Task.Step5.MusicDescription"/>
                             </Grid>
@@ -770,7 +769,7 @@
                                             <controls:WidgetTitleIcon IconKind="Glance" Mode="Color" IconSize="16"/>
                                             <TextBlock VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" svc:Localized.Key="Glance.Title"/>
                                         </StackPanel>
-                                        <ToggleSwitch Grid.Column="1" x:Name="TaskStep5GlanceToggle" Width="40" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" OnContent="" OffContent="" Tag="Glance" Toggled="TaskStep5FeatureToggle_Toggled"/>
+                                        <ToggleSwitch svc:Localized.AutomationNameKey="Glance.Title" Grid.Column="1" x:Name="TaskStep5GlanceToggle" Width="40" MinWidth="0" HorizontalAlignment="Right" VerticalAlignment="Center" OnContent="" OffContent="" Tag="Glance" Toggled="TaskStep5FeatureToggle_Toggled"/>
                                     </Grid>
                                     <TextBlock Grid.Row="1" Margin="0,8,0,0" FontSize="11.5" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" svc:Localized.Key="WidgetContent.Glance.StatusDescription"/>
                                 </Grid>

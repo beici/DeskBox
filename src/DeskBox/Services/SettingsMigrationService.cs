@@ -20,7 +20,7 @@ public interface ISettingsMigration
 public sealed class SettingsMigrationPipeline
 {
     /// <summary>The current schema version that the application expects.</summary>
-    public const int CurrentSchemaVersion = 10;
+    public const int CurrentSchemaVersion = 15;
 
     private readonly List<ISettingsMigration> _migrations = [];
 
@@ -43,7 +43,15 @@ public sealed class SettingsMigrationPipeline
         _migrations.Add(new Migration_6_To_7());
         _migrations.Add(new Migration_7_To_8());
         _migrations.Add(new Migration_8_To_9());
+        // Local fork: the 9->10 step also cuts the Music per-kind store over,
+        // so it needs the data directory; upstream's no-arg 9->10 is the
+        // schema-only twin, kept as a name conflict resolved below.
         _migrations.Add(new Migration_9_To_10(dataDirectory));
+        _migrations.Add(new Migration_10_To_11());
+        _migrations.Add(new Migration_11_To_12());
+        _migrations.Add(new Migration_12_To_13());
+        _migrations.Add(new Migration_13_To_14());
+        _migrations.Add(new Migration_14_To_15());
     }
 
     /// <summary>
@@ -124,6 +132,18 @@ public sealed class SettingsMigrationPipeline
             version = migration.FromVersion + 1;
             anyApplied = true;
             App.Log($"[SettingsMigration] Applied migration from version {migration.FromVersion} to {version}");
+        }
+
+        // A registered chain with a hole stops the loop without running a step
+        // (every migration's FromVersion misses the current version). Nothing
+        // about the data is wrong, but the stall is otherwise silent: the app
+        // keeps running on the old schema and retries the same no-op forever.
+        if (!anyApplied && version < CurrentSchemaVersion)
+        {
+            App.Log(
+                $"[SettingsMigration] No migration starts at schema version {version}; " +
+                $"the registered chain has a gap (target {CurrentSchemaVersion}). " +
+                "Settings stay at this version until the chain is fixed.");
         }
 
         // Record the checkpoint the chain actually reached. A partial run
@@ -355,6 +375,410 @@ internal sealed class Migration_8_To_9 : ISettingsMigration
     }
 }
 
+/// <summary>
+/// Schema v11 adds the dual-layer text shadow switch (default off, so
+/// existing profiles load correctly without data movement).
+/// </summary>
+internal sealed class Migration_10_To_11 : ISettingsMigration
+{
+    public int FromVersion => 10;
+
+    public void Migrate(AppSettings settings)
+    {
+    }
+}
+
+/// <summary>
+/// Schema v12 introduces the screen-home model (spec 7.1): infers a home
+/// display for every surface, stamps profile entries with authority, syncs
+/// capsule monitor fields to their surfaces, and derives the new-widget
+/// placement target from the legacy default-screen setting. Pure data — no
+/// Win32/display access.
+/// </summary>
+internal sealed class Migration_11_To_12 : ISettingsMigration
+{
+    public int FromVersion => 11;
+
+    public void Migrate(AppSettings settings)
+    {
+        settings.WidgetGroups ??= [];
+        settings.WidgetTopologyLayouts ??= [];
+        // R21-S7-01: a v11 file with an explicit "widgets": null used to throw
+        // here (the other two collections were guarded, this one was not) and
+        // pinned the whole migration chain at v11 forever.
+        List<WidgetConfig> widgets = settings.Widgets ??= [];
+
+        // 1. Infer homes: standalone widgets and group surfaces first, then
+        // mirror into group members.
+        foreach (WidgetConfig widget in widgets)
+        {
+            if (widget.ScreenBindingMode == WidgetScreenBindingMode.FollowPrimary)
+            {
+                continue;
+            }
+
+            if (widget.ScreenBindingMode == WidgetScreenBindingMode.Pinned &&
+                !IsDegenerateId(widget.BoundScreenId))
+            {
+                continue;
+            }
+
+            string? inferred = InferHomeFromProfiles(settings, widget.Id) ??
+                NonDegenerateId(widget.PositionMonitorStableId);
+            if (inferred is not null)
+            {
+                widget.ScreenBindingMode = WidgetScreenBindingMode.Pinned;
+                widget.BoundScreenId = inferred;
+            }
+            else
+            {
+                widget.ScreenBindingMode = WidgetScreenBindingMode.Unbound;
+                widget.BoundScreenId = null;
+            }
+        }
+
+        foreach (WidgetGroupConfig group in settings.WidgetGroups)
+        {
+            if (group.ScreenBindingMode == WidgetScreenBindingMode.Pinned &&
+                !IsDegenerateId(group.BoundScreenId))
+            {
+                continue;
+            }
+
+            // Group profile entries are keyed by the group surface id, not
+            // member ids — try both, surface id first.
+            // R21-V7-01: the model's `= []` initializer does not survive an
+            // explicit JSON null, and the load-time normalize that repairs it
+            // runs after this pipeline.
+            group.MemberIds ??= [];
+            string? representativeId = group.MemberIds.FirstOrDefault();
+            string? inferred = InferHomeFromProfiles(settings, group.SurfaceId) ??
+                (representativeId is null ? null : InferHomeFromProfiles(settings, representativeId)) ??
+                NonDegenerateId(group.PositionMonitorStableId);
+
+            // R16-M1-01: a standalone widget also falls back to its own
+            // PositionMonitorStableId, but the group path stopped at profile
+            // lookups. A group created after the last topology snapshot has no
+            // profile entry, so it stayed Unbound and the mirror loop below then
+            // wiped the home its members had just inferred for themselves. Adopt
+            // the representative member's resolved home as the last resort.
+            if (inferred is null && representativeId is not null &&
+                widgets.FirstOrDefault(widget =>
+                    string.Equals(widget.Id, representativeId, StringComparison.Ordinal)) is { } representative &&
+                representative.ScreenBindingMode == WidgetScreenBindingMode.Pinned)
+            {
+                inferred = NonDegenerateId(representative.BoundScreenId);
+            }
+
+            if (inferred is not null)
+            {
+                group.ScreenBindingMode = WidgetScreenBindingMode.Pinned;
+                group.BoundScreenId = inferred;
+            }
+            else
+            {
+                group.ScreenBindingMode = WidgetScreenBindingMode.Unbound;
+                group.BoundScreenId = null;
+            }
+        }
+
+        foreach (WidgetGroupConfig group in settings.WidgetGroups)
+        {
+            group.MemberIds ??= [];
+            foreach (string memberId in group.MemberIds)
+            {
+                if (widgets.FirstOrDefault(widget =>
+                        string.Equals(widget.Id, memberId, StringComparison.Ordinal)) is { } member)
+                {
+                    member.ScreenBindingMode = group.ScreenBindingMode;
+                    member.BoundScreenId = group.BoundScreenId;
+                }
+            }
+        }
+
+        // FollowPrimary surfaces never keep a stale bound id.
+        foreach (WidgetConfig widget in settings.Widgets)
+        {
+            if (widget.ScreenBindingMode == WidgetScreenBindingMode.FollowPrimary)
+            {
+                widget.BoundScreenId = null;
+            }
+        }
+
+        // 2. Profile entry authority + 3. capsule field sync.
+        foreach (WidgetTopologyLayoutProfile profile in settings.WidgetTopologyLayouts.Values)
+        {
+            // R21-V7-01: same explicit-null gap as MemberIds above.
+            profile.Surfaces ??= [];
+            foreach ((string surfaceId, WidgetSurfaceLayoutProfile entry) in profile.Surfaces)
+            {
+                string? home = HomeOfSurface(settings, surfaceId);
+                entry.IsAuthoritative = entry.IsAuthoritative == true ||
+                    (home is not null &&
+                     string.Equals(
+                         NonDegenerateId(entry.PositionMonitorStableId),
+                         home,
+                         StringComparison.OrdinalIgnoreCase));
+                entry.AuthoredAtUtc ??= profile.LastUsedAtUtc;
+
+                // Binding intent is topology-independent and profile switches
+                // must carry it verbatim: mirror the home inferred in step 1
+                // into the entry so the first topology projection after
+                // upgrade does not fall back to heuristics (an entry pin
+                // outranks every heuristic in SelectTargetMonitor).
+                if (home is not null)
+                {
+                    entry.ScreenBindingMode = WidgetScreenBindingMode.Pinned;
+                    entry.BoundScreenId = home;
+                }
+
+                if (entry.CompactPlacement is { } compact)
+                {
+                    compact.PositionMonitorKey = entry.PositionMonitorKey;
+                    compact.PositionMonitorDeviceName = entry.PositionMonitorDeviceName;
+                    compact.PositionMonitorStableId = entry.PositionMonitorStableId;
+                    compact.PositionMonitorWasPrimary = entry.PositionMonitorWasPrimary;
+                }
+            }
+        }
+
+        foreach (WidgetConfig widget in settings.Widgets)
+        {
+            if (widget.CompactPlacement is { } compact)
+            {
+                compact.PositionMonitorKey = widget.PositionMonitorKey;
+                compact.PositionMonitorDeviceName = widget.PositionMonitorDeviceName;
+                compact.PositionMonitorStableId = widget.PositionMonitorStableId;
+                compact.PositionMonitorWasPrimary = widget.PositionMonitorWasPrimary;
+            }
+        }
+
+        // 4. New-widget placement target derives from the legacy default
+        // screen setting; 5. disconnect behavior keeps its default.
+        settings.WidgetNewPlacementTarget = string.IsNullOrWhiteSpace(
+            settings.WidgetDefaultBoundScreenId)
+            ? SettingsService.WidgetNewPlacementCursorDisplay
+            : SettingsService.WidgetNewPlacementSpecificDisplay;
+    }
+
+    private static string? HomeOfSurface(AppSettings settings, string surfaceId)
+    {
+        foreach (WidgetConfig widget in settings.Widgets)
+        {
+            if (string.Equals(widget.Id, surfaceId, StringComparison.Ordinal) &&
+                widget.ScreenBindingMode == WidgetScreenBindingMode.Pinned)
+            {
+                return NonDegenerateId(widget.BoundScreenId);
+            }
+        }
+
+        foreach (WidgetGroupConfig group in settings.WidgetGroups)
+        {
+            if (group.ScreenBindingMode == WidgetScreenBindingMode.Pinned &&
+                string.Equals(group.SurfaceId, surfaceId, StringComparison.Ordinal))
+            {
+                return NonDegenerateId(group.BoundScreenId);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The home for an Unbound surface: its entry in the profile with the
+    /// most monitors (positions captured with the fullest display set are
+    /// the most likely to be user-chosen), falling back to its config
+    /// identity field.
+    /// </summary>
+    private static string? InferHomeFromProfiles(AppSettings settings, string surfaceId)
+    {
+        WidgetSurfaceLayoutProfile? best = null;
+        int bestMonitorCount = -1;
+        DateTimeOffset bestUsedAt = DateTimeOffset.MinValue;
+        foreach (WidgetTopologyLayoutProfile profile in settings.WidgetTopologyLayouts.Values)
+        {
+            if (!profile.Surfaces.TryGetValue(surfaceId, out WidgetSurfaceLayoutProfile? entry) ||
+                entry is null)
+            {
+                continue;
+            }
+
+            int monitorCount = profile.Monitors?.Count ?? 0;
+            if (monitorCount > bestMonitorCount ||
+                (monitorCount == bestMonitorCount && profile.LastUsedAtUtc > bestUsedAt))
+            {
+                bestMonitorCount = monitorCount;
+                bestUsedAt = profile.LastUsedAtUtc;
+                best = entry;
+            }
+        }
+
+        return NonDegenerateId(best?.PositionMonitorStableId);
+    }
+
+    private static bool IsDegenerateId(string? stableId) =>
+        string.IsNullOrWhiteSpace(stableId) ||
+        stableId.Trim().Equals("unknown-display", StringComparison.OrdinalIgnoreCase) ||
+        stableId.Trim().StartsWith(@"\\.\DISPLAY", StringComparison.OrdinalIgnoreCase);
+
+    private static string? NonDegenerateId(string? stableId) =>
+        IsDegenerateId(stableId) ? null : stableId!.Trim();
+}
+
+/// <summary>
+/// Schema v13 rewrites topology profile keys to v4 (display identity set
+/// only, spec 7.2): each stored profile's key is recomputed from its
+/// persisted Monitors; profiles collapsing onto the same v4 key merge
+/// (newest LastUsedAtUtc wins, ties broken by v3 key ordinal; missing
+/// surfaces filled from sibling profiles' newest authoritative entries).
+/// Profiles with empty or all-degenerate Monitors are dropped — their v4
+/// key would collide (the empty set).
+/// </summary>
+internal sealed class Migration_12_To_13 : ISettingsMigration
+{
+    public int FromVersion => 12;
+
+    public void Migrate(AppSettings settings)
+    {
+        // R16-M1-04: WidgetTopologyLayouts has a setter, so an explicit JSON null
+        // survives deserialization; a file that starts at v12 never passes through
+        // the 11->12 guard above, and the bare Count below used to throw and pin
+        // the whole chain at v12 forever.
+        settings.WidgetTopologyLayouts ??= [];
+        if (settings.WidgetTopologyLayouts.Count == 0)
+        {
+            return;
+        }
+
+        var merged = new Dictionary<string, WidgetTopologyLayoutProfile>(StringComparer.Ordinal);
+        foreach ((string key, WidgetTopologyLayoutProfile? profile) in
+                 settings.WidgetTopologyLayouts.Where(pair => pair.Value is not null)
+                     .OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        {
+            if (profile!.Monitors is not { Count: > 0 })
+            {
+                continue;
+            }
+
+            string v4Key = ComputeV4Key(profile.Monitors);
+            if (!merged.TryGetValue(v4Key, out WidgetTopologyLayoutProfile? target))
+            {
+                profile.Monitors = profile.Monitors.ToList();
+                merged[v4Key] = profile;
+                continue;
+            }
+
+            // Same identity set: keep the newest usage as the base, merge
+            // missing surfaces from the sibling's authoritative entries.
+            WidgetTopologyLayoutProfile older;
+            if (profile.LastUsedAtUtc <= target.LastUsedAtUtc)
+            {
+                older = profile;
+            }
+            else
+            {
+                // Incoming profile is newer: it becomes the base and must
+                // receive the previous base's unique surfaces — reassign
+                // target, otherwise the merge loop below would compare the
+                // old base against itself and silently drop those entries.
+                older = target;
+                merged[v4Key] = profile;
+                target = profile;
+            }
+            foreach ((string surfaceId, WidgetSurfaceLayoutProfile? siblingEntry) in older.Surfaces)
+            {
+                if (!target.Surfaces.ContainsKey(surfaceId) && siblingEntry is not null)
+                {
+                    target.Surfaces[surfaceId] = siblingEntry;
+                }
+            }
+
+            target.Monitors = target.Monitors.Count >= older.Monitors.Count
+                ? target.Monitors
+                : older.Monitors.ToList();
+        }
+
+        string? activeKey = settings.ActiveWidgetTopologyKey;
+        string? remappedActiveKey = null;
+        if (activeKey is not null &&
+            settings.WidgetTopologyLayouts.TryGetValue(activeKey, out WidgetTopologyLayoutProfile? activeProfile) &&
+            activeProfile is not null &&
+            activeProfile.Monitors is { Count: > 0 })
+        {
+            remappedActiveKey = ComputeV4Key(activeProfile.Monitors);
+        }
+
+        settings.WidgetTopologyLayouts = merged;
+        settings.ActiveWidgetTopologyKey =
+            remappedActiveKey is not null && merged.ContainsKey(remappedActiveKey)
+                ? remappedActiveKey
+                : null;
+    }
+
+    private static string ComputeV4Key(IReadOnlyList<WidgetTopologyMonitorProfile> monitors)
+    {
+        IEnumerable<string> tokens = monitors
+            .Select(monitor => MonitorToken(monitor))
+            .OrderBy(token => token, StringComparer.Ordinal);
+        byte[] hash = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(string.Join("|", tokens)));
+        return "v4-" + Convert.ToHexString(hash.AsSpan(0, 12));
+    }
+
+    private static string MonitorToken(WidgetTopologyMonitorProfile monitor)
+    {
+        string? stableId = string.IsNullOrWhiteSpace(monitor.StableId)
+            ? null
+            : monitor.StableId.Trim();
+        if (stableId is null ||
+            stableId.Equals("unknown-display", StringComparison.OrdinalIgnoreCase) ||
+            stableId.StartsWith(@"\\.\DISPLAY", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"geo:{Math.Max(1, monitor.MonitorWidth)}x{Math.Max(1, monitor.MonitorHeight)}";
+        }
+
+        return stableId.ToUpperInvariant();
+    }
+}
+
+/// <summary>
+/// Retires the stack master switch from the settings surface. Manual stacks
+/// are always available now, so the persisted master value folds onto the
+/// auto-stacking switch: a lingering master-off profile (schema 9+ users who
+/// toggled it off after the 8→9 split) saw no stacking at all, and the
+/// closest new state is auto stacking off with manual stacks back.
+/// </summary>
+internal sealed class Migration_13_To_14 : ISettingsMigration
+{
+    public int FromVersion => 13;
+
+    public void Migrate(AppSettings settings)
+    {
+        FileWidgetSettingsSlice fileWidget = settings.FileWidget;
+        if (!fileWidget.FileStacksEnabled)
+        {
+            fileWidget.FileStackAutoStacking = false;
+        }
+
+        fileWidget.FileStacksEnabled = true;
+    }
+}
+
+/// <summary>
+/// v15 adds the one-time fully-elevated-desktop informed-notice ack
+/// (CoreSettingsSlice.FullyElevatedNoticeAcknowledgedUtcTicks). Purely
+/// additive: settings written before v15 simply leave the notice
+/// unacknowledged, which is the correct first-run state.
+/// </summary>
+internal sealed class Migration_14_To_15 : ISettingsMigration
+{
+    public int FromVersion => 14;
+
+    public void Migrate(AppSettings settings)
+    {
+    }
+}
+
 internal sealed class Migration_7_To_8 : ISettingsMigration
 {
     public int FromVersion => 7;
@@ -397,6 +821,11 @@ internal sealed class Migration_7_To_8 : ISettingsMigration
 }
 
 /// <summary>
+/// Schema v10 also adds the global widget background fields (mode, unified
+/// and panorama image names, dim, unified fit). All of them are nullable with
+/// "follow material" defaults, so an existing profile loads correctly
+/// without data movement — the schema step itself is a version bump.
+/// <para>
 /// Copies the three Music feature fields out of the global AppSettings into
 /// the per-kind MusicSettingsStore (pluginization roadmap stage 2, the
 /// per-kind store pilot). Copy-style: the AppSettings fields are left in
@@ -404,6 +833,7 @@ internal sealed class Migration_7_To_8 : ISettingsMigration
 /// removes them, so a downgrade within the window keeps working. The store
 /// is created only when it does not exist yet - re-running the migration
 /// never overwrites user changes made after the first cutover.
+/// </para>
 /// </summary>
 internal sealed class Migration_9_To_10 : ISettingsMigration
 {
@@ -443,7 +873,15 @@ internal sealed class Migration_9_To_10 : ISettingsMigration
         store.Update(target => ApplyLegacyFields(target, settings));
         // The chain runs on pool threads, so blocking here cannot deadlock on
         // the caller's synchronization context.
-        store.WaitForPendingPersist();
+        // R21-S7-02: a failed write must NOT advance the checkpoint - the
+        // pipeline catches a migration exception, leaves the graph untouched
+        // and retries on the next start, which is exactly the durable-checkpoint
+        // contract this step claims.
+        if (!store.WaitForPendingPersist())
+        {
+            throw new IOException(
+                "Music settings could not be written; the 9->10 migration checkpoint stays at v9 so it can retry.");
+        }
     }
 
     private static void ApplyLegacyFields(MusicWidgetSettings target, AppSettings settings)

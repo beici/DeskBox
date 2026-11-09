@@ -82,7 +82,7 @@ public sealed class TodoWidgetViewModelTests : IDisposable
     [Fact]
     public async Task AddItemAsync_UsesConfiguredBottomPosition()
     {
-        var settingsService = new SettingsService();
+        var settingsService = TestServices.CreateSettingsService();
         settingsService.Settings.TodoNewTaskPosition = SettingsService.TodoNewTaskPositionBottom;
         var viewModel = CreateViewModel("todo-widget", settingsService);
         await viewModel.InitializeAsync();
@@ -544,6 +544,41 @@ public sealed class TodoWidgetViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task ClearCompletedAsync_ClearsSelectedDetailItemWhenTargeted()
+    {
+        // Mirror of the DeleteItemAsync guard: clearing must not leave the
+        // detail page dangling on a tombstoned item.
+        var viewModel = CreateViewModel("todo-widget");
+        await viewModel.InitializeAsync();
+        var active = await viewModel.AddItemAsync("active");
+        var completed = await viewModel.AddItemAsync("completed");
+        Assert.NotNull(active);
+        Assert.NotNull(completed);
+        await viewModel.SetCompletedAsync(completed.Id, true);
+        Assert.NotNull(viewModel.OpenDetail(completed.Id));
+
+        int removed = await viewModel.ClearCompletedAsync();
+
+        Assert.Equal(1, removed);
+        Assert.Null(viewModel.SelectedDetailItem);
+    }
+
+    [Fact]
+    public async Task ClearAllAsync_ClearsSelectedDetailItem()
+    {
+        var viewModel = CreateViewModel("todo-widget");
+        await viewModel.InitializeAsync();
+        var item = await viewModel.AddItemAsync("task");
+        Assert.NotNull(item);
+        Assert.NotNull(viewModel.OpenDetail(item.Id));
+
+        int removed = await viewModel.ClearAllAsync();
+
+        Assert.Equal(1, removed);
+        Assert.Null(viewModel.SelectedDetailItem);
+    }
+
+    [Fact]
     public async Task SelectedFilter_ControlsVisibleItems()
     {
         var viewModel = CreateViewModel("todo-widget");
@@ -785,7 +820,7 @@ public sealed class TodoWidgetViewModelTests : IDisposable
     [Fact]
     public async Task HideCompletedSetting_HidesCompletedOutsideCompletedFilter()
     {
-        var settingsService = new SettingsService();
+        var settingsService = TestServices.CreateSettingsService();
         settingsService.Settings.TodoShowCompletedTasks = false;
         var viewModel = CreateViewModel("todo-widget", settingsService);
         await viewModel.InitializeAsync();
@@ -809,7 +844,7 @@ public sealed class TodoWidgetViewModelTests : IDisposable
     [Fact]
     public async Task DefaultFilterSetting_AppliesOnInitialize()
     {
-        var settingsService = new SettingsService();
+        var settingsService = TestServices.CreateSettingsService();
         settingsService.Settings.TodoDefaultFilter = SettingsService.TodoDefaultFilterImportant;
         var viewModel = CreateViewModel("todo-widget", settingsService);
 
@@ -838,6 +873,48 @@ public sealed class TodoWidgetViewModelTests : IDisposable
         Assert.Single(viewModel.Items);
         Assert.True(await viewModel.UndoLastActionAsync());
         Assert.Equal(2, viewModel.Items.Count);
+    }
+
+    [Fact]
+    public async Task UndoLastAction_RedirectsSelectedDetailToRebuiltInstance()
+    {
+        var viewModel = CreateViewModel("todo-widget");
+        await viewModel.InitializeAsync();
+        var kept = await viewModel.AddItemAsync("kept");
+        var removed = await viewModel.AddItemAsync("removed");
+        Assert.NotNull(kept);
+        Assert.NotNull(removed);
+        Assert.NotNull(viewModel.OpenDetail(kept.Id));
+        TodoItemViewModel staleInstance = viewModel.SelectedDetailItem!;
+
+        Assert.True(await viewModel.DeleteItemAsync(removed.Id));
+        Assert.True(await viewModel.UndoLastActionAsync());
+
+        // R2-④F1: the detail must follow the rebuilt instance of the same
+        // item, not the detached clone captured before the undo.
+        Assert.NotNull(viewModel.SelectedDetailItem);
+        Assert.NotSame(staleInstance, viewModel.SelectedDetailItem);
+        Assert.Equal(kept.Id, viewModel.SelectedDetailItem.Id);
+        Assert.True(viewModel.IsDetailPageOpen);
+    }
+
+    [Fact]
+    public async Task UndoLastAction_ClosesDetailWhenSelectedItemIsGone()
+    {
+        var viewModel = CreateViewModel("todo-widget");
+        await viewModel.InitializeAsync();
+        var item = await viewModel.AddItemAsync("item");
+        Assert.NotNull(item);
+        Assert.NotNull(viewModel.OpenDetail(item.Id));
+
+        Assert.True(await viewModel.DeleteItemAsync(item.Id));
+        // The undo restores the table, but the pre-undo selection no longer
+        // exists at capture time (captured after the delete).
+        Assert.True(await viewModel.UndoLastActionAsync());
+
+        Assert.True(viewModel.Items.Count >= 1);
+        Assert.Null(viewModel.SelectedDetailItem);
+        Assert.False(viewModel.IsDetailPageOpen);
     }
 
     [Fact]
@@ -980,7 +1057,7 @@ public sealed class TodoWidgetViewModelTests : IDisposable
     [Fact]
     public async Task AllCompletedEmptyState_IsShownWhenCompletedTasksAreHidden()
     {
-        var settingsService = new SettingsService();
+        var settingsService = TestServices.CreateSettingsService();
         settingsService.Settings.Language = SettingsService.LanguageChinese;
         settingsService.Settings.TodoShowCompletedTasks = false;
         var viewModel = CreateViewModel("todo-widget", settingsService);
@@ -1207,7 +1284,7 @@ public sealed class TodoWidgetViewModelTests : IDisposable
     [Fact]
     public void ApplyAppearance_UsesGlobalTextSize()
     {
-        var settingsService = new SettingsService();
+        var settingsService = TestServices.CreateSettingsService();
         settingsService.Settings.TextSize = 15;
         var viewModel = CreateViewModel("todo-widget", settingsService);
 
@@ -1236,7 +1313,7 @@ public sealed class TodoWidgetViewModelTests : IDisposable
     [Fact]
     public void ApplyAppearance_UsesGlobalLayoutDensity()
     {
-        var settingsService = new SettingsService();
+        var settingsService = TestServices.CreateSettingsService();
         settingsService.Settings.LayoutDensityScale = 0.20;
         var viewModel = CreateViewModel("todo-widget", settingsService);
         double compactHeight = viewModel.ItemMinHeight;
@@ -1255,7 +1332,7 @@ public sealed class TodoWidgetViewModelTests : IDisposable
     [Fact]
     public void ApplyAppearance_RefreshesTodoItemPreviewLineCount()
     {
-        var settingsService = new SettingsService();
+        var settingsService = TestServices.CreateSettingsService();
         settingsService.Settings.TodoItemPreviewLineCount = 5;
         var viewModel = CreateViewModel("todo-widget", settingsService);
 
@@ -1270,7 +1347,7 @@ public sealed class TodoWidgetViewModelTests : IDisposable
     [Fact]
     public async Task ApplyAppearance_DoesNotRebuildVisibleItemsForUnrelatedSettingsChanges()
     {
-        var settingsService = new SettingsService();
+        var settingsService = TestServices.CreateSettingsService();
         var viewModel = CreateViewModel("todo-widget", settingsService);
         await viewModel.InitializeAsync();
         TodoItemViewModel item = (await viewModel.AddItemAsync("task"))!;
@@ -1368,6 +1445,43 @@ public sealed class TodoWidgetViewModelTests : IDisposable
     private TodoWidgetStore CreateStore(string widgetId)
     {
         return new TodoWidgetStore(_widgetsDataRoot, widgetId);
+    }
+
+    [Fact]
+    public async Task ApplyExternalStoreChange_RefreshesSnoozeStateForOpenWidgets()
+    {
+        DateTimeOffset dueDate = new(2026, 7, 8, 9, 0, 0, TimeSpan.Zero);
+        await CreateStore("todo-widget").SaveAsync(new TodoWidgetData
+        {
+            Items =
+            [
+                new TodoItem
+                {
+                    Id = "task",
+                    Text = "Send build",
+                    DueDate = dueDate,
+                    SnoozedUntil = dueDate
+                }
+            ]
+        });
+        var viewModel = CreateViewModel("todo-widget");
+        await viewModel.InitializeAsync();
+        Assert.True(viewModel.Items[0].HasActiveSnooze);
+
+        // The reminder service consumed the snooze (persisted null) and
+        // published the store change; the open widget must drop the badge
+        // instead of showing a stale "snoozed until" line.
+        viewModel.ApplyExternalStoreChange(
+            new TodoItem
+            {
+                Id = "task",
+                Text = "Send build",
+                DueDate = dueDate,
+                SnoozedUntil = null
+            },
+            insertedItem: null);
+
+        Assert.False(viewModel.Items[0].HasActiveSnooze);
     }
 
     private TodoWidgetViewModel CreateViewModel(string widgetId, SettingsService? settingsService = null)

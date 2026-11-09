@@ -61,7 +61,21 @@ public sealed class QuickRevealLayerContractTests
         Assert.Contains("HoldGroupTopMostWithoutActivation", trayAnimation, StringComparison.Ordinal);
         Assert.Contains("holdQuickRevealTopMostDuringHide", manager, StringComparison.Ordinal);
         Assert.Contains("Win32Helper.SetWindowTopMost(handle)", layer, StringComparison.Ordinal);
-        Assert.Contains("WidgetLayerService.ClearTopMost(HWnd)", contentWindow, StringComparison.Ordinal);
+        Assert.Contains("WidgetLayerService.ReleaseHiddenWindowLayer(HWnd)", contentWindow, StringComparison.Ordinal);
+        int nativeHide = contentWindow.IndexOf("Win32Helper.ShowWindow(HWnd, Win32Helper.SW_HIDE)", StringComparison.Ordinal);
+        int releaseLayer = contentWindow.IndexOf("WidgetLayerService.ReleaseHiddenWindowLayer(HWnd)", StringComparison.Ordinal);
+        int restoreInput = contentWindow.IndexOf("SetTrayHideInputSuppressed(false)", releaseLayer, StringComparison.Ordinal);
+        Assert.True(nativeHide >= 0 && nativeHide < releaseLayer && releaseLayer < restoreInput);
+
+        int releaseStart = layer.IndexOf("internal static void ReleaseHiddenWindowLayer(", StringComparison.Ordinal);
+        int releaseEnd = layer.IndexOf("public static void HoldTemporaryTopMost(", releaseStart, StringComparison.Ordinal);
+        string hiddenRelease = layer[releaseStart..releaseEnd];
+        Assert.Contains("ApplyDesktopPinnedActivationStyle(windowHandle)", hiddenRelease, StringComparison.Ordinal);
+        Assert.Contains("Win32Helper.IsWindowTopMost(windowHandle)", hiddenRelease, StringComparison.Ordinal);
+        Assert.Contains("Win32Helper.ClearWindowTopMost(windowHandle)", hiddenRelease, StringComparison.Ordinal);
+        Assert.DoesNotContain("TryAttachToDesktopIconLayer(", hiddenRelease, StringComparison.Ordinal);
+        Assert.DoesNotContain("MoveToDesktopBottom(", hiddenRelease, StringComparison.Ordinal);
+        Assert.DoesNotContain("SWP_SHOWWINDOW", hiddenRelease, StringComparison.Ordinal);
     }
 
     [Fact]

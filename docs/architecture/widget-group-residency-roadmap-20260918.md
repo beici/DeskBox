@@ -3,8 +3,8 @@
 - 日期：2026-09-18（同日第四轮对码修订，见 §10）
 - 状态：方案定稿，未立项实施（排在云同步/数据分层之后；P0 归因可提前插队，且**P0 结果决定后续投入规模**）
 - 前置文档：
-  - `C:\Users\simon\Desktop\2\格子组优化方向.md`（外部诊断稿）
-  - `C:\Users\simon\Desktop\2\格子组优化方案2.md`（View Eviction 分阶段方案稿，本方案在其基础上修订）
+  - `C:\Users\developer\Desktop\2\格子组优化方向.md`（外部诊断稿）
+  - `C:\Users\developer\Desktop\2\格子组优化方案2.md`（View Eviction 分阶段方案稿，本方案在其基础上修订）
   - `docs/architecture/module-boundary-roadmap-20260918.md`（#397 已合并，立法方法论沿用）
 - 评估方法：三轮全量对码（17+22+14 项主张逐条核对到 file:line）+ 四路并行外部调研（微软官方与一手 issue、WinUI 3 内存机制、跨框架先例、同类产品）。所有外部结论均标注来源链接，见 §9。
 

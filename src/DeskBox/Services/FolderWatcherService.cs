@@ -44,7 +44,13 @@ public sealed record FolderWatcherHealthSnapshot(
 public sealed class FolderWatcherService : IDisposable
 {
     private const int DebounceDelayMs = 250;
-    private const int MaxBufferedChangesBeforeReload = 64;
+    // Overflow protection, and since the view model stopped escalating large
+    // known batches to full reloads, the ONLY count-based escalation left:
+    // exceeding the buffered-change cap means events arrive faster than
+    // debatching drains them - the same shape as a native buffer overflow -
+    // so the batch falls back to the authoritative full reload rather than
+    // trust a change list that large.
+    internal const int MaxBufferedChangesBeforeReload = 64;
     private const int MaxReconnectAttempts = 8;
     private const int ReconnectBaseDelaySeconds = 2;
     // A persistent per-subtree AccessDenied makes the native watcher error,
@@ -88,6 +94,10 @@ public sealed class FolderWatcherService : IDisposable
     private string? _requestedPath;
     private int _reconnectAttempt;
     private int _reconnectCount;
+    // R19-S1-03: StartAsync() begins with Stop(), which resets the backoff
+    // counter. Without this flag every reconnect retried at the base delay
+    // and ReconnectPlateauSeconds was unreachable.
+    private bool _preserveReconnectAttempt;
     private bool _isDisposed;
     // FTHR-05: written from FileSystemWatcher/threadpool callbacks and read
     // by diagnostics from any thread — stored as Interlocked-managed
@@ -263,7 +273,7 @@ public sealed class FolderWatcherService : IDisposable
         if (availability != FolderWatcherHealth.Watching)
         {
             SetHealth(availability);
-            BeginReconnect(folderPath, resetAttempt: true);
+            BeginReconnect(folderPath, resetAttempt: !_preserveReconnectAttempt);
             App.Log($"[FolderWatcher] Folder unavailable; reconnect scheduled for '{folderPath}'");
             return;
         }
@@ -622,7 +632,10 @@ public sealed class FolderWatcherService : IDisposable
             _legacyRestartQueued = false;
             _reconnectPath = null;
             _requestedPath = null;
-            _reconnectAttempt = 0;
+            if (!_preserveReconnectAttempt)
+            {
+                _reconnectAttempt = 0;
+            }
             Interlocked.Exchange(ref _desktopIniRestartCount, 0);
         }
 
@@ -946,7 +959,15 @@ public sealed class FolderWatcherService : IDisposable
             }
 
             Interlocked.Increment(ref _reconnectCount);
-            await StartAsync(requestedPath ?? path);
+            _preserveReconnectAttempt = true;
+            try
+            {
+                await StartAsync(requestedPath ?? path);
+            }
+            finally
+            {
+                _preserveReconnectAttempt = false;
+            }
             if (!_isDisposed && IsWatching)
             {
                 QueueFullReload();
@@ -988,6 +1009,10 @@ public sealed class FolderWatcherService : IDisposable
             _pendingChanges.Add(change);
             if (_pendingChanges.Count > MaxBufferedChangesBeforeReload)
             {
+                // R19-S1-04: a full reload already covers every buffered delta,
+                // so drop them instead of letting a continuous change stream grow
+                // this list without limit while the debounce keeps being pushed out.
+                _pendingChanges.Clear();
                 _requiresFullReload = true;
             }
         }

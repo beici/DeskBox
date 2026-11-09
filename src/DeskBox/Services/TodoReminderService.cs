@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using DeskBox.Models;
+using DeskBox.Contracts;
 using Microsoft.UI.Dispatching;
+using DeskBox.Helpers;
 
 namespace DeskBox.Services;
 
@@ -12,7 +14,7 @@ public sealed record TodoReminderNotification(
     string? ItemId = null,
     bool HasTodayDueItem = false);
 
-public sealed class TodoReminderService : IDisposable
+public sealed class TodoReminderService : IDisposable, ITodoReminderSession
 {
     private static readonly TimeSpan ScanInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan StartupDelay = TimeSpan.FromSeconds(8);
@@ -21,7 +23,7 @@ public sealed class TodoReminderService : IDisposable
     private readonly SettingsService _settingsService;
     private readonly LocalizationService _localizationService;
     private readonly DispatcherQueue? _dispatcherQueue;
-    private readonly Action<TodoReminderNotification> _notify;
+    private readonly Func<TodoReminderNotification, Task<bool>> _notify;
     private readonly Func<string, TodoWidgetStore> _storeFactory;
     private readonly Func<DateTimeOffset> _clock;
     // DEF-110: cleared on the UI thread (Start/Refresh) and written from
@@ -29,6 +31,13 @@ public sealed class TodoReminderService : IDisposable
     // (TodoWidgetStore.MutateAsync awaits its gate with
     // ConfigureAwait(false)) — a plain HashSet would race.
     private readonly ConcurrentDictionary<string, byte> _sessionNotifiedKeys = new(StringComparer.Ordinal);
+
+    // Reminders whose toast WAS shown this session but whose consumption
+    // marks could not be persisted. They must never be re-shown in this
+    // session even though Start/Refresh clear _sessionNotifiedKeys when the
+    // feature is toggled — the persisted marks are the only durable gate,
+    // and they are missing for exactly these keys.
+    private readonly ConcurrentDictionary<string, byte> _shownWithoutPersistKeys = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Raised on the UI thread after this service persists a change to a
@@ -41,6 +50,9 @@ public sealed class TodoReminderService : IDisposable
     private DispatcherQueueTimer? _timer;
     private bool _isChecking;
     private bool _disposed;
+    private readonly CancellationTokenSource _lifetime = new();
+    private Task _initialCheck = Task.CompletedTask;
+    private Task<int> _activeCheck = Task.FromResult(0);
 
     private enum ReminderTriggerKind
     {
@@ -52,7 +64,7 @@ public sealed class TodoReminderService : IDisposable
         SettingsService settingsService,
         LocalizationService localizationService,
         DispatcherQueue dispatcherQueue,
-        Action<TodoReminderNotification> notify)
+        Func<TodoReminderNotification, Task<bool>> notify)
         : this(
             settingsService,
             localizationService,
@@ -60,14 +72,14 @@ public sealed class TodoReminderService : IDisposable
             notify,
             widgetId => new TodoWidgetStore(widgetId),
             () => DateTimeOffset.Now)
-    {
+        {
     }
 
     internal TodoReminderService(
         SettingsService settingsService,
         LocalizationService localizationService,
         DispatcherQueue? dispatcherQueue,
-        Action<TodoReminderNotification> notify,
+        Func<TodoReminderNotification, Task<bool>> notify,
         Func<string, TodoWidgetStore> storeFactory,
         Func<DateTimeOffset> clock)
     {
@@ -93,14 +105,14 @@ public sealed class TodoReminderService : IDisposable
 
         // Clear notified keys from any previous session so that reminders
         // that were already shown before the app restarted can fire again.
-        _sessionNotifiedKeys.Clear();
+        ResetSessionClaimedKeys();
 
         _timer = _dispatcherQueue.CreateTimer();
         _timer.Interval = ScanInterval;
         _timer.Tick += Timer_Tick;
         _timer.Start();
 
-        _ = RunDelayedInitialCheckAsync();
+        _initialCheck = RunDelayedInitialCheckAsync(_lifetime.Token);
     }
 
     /// <summary>
@@ -121,7 +133,7 @@ public sealed class TodoReminderService : IDisposable
                 // Clear notified keys when the timer is being (re)started
                 // after being stopped — old keys from a previous active
                 // period are no longer relevant.
-                _sessionNotifiedKeys.Clear();
+                ResetSessionClaimedKeys();
                 _timer = _dispatcherQueue.CreateTimer();
                 _timer.Interval = ScanInterval;
                 _timer.Tick += Timer_Tick;
@@ -135,7 +147,7 @@ public sealed class TodoReminderService : IDisposable
             _timer = null;
             // Clear notified keys when the feature is disabled so they
             // don't accumulate indefinitely while inactive.
-            _sessionNotifiedKeys.Clear();
+            ResetSessionClaimedKeys();
         }
     }
 
@@ -146,13 +158,18 @@ public sealed class TodoReminderService : IDisposable
                FeatureWidgetSettings.IsEnabled(settings, WidgetKind.Todo);
     }
 
-    public async Task<int> CheckNowAsync(DateTimeOffset now)
+    public Task<int> CheckNowAsync(DateTimeOffset now)
     {
         if (_disposed || _isChecking)
         {
-            return 0;
+            return Task.FromResult(0);
         }
 
+        return _activeCheck = CheckCoreAsync(now);
+    }
+
+    private async Task<int> CheckCoreAsync(DateTimeOffset now)
+    {
         _isChecking = true;
         try
         {
@@ -178,23 +195,67 @@ public sealed class TodoReminderService : IDisposable
             }
 
             List<TodoReminderCandidate> candidates = [];
-            foreach (var widget in widgets)
+            try
             {
-                await CollectWidgetCandidatesAsync(widget, now, defaultOffsetMinutes, candidates);
-            }
+                foreach (var widget in widgets)
+                {
+                    if (_disposed || !ShouldBeRunning())
+                    {
+                        // Nothing was shown for the already-claimed keys; a
+                        // scan that dies mid-flight must release them so the
+                        // next scan can pick the same items up again.
+                        ReleaseCandidateKeys(candidates);
+                        return 0;
+                    }
 
-            if (candidates.Count == 0)
+                    await CollectWidgetCandidatesAsync(widget, now, defaultOffsetMinutes, candidates);
+                }
+
+                if (candidates.Count == 0 || _disposed || !ShouldBeRunning())
+                {
+                    ReleaseCandidateKeys(candidates);
+                    return 0;
+                }
+
+                // A reminder is only consumed (marks persisted) after the
+                // notification surface confirmed it was actually shown. When
+                // nothing could display it, the in-memory claims are released so
+                // the next scan retries until the missed-reminder grace window
+                // closes — instead of persisting ReminderDismissedForDueDate for
+                // a toast nobody ever saw.
+                bool shown;
+                try
+                {
+                    shown = await _notify(BuildNotification(candidates)).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    App.Log($"[TodoReminder] Notification dispatch failed: {ex}");
+                    shown = false;
+                }
+
+                if (!shown)
+                {
+                    ReleaseCandidateKeys(candidates);
+                    App.Log(
+                        $"[TodoReminder] Reminder for {candidates.Count} item(s) could not be shown; " +
+                        "consumption was withheld and the next scan will retry.");
+                    return candidates.Count;
+                }
+
+                await PersistDisplayedRemindersAsync(candidates, now).ConfigureAwait(false);
+                return candidates.Count;
+            }
+            catch (Exception ex)
             {
+                // The scan died mid-flight. Items whose marks were already
+                // persisted are protected by those persisted marks; every
+                // other claim belongs to a toast that was never shown (or a
+                // persist that never ran), so release them all for retry.
+                ReleaseCandidateKeys(candidates);
+                App.Log($"[TodoReminder] Check failed: {ex}");
                 return 0;
             }
-
-            _notify(BuildNotification(candidates));
-            return candidates.Count;
-        }
-        catch (Exception ex)
-        {
-            App.Log($"[TodoReminder] Check failed: {ex}");
-            return 0;
         }
         finally
         {
@@ -202,15 +263,43 @@ public sealed class TodoReminderService : IDisposable
         }
     }
 
+    private void ReleaseCandidateKeys(IReadOnlyList<TodoReminderCandidate> candidates)
+    {
+        foreach (var candidate in candidates)
+        {
+            _sessionNotifiedKeys.TryRemove(candidate.ReminderKey, out _);
+        }
+    }
+
+    /// <summary>
+    /// The Start/Refresh key reset for a (re)started scan cycle. The
+    /// shown-without-persist keys deliberately survive: those toasts were
+    /// on screen while their consumption marks are not on disk, so clearing
+    /// them too would replay an already-shown notification.
+    /// </summary>
+    internal void ResetSessionClaimedKeys()
+    {
+        _sessionNotifiedKeys.Clear();
+    }
+
     public void Dispose()
     {
+        if (_disposed) return;
         _disposed = true;
+        _lifetime.Cancel();
+        _lifetime.Dispose();
         if (_timer is not null)
         {
             _timer.Tick -= Timer_Tick;
             _timer.Stop();
             _timer = null;
         }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Dispose();
+        await Task.WhenAll(_initialCheck, _activeCheck);
     }
 
     internal static bool ShouldNotify(TodoItem item, DateTimeOffset now, TimeSpan reminderOffset)
@@ -321,7 +410,7 @@ public sealed class TodoReminderService : IDisposable
                 }
 
                 var item = current.Items[itemIndex];
-                if (item.IsCompleted)
+                if (item.IsCompleted || item.IsDeleted)
                 {
                     return false;
                 }
@@ -376,12 +465,15 @@ public sealed class TodoReminderService : IDisposable
         }
     }
 
-    private async Task RunDelayedInitialCheckAsync()
+    private async Task RunDelayedInitialCheckAsync(CancellationToken cancellationToken)
     {
         try
         {
-            await Task.Delay(StartupDelay);
+            await Task.Delay(StartupDelay, cancellationToken);
             await CheckNowAsync(_clock());
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
         }
         catch (Exception ex)
         {
@@ -428,47 +520,131 @@ public sealed class TodoReminderService : IDisposable
         List<TodoReminderCandidate> candidates)
     {
         var store = _storeFactory(widget.Id);
-        List<TodoReminderCandidate> widgetCandidates = [];
-        TodoItem? lastChangedItem = null;
-        _ = await store.MutateAsync(current =>
+
+        // Read-only selection under the store gate: nothing is persisted
+        // here. The consumption marks are written only after the
+        // notification was actually shown (PersistDisplayedRemindersAsync),
+        // so a display failure can never strand a due reminder as already
+        // consumed.
+        TodoWidgetData current = await store.LoadAsync().ConfigureAwait(false);
+
+        // The owner may disable the feature or dispose this service while
+        // the store gate is still being awaited (the check already
+        // captured its widget list). Producing candidates after that point
+        // would announce items for a notification nobody will ever show.
+        if (_disposed || !ShouldBeRunning())
         {
-            bool changed = false;
-            foreach (var item in current.Items)
+            return;
+        }
+
+        foreach (var item in current.Items)
+        {
+            if (!TryGetReminderTrigger(item, now, defaultOffsetMinutes, out ReminderTriggerKind triggerKind, out int? effectiveOffsetMinutes))
             {
-                if (!TryGetReminderTrigger(item, now, defaultOffsetMinutes, out ReminderTriggerKind triggerKind, out int? effectiveOffsetMinutes))
-                {
-                    continue;
-                }
-
-                string reminderKey = GetReminderKey(widget.Id, item, triggerKind, effectiveOffsetMinutes);
-                if (!_sessionNotifiedKeys.TryAdd(reminderKey, 0))
-                {
-                    continue;
-                }
-
-                if (triggerKind == ReminderTriggerKind.Snooze)
-                {
-                    item.SnoozeLastNotifiedAt = now;
-                    item.SnoozedUntil = null;
-                }
-                else
-                {
-                    item.ReminderLastNotifiedAt = now;
-                    item.ReminderDismissedForDueDate = item.DueDate;
-                }
-
-                changed = true;
-                lastChangedItem = item;
-                widgetCandidates.Add(new TodoReminderCandidate(widget.Id, widget.Name, item));
+                continue;
             }
 
-            return changed;
-        }).ConfigureAwait(false);
+            string reminderKey = GetReminderKey(widget.Id, item, triggerKind, effectiveOffsetMinutes);
+            if (_shownWithoutPersistKeys.ContainsKey(reminderKey))
+            {
+                continue;
+            }
 
-        if (widgetCandidates.Count > 0)
+            if (!_sessionNotifiedKeys.TryAdd(reminderKey, 0))
+            {
+                continue;
+            }
+
+            candidates.Add(new TodoReminderCandidate(
+                widget.Id,
+                widget.Name,
+                item,
+                reminderKey,
+                triggerKind,
+                item.DueDate,
+                item.SnoozedUntil));
+        }
+    }
+
+    /// <summary>
+    /// Persists the consumption marks for candidates whose notification was
+    /// confirmed as shown. Every candidate is guarded against concurrent
+    /// user edits (due-date change, re-snooze, completion, deletion, or a
+    /// notification-button action that already wrote the store): when a
+    /// guard fails, the user's own write wins and the mark is skipped.
+    /// </summary>
+    private async Task PersistDisplayedRemindersAsync(
+        IReadOnlyList<TodoReminderCandidate> candidates,
+        DateTimeOffset now)
+    {
+        foreach (var group in candidates.GroupBy(candidate => candidate.WidgetId))
         {
-            candidates.AddRange(widgetCandidates);
-            PublishStoreChanged(widget.Id, lastChangedItem, insertedItem: null);
+            try
+            {
+                var store = _storeFactory(group.Key);
+                List<TodoItem> changedItems = [];
+                _ = await store.MutateAsync(current =>
+                {
+                    bool changed = false;
+                    foreach (var candidate in group)
+                    {
+                        var item = current.Items.FirstOrDefault(entry =>
+                            string.Equals(entry.Id, candidate.Item.Id, StringComparison.Ordinal));
+                        if (item is null || item.IsCompleted || item.IsDeleted)
+                        {
+                            continue;
+                        }
+
+                        if (candidate.TriggerKind == ReminderTriggerKind.Snooze)
+                        {
+                            if (item.SnoozedUntil != candidate.SnoozedUntilAtSelection)
+                            {
+                                continue;
+                            }
+
+                            item.SnoozeLastNotifiedAt = now;
+                            item.SnoozedUntil = null;
+                        }
+                        else
+                        {
+                            if (item.DueDate != candidate.DueDateAtSelection)
+                            {
+                                continue;
+                            }
+
+                            item.ReminderLastNotifiedAt = now;
+                            item.ReminderDismissedForDueDate = item.DueDate;
+                        }
+
+                        changed = true;
+                        changedItems.Add(item);
+                    }
+
+                    return changed;
+                }).ConfigureAwait(false);
+
+                foreach (var changedItem in changedItems)
+                {
+                    PublishStoreChanged(group.Key, changedItem, insertedItem: null);
+                }
+            }
+            catch (Exception ex)
+            {
+                // The notification was shown but the marks could not be
+                // persisted. The session keys stay claimed so this session
+                // does not repeat the toast, and the keys are also recorded
+                // as shown-without-persist so a Start/Refresh key reset
+                // (feature toggle) cannot replay a toast that was already
+                // on screen; a restart re-fires at most once (bounded by
+                // the missed-reminder grace window).
+                foreach (var candidate in group)
+                {
+                    _shownWithoutPersistKeys.TryAdd(candidate.ReminderKey, 0);
+                }
+
+                App.Log(
+                    $"[TodoReminder] Persisting displayed reminder marks failed for widget {group.Key}: {ex}");
+            }
         }
     }
 
@@ -503,20 +679,30 @@ public sealed class TodoReminderService : IDisposable
         TodoItem? changedItem,
         TodoItem? insertedItem)
     {
-        if (TodoStoreChanged is null)
+        // Snapshot at publish time: the last subscriber can unsubscribe
+        // before the dispatcher runs the closure, and reading the field
+        // there would dereference null.
+        Delegate[] handlers = TodoStoreChanged?.GetInvocationList() ?? Array.Empty<Delegate>();
+        if (handlers.Length == 0)
         {
             return;
         }
 
         void Raise()
         {
-            try
+            // Per-subscriber isolation: one throwing subscriber must not
+            // starve the rest of the multicast chain (the default invoke
+            // stops at the first failure).
+            foreach (Delegate subscriber in handlers)
             {
-                TodoStoreChanged?.Invoke(widgetId, changedItem, insertedItem);
-            }
-            catch (Exception ex)
-            {
-                App.Log($"[TodoReminder] Store-changed subscriber failed: {ex.Message}");
+                try
+                {
+                    ((Action<string, TodoItem?, TodoItem?>)subscriber)(widgetId, changedItem, insertedItem);
+                }
+                catch (Exception ex)
+                {
+                    App.Log($"[TodoReminder] Store-changed subscriber failed: {ex.Message}");
+                }
             }
         }
 
@@ -559,8 +745,8 @@ public sealed class TodoReminderService : IDisposable
         DateTimeOffset localDueDate = dueDate.ToLocalTime();
         var today = _clock().Date;
         string time = localDueDate.Second == 0
-            ? localDueDate.ToString("HH:mm")
-            : localDueDate.ToString("HH:mm:ss");
+            ? localDueDate.ToString("HH:mm", DisplayCulture.GregorianCurrent)
+            : localDueDate.ToString("HH:mm:ss", DisplayCulture.GregorianCurrent);
 
         if (localDueDate.Date == today)
         {
@@ -573,8 +759,8 @@ public sealed class TodoReminderService : IDisposable
         }
 
         return localDueDate.Second == 0
-            ? localDueDate.ToString("yyyy/M/d HH:mm")
-            : localDueDate.ToString("yyyy/M/d HH:mm:ss");
+            ? localDueDate.ToString("yyyy/M/d HH:mm", DisplayCulture.GregorianCurrent)
+            : localDueDate.ToString("yyyy/M/d HH:mm:ss", DisplayCulture.GregorianCurrent);
     }
 
     private string NormalizeNotificationText(string? text)
@@ -607,7 +793,7 @@ public sealed class TodoReminderService : IDisposable
         triggerKind = ReminderTriggerKind.Due;
         effectiveOffsetMinutes = null;
 
-        if (item.IsCompleted || item.DueDate is null)
+        if (item.IsCompleted || item.IsDeleted || item.DueDate is null)
         {
             return false;
         }
@@ -620,7 +806,10 @@ public sealed class TodoReminderService : IDisposable
         if (item.SnoozedUntil is { } snoozedUntil)
         {
             triggerKind = ReminderTriggerKind.Snooze;
-            return now >= snoozedUntil;
+            // Mirror the due-trigger grace window: a snooze reminder that
+            // could not be shown stops retrying after its moment has passed,
+            // instead of rescanning every 30 seconds for the whole session.
+            return now >= snoozedUntil && now <= snoozedUntil + MissedReminderGrace;
         }
 
         int normalizedDefaultOffsetMinutes = SettingsService.NormalizeTodoReminderOffsetMinutes(defaultOffsetMinutes);
@@ -639,7 +828,7 @@ public sealed class TodoReminderService : IDisposable
 
     private static bool ShouldNotifyDue(TodoItem item, DateTimeOffset now, TimeSpan reminderOffset)
     {
-        if (item.IsCompleted || item.DueDate is not { } dueDate)
+        if (item.IsCompleted || item.IsDeleted || item.DueDate is not { } dueDate)
         {
             return false;
         }
@@ -675,5 +864,9 @@ public sealed class TodoReminderService : IDisposable
     private sealed record TodoReminderCandidate(
         string WidgetId,
         string WidgetName,
-        TodoItem Item);
+        TodoItem Item,
+        string ReminderKey,
+        ReminderTriggerKind TriggerKind,
+        DateTimeOffset? DueDateAtSelection,
+        DateTimeOffset? SnoozedUntilAtSelection);
 }

@@ -21,13 +21,33 @@ public sealed class AppUpdateManifest
     public long Size { get; set; }
     public long Arm64Size { get; set; }
     public string ReleaseNotesUrl { get; set; } = string.Empty;
-    public Dictionary<string, string> Summary { get; set; } = [];
+    private Dictionary<string, string> _summary = [];
+
+    /// <summary>
+    /// Short localized summaries keyed by locale. A manifest that carries an
+    /// explicit JSON <c>null</c> normalizes to an empty dictionary: the
+    /// initializer alone only covers a *missing* property, while every consumer
+    /// (this type's lookup helpers included) assumes a non-null instance.
+    /// </summary>
+    public Dictionary<string, string> Summary
+    {
+        get => _summary;
+        set => _summary = value ?? [];
+    }
+
+    private Dictionary<string, string> _releaseNotes = [];
+
     /// <summary>
     /// Full release notes in Markdown, keyed by locale. This is optional so
     /// older manifests remain compatible with clients that only understand
-    /// the short summary fields.
+    /// the short summary fields. Explicit JSON <c>null</c> normalizes to an
+    /// empty dictionary for the same reason as <see cref="Summary"/>.
     /// </summary>
-    public Dictionary<string, string> ReleaseNotes { get; set; } = [];
+    public Dictionary<string, string> ReleaseNotes
+    {
+        get => _releaseNotes;
+        set => _releaseNotes = value ?? [];
+    }
 
     public string GetLocalizedSummary(string cultureName)
     {

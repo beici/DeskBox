@@ -20,6 +20,7 @@ public sealed class SettingsSliceContractBaselineTests
         Assert.True(s.AutoStart);
         Assert.False(s.AutoStartDefaultApplied);
         Assert.Null(s.AutoStartMode);
+        Assert.False(s.SilentStartup);
         Assert.Equal("ResourceSaver", s.PerformanceMode);
         Assert.Equal(30, s.HiddenCacheCleanupDelaySeconds);
         Assert.Equal("AllRecreatable", s.HiddenCacheCleanupScope);
@@ -36,6 +37,10 @@ public sealed class SettingsSliceContractBaselineTests
         Assert.True(s.EnableCompactAmbientAnimations);
         Assert.True(s.AutoCheckForUpdates);
         Assert.Null(s.LastUpdateCheckAt);
+        Assert.True(s.ShowReleaseNotesAfterUpdate);
+        Assert.Null(s.LastRunVersion);
+        Assert.True(s.AutoDownloadUpdates);
+        Assert.True(s.ShowUpdateToastNotification);
         Assert.False(s.QuickCaptureEnabled);
         Assert.False(s.TodoEnabled);
         Assert.Empty(s.FeatureWidgetEnabledStates);
@@ -84,6 +89,8 @@ public sealed class SettingsSliceContractBaselineTests
         Assert.True(s.MusicUseArtworkBackdrop);
         Assert.True(s.MusicEnableCoverHoverMotion);
         Assert.Equal("Auto", s.MusicDisplayMode);
+        Assert.True(s.MusicHideTimelineWhenUnavailable);
+        Assert.Equal(string.Empty, s.LastQuickCaptureFileWidgetId);
         Assert.True(s.GlobalHotkeyEnabled);
         Assert.Equal(HotkeyActivationKind.Chord, s.GlobalHotkeyActivationKind);
         Assert.Equal((int)HotkeyModifierKeys.None, s.GlobalHotkeyModifiers);
@@ -153,6 +160,9 @@ public sealed class SettingsSliceContractBaselineTests
         Assert.Empty(s.FileStackCustomRules);
         Assert.Equal("KeepLoose", s.FileStackUnmatchedBehavior);
         Assert.Equal("Move", s.ManagedDropAction);
+        Assert.Equal("FollowWindows", s.ManagedDragOutAction);
+        Assert.True(s.DragOutModifierTipEnabled);
+        Assert.True(s.DragOutResultHintEnabled);
         Assert.Equal(string.Empty, s.DefaultManagedStorageRootPath);
         Assert.False(s.ManagedStorageDesktopShortcutEnabled);
         Assert.Equal(string.Empty, s.ManagedStorageDesktopShortcutPath);
@@ -163,6 +173,7 @@ public sealed class SettingsSliceContractBaselineTests
         Assert.Empty(s.RecentOrganizationHistory);
         Assert.Empty(s.DesktopOrganizationRules);
         Assert.False(s.DesktopAutoOrganizationEnabled);
+        Assert.Equal(10, s.DesktopAutoOrganizationDelaySeconds);
         Assert.Null(s.DesktopAutoOrganizationBaselineUtc);
         Assert.Equal(30, s.IconSize);
         Assert.Equal(11.5, s.TextSize);
@@ -183,6 +194,7 @@ public sealed class SettingsSliceContractBaselineTests
         Assert.Equal(WidgetGroupTitleDisplayModes.IconAndText, s.WidgetGroupDefaultTitleDisplayMode);
         Assert.True(s.WidgetGroupWheelSwitchEnabled);
         Assert.False(s.WidgetGroupHoverSwitchEnabled);
+        Assert.Equal(WidgetGroupSwitchAnimationStyles.Auto, s.WidgetGroupSwitchAnimationStyle);
         Assert.False(s.FocusClickedWidgetOnRaise);
         Assert.Empty(s.DeletedWidgetIds);
         Assert.True(s.WeatherAutoLocation);
@@ -194,6 +206,7 @@ public sealed class SettingsSliceContractBaselineTests
         Assert.Equal("MSN", s.WeatherDataSource);
         Assert.Equal("Today", s.WeatherDefaultView);
         Assert.Equal("Standard", s.WeatherSkin);
+        Assert.Equal("Fluent", s.WeatherIconStyle);
         Assert.True(s.WeatherShowForecast);
         Assert.True(s.WeatherShowSunrise);
         Assert.True(s.WeatherShowUvIndex);
@@ -256,6 +269,7 @@ public sealed class SettingsSliceContractBaselineTests
         "autoStart",
         "autoStartDefaultApplied",
         "autoStartMode",
+        "silentStartup",
         "performanceMode",
         "hiddenCacheCleanupDelaySeconds",
         "hiddenCacheCleanupScope",
@@ -272,6 +286,10 @@ public sealed class SettingsSliceContractBaselineTests
         "enableCompactAmbientAnimations",
         "autoCheckForUpdates",
         "lastUpdateCheckAt",
+        "showReleaseNotesAfterUpdate",
+        "lastRunVersion",
+        "autoDownloadUpdates",
+        "showUpdateToastNotification",
         "quickCaptureEnabled",
         "todoEnabled",
         "featureWidgetEnabledStates",
@@ -320,6 +338,8 @@ public sealed class SettingsSliceContractBaselineTests
         "musicUseArtworkBackdrop",
         "musicEnableCoverHoverMotion",
         "musicDisplayMode",
+        "musicHideTimelineWhenUnavailable",
+        "lastQuickCaptureFileWidgetId",
         "globalHotkeyEnabled",
         "globalHotkeyActivationKind",
         "globalHotkeyModifiers",
@@ -329,6 +349,7 @@ public sealed class SettingsSliceContractBaselineTests
         "onboardingStepIndex",
         "completedOnboardingVersion",
         "hasResolvedInitialFileWidgetSetup",
+        "fullyElevatedNoticeAcknowledgedUtcTicks",
         "defaultWidgetWidth",
         "defaultWidgetHeight",
         "widgetOpacity",
@@ -340,11 +361,13 @@ public sealed class SettingsSliceContractBaselineTests
         "widgetAnimationFrameRate",
         "widgetBorderColorMode",
         "widgetBorderStyle",
+        "widgetTextShadowEnabled",
         "widgetCornerPreference",
         "widgetAnimationEffect",
         "widgetAnimationSpeed",
         "widgetAnimationSlideDirection",
         "widgetAnimationEasingIntensity",
+        "widgetAnimationStaggerEnabled",
         "widgetLayerMode",
         "keepWidgetsVisibleOnShowDesktop",
         "displayWidgetChromeMode",
@@ -391,6 +414,9 @@ public sealed class SettingsSliceContractBaselineTests
         "fileStackCustomRules",
         "fileStackUnmatchedBehavior",
         "managedDropAction",
+        "managedDragOutAction",
+        "dragOutModifierTipEnabled",
+        "dragOutResultHintEnabled",
         "defaultManagedStorageRootPath",
         "managedStorageDesktopShortcutEnabled",
         "managedStorageDesktopShortcutPath",
@@ -401,6 +427,7 @@ public sealed class SettingsSliceContractBaselineTests
         "recentOrganizationHistory",
         "desktopOrganizationRules",
         "desktopAutoOrganizationEnabled",
+        "desktopAutoOrganizationDelaySeconds",
         "desktopAutoOrganizationBaselineUtc",
         "iconSize",
         "textSize",
@@ -413,6 +440,9 @@ public sealed class SettingsSliceContractBaselineTests
         "showFileExtensions",
         "hideShortcutExtensionWhenShowingFileExtensions",
         "widgets",
+        "widgetDefaultBoundScreenId",
+        "widgetNewPlacementTarget",
+        "widgetDisplayDisconnectBehavior",
         "widgetGroups",
         "widgetTopologyLayouts",
         "activeWidgetTopologyKey",
@@ -421,6 +451,7 @@ public sealed class SettingsSliceContractBaselineTests
         "widgetGroupDefaultTitleDisplayMode",
         "widgetGroupWheelSwitchEnabled",
         "widgetGroupHoverSwitchEnabled",
+        "widgetGroupSwitchAnimationStyle",
         "focusClickedWidgetOnRaise",
         "deletedWidgetIds",
         "weatherAutoLocation",
@@ -432,6 +463,7 @@ public sealed class SettingsSliceContractBaselineTests
         "weatherDataSource",
         "weatherDefaultView",
         "weatherSkin",
+        "weatherIconStyle",
         "weatherShowForecast",
         "weatherShowSunrise",
         "weatherShowUvIndex",

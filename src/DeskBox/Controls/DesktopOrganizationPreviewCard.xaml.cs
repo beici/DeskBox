@@ -142,7 +142,7 @@ public sealed partial class DesktopOrganizationPreviewCard : UserControl, IDispo
             {
                 Glyph = option is null ? "\uE710" : "\uE8B8",
                 FontSize = 16,
-                Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"]
+                Foreground = ResolveThemeBrush("TextFillColorSecondaryBrush")
             },
             Tag = option, GroupName = _target.SourceBucketId
         };
@@ -164,7 +164,8 @@ public sealed partial class DesktopOrganizationPreviewCard : UserControl, IDispo
         WidgetConfig? config = settings.Widgets.FirstOrDefault(item =>
             item.Id == (_selection.ExistingWidgetId ?? _target.TargetWidgetId));
         _layout = FileWidgetIconLayout.Calculate(settings, config?.IconSizeOverride,
-            WindowsCompatibilityService.ResolveSystemTextScaleFactor());
+            WindowsCompatibilityService.ResolveSystemTextScaleFactor(),
+            config?.IconLabelHiddenOverride);
         var tileAppearance = new PreviewTileAppearance(_layout, settings.HideShortcutArrowOverlay,
             settings.ShowImageFilesAsIcons, settings.ShowFileExtensions,
             settings.HideShortcutExtensionWhenShowingFileExtensions, settings.ShowFileItemPathTooltips,
@@ -217,6 +218,15 @@ public sealed partial class DesktopOrganizationPreviewCard : UserControl, IDispo
         _observedXamlRoot = null;
     }
 
+    /// <summary>
+    /// Application-scope themed lookups follow the system theme, which
+    /// inverts whenever the app's theme override disagrees with it;
+    /// resolve against this card's window-scoped theme instead.
+    /// </summary>
+    private Brush ResolveThemeBrush(string resourceKey) =>
+        NeutralInteractionBrush.ResolveThemedResource(resourceKey, this) ??
+        new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x9E, 0x9E, 0x9E));
+
     private void ApplyMaterial(AppSettings settings)
     {
         // Planning-surface cards use the Fluent control-layer radius, not the
@@ -229,10 +239,10 @@ public sealed partial class DesktopOrganizationPreviewCard : UserControl, IDispo
         // preview read like a themed canvas instead of a Fluent task surface.
         MaterialSurface.Visibility = Visibility.Collapsed;
         FallbackSurface.Visibility = Visibility.Visible;
-        FallbackSurface.Background = (Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"];
+        FallbackSurface.Background = ResolveThemeBrush("CardBackgroundFillColorDefaultBrush");
         CardOutline.BorderThickness = new Thickness(1);
-        CardOutline.BorderBrush = (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"];
-        HeaderDivider.BorderBrush = (Brush)Application.Current.Resources["DividerStrokeColorDefaultBrush"];
+        CardOutline.BorderBrush = ResolveThemeBrush("CardStrokeColorDefaultBrush");
+        HeaderDivider.BorderBrush = ResolveThemeBrush("DividerStrokeColorDefaultBrush");
     }
 
     private void LayoutItems(bool force = false)
@@ -312,12 +322,12 @@ public sealed partial class DesktopOrganizationPreviewCard : UserControl, IDispo
         if (_newPaths.Contains(item.SourcePath))
             tileRoot.Children.Add(new Border
             {
-                Background = (Brush)Application.Current.Resources["ControlFillColorSecondaryBrush"],
+                Background = ResolveThemeBrush("ControlFillColorSecondaryBrush"),
                 CornerRadius = new CornerRadius(2), Padding = new Thickness(2, 0, 2, 0),
                 HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
                 IsHitTestVisible = false,
                 Child = new TextBlock { Text = T("DesktopOrganization.Layout.New"), FontSize = 10,
-                    Foreground = (Brush)Application.Current.Resources["TextFillColorPrimaryBrush"] }
+                    Foreground = ResolveThemeBrush("TextFillColorPrimaryBrush") }
             });
         var button = new ToggleButton
         {

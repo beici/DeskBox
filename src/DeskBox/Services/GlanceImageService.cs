@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using DeskBox.Models;
 using Windows.Networking.Connectivity;
+using System.Globalization;
 
 namespace DeskBox.Services;
 
@@ -31,6 +32,10 @@ public sealed class GlanceImageService
     private const int BingArchiveBatchSize = 8;
     private const int BingArchiveBatchCount = 3;
     private const long MaximumDownloadBytes = 18L * 1024 * 1024;
+    // A ".tmp" staging file whose last write is older than this can no
+    // longer belong to a live download (the HTTP client times out at 20s)
+    // — only a hard-killed process leaves one behind.
+    private static readonly TimeSpan StaleDownloadStagingAge = TimeSpan.FromHours(1);
     private static readonly SemaphoreSlim OnlineRefreshGate = new(1, 1);
     private static readonly HttpClient SharedHttpClient = CreateHttpClient();
 
@@ -112,7 +117,7 @@ public sealed class GlanceImageService
         cancellationToken.ThrowIfCancellationRequested();
         List<GlanceImageInfo> catalog = await LoadCatalogAsync(cancellationToken);
         return catalog
-            .Where(image => MatchesOnlineSource(image, provider, category) && IsUsableFile(image.LocalPath))
+            .Where(image => MatchesOnlineSource(image, provider, category) && IsUsableCachedImage(image))
             .OrderByDescending(image => image.CachedAtUtc)
             .Take(MaximumCacheItemsPerCategory)
             .ToArray();
@@ -180,7 +185,7 @@ public sealed class GlanceImageService
 
             int newDownloads = 0;
             int usableCategoryCount = cached.Count(image =>
-                MatchesOnlineSource(image, provider, category) && IsUsableFile(image.LocalPath));
+                MatchesOnlineSource(image, provider, category) && IsUsableCachedImage(image));
             int downloadLimit = Math.Min(
                 IncrementalDownloadCount,
                 Math.Max(0, TargetCatalogSizePerCategory - usableCategoryCount));
@@ -188,7 +193,7 @@ public sealed class GlanceImageService
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (bySource.TryGetValue(candidate.SourcePageUrl ?? string.Empty, out GlanceImageInfo? existing) &&
-                    IsUsableFile(existing.LocalPath))
+                    IsUsableCachedImage(existing))
                 {
                     continue;
                 }
@@ -224,7 +229,7 @@ public sealed class GlanceImageService
             }
 
             cached = cached
-                .Where(image => IsUsableFile(image.LocalPath))
+                .Where(IsUsableCachedImage)
                 .OrderByDescending(image => image.CachedAtUtc)
                 .ToList();
             await TrimAndSaveCatalogAsync(cached, cancellationToken);
@@ -418,7 +423,7 @@ public sealed class GlanceImageService
     {
         string categoryTitle = category switch
         {
-            GlanceOnlineImageCategory.Featured => $"Category:Pictures of the day ({DateTime.UtcNow:yyyy})",
+            GlanceOnlineImageCategory.Featured => string.Create(CultureInfo.InvariantCulture, $"Category:Pictures of the day ({DateTime.UtcNow:yyyy})"),
             GlanceOnlineImageCategory.Landscapes => "Category:Featured pictures of landscapes",
             GlanceOnlineImageCategory.Cities => "Category:Quality images of cityscapes",
             GlanceOnlineImageCategory.Architecture => "Category:Featured pictures of architecture",
@@ -535,14 +540,7 @@ public sealed class GlanceImageService
             return null;
         }
 
-        string extension = response.Content.Headers.ContentType?.MediaType switch
-        {
-            "image/png" => ".png",
-            "image/webp" => ".webp",
-            _ => ".jpg"
-        };
-        string destination = Path.Combine(_imageDirectory, $"{candidate.Id}{extension}");
-        string temporary = $"{destination}.{Guid.NewGuid():N}.tmp";
+        string temporary = $"{Path.Combine(_imageDirectory, candidate.Id)}.{Guid.NewGuid():N}.tmp";
         try
         {
             await using (Stream input = await response.Content.ReadAsStreamAsync(cancellationToken))
@@ -558,6 +556,20 @@ public sealed class GlanceImageService
                 await output.FlushAsync(cancellationToken);
             }
 
+            // The payload is untrusted until sniffed: a captive-portal page or
+            // CDN error answers with an image Content-Type, and trusting the
+            // header would park that HTML in the cache as a permanent ".jpg".
+            // The sniffed magic bytes are the sole authority for the extension.
+            string? extension = SniffImageExtension(temporary);
+            if (extension is null)
+            {
+                App.Log(
+                    $"[Glance] Downloaded payload was not a recognized image; " +
+                    $"discarding: {candidate.RemoteImageUrl}");
+                return null;
+            }
+
+            string destination = Path.Combine(_imageDirectory, $"{candidate.Id}{extension}");
             File.Move(temporary, destination, overwrite: true);
             candidate.LocalPath = destination;
             candidate.CachedAtUtc = DateTimeOffset.UtcNow;
@@ -569,12 +581,62 @@ public sealed class GlanceImageService
         }
     }
 
+    /// <summary>
+    /// Maps a downloaded payload to its image extension from the leading
+    /// magic bytes (PNG/JPEG/GIF/WebP), or returns null when the payload is
+    /// not a recognized image at all.
+    /// </summary>
+    private static string? SniffImageExtension(string path)
+    {
+        try
+        {
+            using FileStream stream = new(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 16,
+                useAsync: false);
+            Span<byte> header = stackalloc byte[16];
+            int read = stream.Read(header);
+            if (read >= 4 &&
+                header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x47)
+            {
+                return ".png";
+            }
+
+            if (read >= 3 && header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF)
+            {
+                return ".jpg";
+            }
+
+            if (read >= 6 &&
+                (header[..6].SequenceEqual("GIF87a"u8) || header[..6].SequenceEqual("GIF89a"u8)))
+            {
+                return ".gif";
+            }
+
+            if (read >= 12 &&
+                header[..4].SequenceEqual("RIFF"u8) &&
+                header[8..12].SequenceEqual("WEBP"u8))
+            {
+                return ".webp";
+            }
+
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
     private async Task TrimAndSaveCatalogAsync(
         List<GlanceImageInfo> catalog,
         CancellationToken cancellationToken)
     {
         List<GlanceImageInfo> kept = catalog
-            .Where(image => IsUsableFile(image.LocalPath))
+            .Where(IsUsableCachedImage)
             .GroupBy(image => new { image.OnlineProvider, image.OnlineCategory })
             .SelectMany(group => group
                 .OrderByDescending(image => image.CachedAtUtc)
@@ -589,7 +651,43 @@ public sealed class GlanceImageService
         {
             if (!keptPaths.Contains(stale.LocalPath))
             {
-                TryDelete(stale.LocalPath);
+                if (IsInsideImageDirectory(stale.LocalPath))
+                {
+                    TryDelete(stale.LocalPath);
+                }
+                else
+                {
+                    // A restored catalog may carry paths from another machine or
+                    // a tampered backup; never let a prune touch a file outside
+                    // the image cache root.
+                    App.Log(
+                        $"[GlanceImageService] Skipped deleting catalog entry outside " +
+                        $"the image cache: {stale.LocalPath}");
+                }
+            }
+        }
+
+        // Crash-window sweep: a file written by a download whose catalog
+        // persist never completed can never be referenced again — the trim
+        // above only sees cataloged entries. Delete recognized image files
+        // in the directory that no kept entry claims; in-flight downloads
+        // use ".tmp" names and stay untouched, except staging files past
+        // the staleness threshold, which no legal download can still own.
+        if (Directory.Exists(_imageDirectory))
+        {
+            foreach (string file in Directory.EnumerateFiles(_imageDirectory))
+            {
+                if (IsSupportedImagePath(file))
+                {
+                    if (!keptPaths.Contains(file))
+                    {
+                        TryDelete(file);
+                    }
+                }
+                else if (IsStaleDownloadStagingFile(file))
+                {
+                    TryDelete(file);
+                }
             }
         }
         catalog.Clear();
@@ -732,12 +830,70 @@ public sealed class GlanceImageService
             return false;
         }
 
-        return Path.GetExtension(path).ToLowerInvariant() is ".jpg" or ".jpeg" or ".png" or ".webp" or ".bmp";
+        return Path.GetExtension(path).ToLowerInvariant()
+            is ".jpg" or ".jpeg" or ".png" or ".webp" or ".bmp" or ".gif";
+    }
+
+    private static bool IsStaleDownloadStagingFile(string path)
+    {
+        return Path.GetExtension(path).Equals(".tmp", StringComparison.OrdinalIgnoreCase) &&
+            File.GetLastWriteTimeUtc(path) < DateTime.UtcNow - StaleDownloadStagingAge;
     }
 
     private static bool IsUsableFile(string? path)
     {
         return !string.IsNullOrWhiteSpace(path) && IsSupportedImagePath(path) && File.Exists(path);
+    }
+
+    private bool IsUsableCachedImage(GlanceImageInfo image)
+    {
+        return IsUsableFile(image.LocalPath) && IsInsideImageDirectory(image.LocalPath);
+    }
+
+    private bool IsInsideImageDirectory(string? path)
+    {
+        return IsPathInsideDirectory(_imageDirectory, path);
+    }
+
+    /// <summary>
+    /// Validates that <paramref name="path"/> resolves inside
+    /// <paramref name="rootDirectory"/> after normalization. Catalog data is
+    /// untrusted (it can come from a restored backup), so a prune must never
+    /// act on a path that escapes the cache root or names a UNC/device path.
+    /// </summary>
+    internal static bool IsPathInsideDirectory(string rootDirectory, string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        string fullPath;
+        string rootPath;
+        try
+        {
+            if (!Path.IsPathFullyQualified(path))
+            {
+                return false;
+            }
+
+            fullPath = Path.GetFullPath(path);
+            rootPath = Path.GetFullPath(rootDirectory);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+
+        if (fullPath.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        string rootPrefix = Path.EndsInDirectorySeparator(rootPath)
+            ? rootPath
+            : rootPath + Path.DirectorySeparatorChar;
+        return fullPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string CreateStableId(string value)

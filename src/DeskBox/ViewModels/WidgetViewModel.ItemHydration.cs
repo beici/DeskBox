@@ -161,14 +161,12 @@ public partial class WidgetViewModel
         }
 
         long afterEnumerateMs = loadStopwatch.ElapsedMilliseconds;
-        ApplyPersistedAddedTimes(items);
+        ApplyPersistedAddedTimes(items, folderPath);
         cancellationToken.ThrowIfCancellationRequested();
         beforeItemsReplaced?.Invoke();
         long afterAddedMs = loadStopwatch.ElapsedMilliseconds;
         SyncFolderItems(items);
         long afterSyncMs = loadStopwatch.ElapsedMilliseconds;
-        SortItems();
-        long afterSortMs = loadStopwatch.ElapsedMilliseconds;
         if (clearIconCacheBeforeHydration)
         {
             ClearCurrentItemIconCache();
@@ -181,15 +179,14 @@ public partial class WidgetViewModel
             // log slow loads by default so big-folder regressions surface
             // without opting into performance logging. enumMs includes
             // thread-pool queueing, addedMs covers persisted-time merge and
-            // the pre-replace callback, syncMs the Items collection sync,
-            // sortMs the final sort pass.
+            // the pre-replace callback, syncMs the final-order merge and
+            // collection sync (including sorting before publishing changes).
             App.Log(
                 $"[FolderLoad] Slow load items={items.Count} " +
                 $"totalMs={loadStopwatch.ElapsedMilliseconds} " +
                 $"enumMs={(enumerateMs < 0 ? afterEnumerateMs : enumerateMs)} " +
                 $"addedMs={afterAddedMs - afterEnumerateMs} " +
                 $"syncMs={afterSyncMs - afterAddedMs} " +
-                $"sortMs={afterSortMs - afterSyncMs} " +
                 $"path='{folderPath}'");
         }
 
@@ -198,101 +195,63 @@ public partial class WidgetViewModel
 
     private void SyncFolderItems(IReadOnlyList<WidgetItem> refreshedItems)
     {
-        var existingByPath = Items
-            .GroupBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
-        var refreshedPaths = refreshedItems
-            .Select(item => item.Path)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        bool stackProjectionChanged = false;
+        bool trackStackProjection = UsesStackProjection && _settingsService.Settings.FileWidget.FileStackAutoStacking;
+        string stackGroupBy = FileStackGroupBy;
+        string stackOrderBy = FileStackOrderBy;
+        DateTime projectionNow = DateTime.Now;
+        List<WidgetItem> snapshotItems = WidgetItemCollectionReconciler.MergeSnapshot(
+            Items,
+            refreshedItems,
+            (existing, refreshed) =>
+            {
+                bool inspectProjection = trackStackProjection && !stackProjectionChanged &&
+                    WidgetStackProjectionInvalidationPolicy.MayAffectProjection(
+                        existing, refreshed, stackGroupBy, stackOrderBy);
+                WidgetStackProjectionInvalidationPolicy.State before = inspectProjection
+                    ? WidgetStackProjectionInvalidationPolicy.Capture(existing, stackGroupBy, stackOrderBy, projectionNow)
+                    : default;
+
+                ApplyRuntimeItemData(existing, refreshed, preserveExistingIconWhenMissing: true);
+
+                if (inspectProjection)
+                {
+                    stackProjectionChanged = WidgetStackProjectionInvalidationPolicy.HasChanged(
+                        before,
+                        WidgetStackProjectionInvalidationPolicy.Capture(existing, stackGroupBy, stackOrderBy, projectionNow));
+                }
+            });
+
+        IReadOnlyList<WidgetItem> finalOrder;
+        if (Config.SortMode == WidgetSortMode.Manual)
+        {
+            finalOrder = WidgetManualOrderPolicy.Reconcile(
+                snapshotItems,
+                Items.Select(item => item.Path).ToList(),
+                Config.Items,
+                item => item.Path);
+        }
+        else
+        {
+            // The filesystem snapshot arrives in name order. Sorting before
+            // touching Items avoids moving every retained row into that order
+            // and back into the user's chosen order on an unchanged refresh.
+            finalOrder = WidgetItemCollectionReconciler.Sort(snapshotItems, CompareItems);
+        }
+
+        WidgetItemCollectionReconciler.Reconcile(Items, finalOrder);
+        NormalizeSortOrder();
+        if (stackProjectionChanged)
+        {
+            // Membership and stack-specific ordering can change while the raw
+            // Items order stays identical. Use the existing coalesced scheduler
+            // instead of depending on incidental Move notifications to refresh.
+            QueueStackDisplayRebuild();
+        }
 
         if (Config.SortMode == WidgetSortMode.Manual)
         {
-            List<string> liveOrderPaths = Items.Select(item => item.Path).ToList();
-            List<WidgetItem> snapshotItems = refreshedItems
-                .Select(refreshedItem =>
-                {
-                    if (existingByPath.TryGetValue(refreshedItem.Path, out WidgetItem? existingItem))
-                    {
-                        ApplyRuntimeItemData(
-                            existingItem,
-                            refreshedItem,
-                            preserveExistingIconWhenMissing: true);
-                        return existingItem;
-                    }
-
-                    return refreshedItem;
-                })
-                .ToList();
-            IReadOnlyList<WidgetItem> reconciled = WidgetManualOrderPolicy.Reconcile(
-                snapshotItems,
-                liveOrderPaths,
-                Config.Items,
-                item => item.Path);
-
-            ApplyReconciledManualOrder(reconciled);
-            NormalizeSortOrder();
             PersistManualOrderSnapshotIfChanged();
-            return;
-        }
-
-        for (int index = Items.Count - 1; index >= 0; index--)
-        {
-            if (!refreshedPaths.Contains(Items[index].Path))
-            {
-                Items.RemoveAt(index);
-            }
-        }
-
-        for (int targetIndex = 0; targetIndex < refreshedItems.Count; targetIndex++)
-        {
-            var refreshedItem = refreshedItems[targetIndex];
-            if (!existingByPath.TryGetValue(refreshedItem.Path, out var existingItem))
-            {
-                Items.Insert(targetIndex, refreshedItem);
-                continue;
-            }
-
-            ApplyRuntimeItemData(
-                existingItem,
-                refreshedItem,
-                preserveExistingIconWhenMissing: true);
-            int currentIndex = Items.IndexOf(existingItem);
-            if (currentIndex < 0)
-            {
-                Items.Insert(targetIndex, existingItem);
-            }
-            else if (currentIndex != targetIndex)
-            {
-                Items.Move(currentIndex, targetIndex);
-            }
-        }
-
-        NormalizeSortOrder();
-    }
-
-    private void ApplyReconciledManualOrder(IReadOnlyList<WidgetItem> reconciled)
-    {
-        var retained = reconciled.ToHashSet();
-        for (int index = Items.Count - 1; index >= 0; index--)
-        {
-            if (!retained.Contains(Items[index]))
-            {
-                Items.RemoveAt(index);
-            }
-        }
-
-        for (int targetIndex = 0; targetIndex < reconciled.Count; targetIndex++)
-        {
-            WidgetItem item = reconciled[targetIndex];
-            int currentIndex = Items.IndexOf(item);
-            if (currentIndex < 0)
-            {
-                Items.Insert(targetIndex, item);
-            }
-            else if (currentIndex != targetIndex)
-            {
-                Items.Move(currentIndex, targetIndex);
-            }
         }
     }
 
@@ -311,6 +270,52 @@ public partial class WidgetViewModel
                 cancellation));
         Interlocked.Increment(ref _itemHydrationActiveCount);
         _ = RunItemHydrationAsync(generation, cancellation);
+    }
+
+    /// <summary>
+    /// Re-extracts the icons of specific items, bypassing the icon caches.
+    /// For state-aware namespace icons (the Recycle Bin renders its empty or
+    /// full graphic for the same PIDL) the file never changes, so neither
+    /// the freshness ledger nor the cache key ever invalidates on its own —
+    /// emptying the bin must drop the cached bytes explicitly.
+    /// </summary>
+    internal async Task RefreshItemIconsAsync(
+        IEnumerable<WidgetItem> items)
+    {
+        if (_isDisposed)
+        {
+            return;
+        }
+
+        // One membership snapshot per pass: Contains on the live collection is a
+        // linear scan, and this predicate runs once per candidate.
+        var liveItems = new HashSet<WidgetItem>(Items);
+        List<WidgetItem> targets = items
+            .Where(item => item is not null &&
+                !string.IsNullOrWhiteSpace(item.Path) &&
+                liveItems.Contains(item))
+            .Distinct()
+            .ToList();
+        if (targets.Count == 0)
+        {
+            return;
+        }
+
+        foreach (WidgetItem item in targets)
+        {
+            await _fileService.ClearIconCacheAsync(
+                item.Path,
+                _hideShortcutArrowOverlay,
+                _showImageFilesAsIcons,
+                resetTransientFailures: true);
+            item.Icon = null;
+            // Unstamped icons compare stale in the refresh merge, so a
+            // redundant re-fetch after this extraction is the steady state.
+            item.HydratedIconFileSize = -1;
+            item.HydratedIconStamp = default;
+        }
+
+        StartItemHydration();
     }
 
     /// <summary>
@@ -385,6 +390,91 @@ public partial class WidgetViewModel
         }
     }
 
+    /// <summary>
+    /// Nulls decoded icon references a hidden surface no longer displays.
+    /// The keep-set is every item a realized UI element still shows: the
+    /// rendered prefix plus the collapsed stack preview members (the tile
+    /// binds Members[0..3] directly), so release and re-acquire stay paired
+    /// on display-state transitions — released items come back through the
+    /// render-window reconcile heal, the growth triggers, and the
+    /// reveal/reuse/popover transitions. Without this the item models pin
+    /// every LRU-evicted bitmap for their whole lifetime, so a large grid
+    /// can hold tens of MB the icon cache believes it released.
+    /// </summary>
+    internal int ReleaseUnrenderedItemIcons()
+    {
+        if (_isDisposed)
+        {
+            return 0;
+        }
+
+        var displayed = ComputeDisplayedIconKeepSet(RenderedItems);
+        int released = 0;
+        foreach (var item in Items)
+        {
+            if (item.Icon is not null && !displayed.Contains(item))
+            {
+                item.Icon = null;
+                released++;
+            }
+        }
+
+        return released;
+    }
+
+    /// <summary>
+    /// Pure keep-set shared with behavior tests: the items whose icons a
+    /// realized UI element currently displays. Stack projection renders
+    /// <see cref="WidgetStackItem"/> wrappers whose collapsed tiles bind the
+    /// first four members' icons, so those members are displayed even though
+    /// they never enter <see cref="RenderedItems"/> themselves.
+    /// </summary>
+    internal static HashSet<WidgetItem> ComputeDisplayedIconKeepSet(
+        IEnumerable<WidgetItem> renderedItems)
+    {
+        var displayed = new HashSet<WidgetItem>(renderedItems);
+        foreach (WidgetItem renderedUnit in displayed.ToArray())
+        {
+            if (renderedUnit is not WidgetStackItem stack)
+            {
+                continue;
+            }
+
+            int previewCount = Math.Min(StackPreviewMemberKeepCount, stack.Members.Count);
+            for (int index = 0; index < previewCount; index++)
+            {
+                displayed.Add(stack.Members[index]);
+            }
+        }
+
+        return displayed;
+    }
+
+    /// <summary>
+    /// Idempotent acquisition half of the release/acquire pairing: starts a
+    /// hydration pass when icons released while nothing displayed them now
+    /// have consumers again (stack expansion folded members into the
+    /// projection, the popover opened, the window revealed, a parked member
+    /// was reused). No-op while a hydration generation is already running —
+    /// its snapshot was taken after whatever change queued this call.
+    /// </summary>
+    internal void HealReleasedItemIconsIfIdle()
+    {
+        if (_isDisposed || IsItemHydrationActive)
+        {
+            return;
+        }
+
+        foreach (WidgetItem item in HydrationUniverseItems)
+        {
+            if (item.Icon is null)
+            {
+                StartItemHydration();
+                return;
+            }
+        }
+    }
+
     private void RefreshAllIcons()
     {
         ClearCurrentItemIconCache();
@@ -439,10 +529,14 @@ public partial class WidgetViewModel
                 return;
             }
 
+            // Rebuilt per batch: the collection can change across the awaits
+            // below, and a snapshot keeps the membership check off the linear
+            // Contains path that made this pass quadratic in item count.
+            var liveItems = new HashSet<WidgetItem>(Items);
             var batch = items
                 .Skip(start)
                 .Take(IconHydrationBatchSize)
-                .Where(item => Items.Contains(item) && !string.IsNullOrWhiteSpace(item.Path))
+                .Where(item => liveItems.Contains(item) && !string.IsNullOrWhiteSpace(item.Path))
                 .Select(item => HydrateIconAsync(
                     item,
                     generation,
@@ -452,6 +546,9 @@ public partial class WidgetViewModel
             var results = await Task.WhenAll(batch);
             await WaitForCompactTransitionHydrationPauseAsync(generation, cancellationToken);
 
+            // The results arrived after two awaits; refresh the snapshot so the
+            // apply guard still reflects the items that are live right now.
+            liveItems = new HashSet<WidgetItem>(Items);
             foreach (var (item, icon) in results)
             {
                 if (item is null)
@@ -460,7 +557,7 @@ public partial class WidgetViewModel
                 }
 
                 if (generation != Volatile.Read(ref _itemHydrationGeneration) ||
-                    !Items.Contains(item))
+                    !liveItems.Contains(item))
                 {
                     return;
                 }
@@ -523,7 +620,7 @@ public partial class WidgetViewModel
         {
             if (clearCacheBeforeLoad)
             {
-                _fileService.ClearIconCache(
+                await _fileService.ClearIconCacheAsync(
                     path,
                     _hideShortcutArrowOverlay,
                     _showImageFilesAsIcons,
@@ -559,17 +656,33 @@ public partial class WidgetViewModel
             .ToList();
         int processed = 0;
 
+        // One membership snapshot for the whole folder pass, refreshed only when
+        // the item count changes: a linear Contains per folder made this loop
+        // quadratic on a directory that holds many folders.
+        int liveCount = Items.Count;
+        var liveItems = new HashSet<WidgetItem>(Items);
         foreach (var item in folders)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (Items.Count != liveCount)
+            {
+                liveItems = new HashSet<WidgetItem>(Items);
+                liveCount = Items.Count;
+            }
+
             if (generation != Volatile.Read(ref _itemHydrationGeneration) ||
-                !Items.Contains(item) ||
-                !Directory.Exists(item.Path))
+                !liveItems.Contains(item))
             {
                 return;
             }
 
             string path = item.Path;
+            // Existence is validated off the UI thread: CountVisibleChildrenAsync
+            // resolves the path on the thread pool and throws
+            // DirectoryNotFoundException, which the handler below turns into a
+            // retryable "unavailable" state. Probing Directory.Exists here ran one
+            // synchronous round trip per folder on the dispatcher (and aborted the
+            // whole pass on the first missing folder, starving the rest).
             try
             {
                 int count = await _fileService
@@ -611,8 +724,11 @@ public partial class WidgetViewModel
         int generation,
         CancellationToken cancellationToken)
     {
+        // Loaded flags keep this proportional: without them every
+        // generation re-read the shell link of every shortcut in the
+        // universe — the stack-projection scroll amplifier.
         var shortcuts = HydrationUniverseItems
-            .Where(item => item.IsShortcut)
+            .Where(item => item.IsShortcut && !item.IsShortcutTargetLoaded)
             .OrderBy(item => item.SortOrder)
             .ToList();
 
@@ -624,10 +740,11 @@ public partial class WidgetViewModel
                 return;
             }
 
+            var liveItems = new HashSet<WidgetItem>(Items);
             var batch = shortcuts
                 .Skip(start)
                 .Take(ShortcutTargetHydrationBatchSize)
-                .Where(item => Items.Contains(item) && !string.IsNullOrWhiteSpace(item.Path))
+                .Where(item => liveItems.Contains(item) && !string.IsNullOrWhiteSpace(item.Path))
                 .Select(async item =>
                 {
                     string expectedPath = item.Path;
@@ -670,10 +787,11 @@ public partial class WidgetViewModel
                 return;
             }
 
+            var liveItems = new HashSet<WidgetItem>(Items);
             var batch = items
                 .Skip(start)
                 .Take(ShellKindHydrationBatchSize)
-                .Where(item => Items.Contains(item) && !string.IsNullOrWhiteSpace(item.Path))
+                .Where(item => liveItems.Contains(item) && !string.IsNullOrWhiteSpace(item.Path))
                 .Select(async item =>
                 {
                     string expectedPath = item.Path;
@@ -705,23 +823,30 @@ public partial class WidgetViewModel
         string expectedPath,
         int generation)
     {
-        if (_dispatcherQueue.HasThreadAccess)
+        void Apply()
         {
             if (CanApplyHydrationResult(item, expectedPath, generation))
             {
                 item.Icon = icon;
+                if (icon is not null)
+                {
+                    // Freshness ledger: the snapshot that requested this
+                    // extraction is still the item's current stats, so the
+                    // merge can later tell "unchanged since extraction"
+                    // from "changed out-of-band".
+                    item.HydratedIconFileSize = item.FileSize;
+                    item.HydratedIconStamp = item.LastModified;
+                }
             }
+        }
 
+        if (_dispatcherQueue.HasThreadAccess)
+        {
+            Apply();
             return;
         }
 
-        _dispatcherQueue.TryEnqueue(() =>
-        {
-            if (CanApplyHydrationResult(item, expectedPath, generation))
-            {
-                item.Icon = icon;
-            }
-        });
+        _dispatcherQueue.TryEnqueue(Apply);
     }
 
     private void SetFolderItemCount(WidgetItem item, int count, string expectedPath, int generation)
@@ -758,6 +883,22 @@ public partial class WidgetViewModel
             if (CanApplyHydrationResult(item, expectedPath, generation))
             {
                 item.TargetPath = targetPath;
+                if (!string.IsNullOrEmpty(targetPath))
+                {
+                    // An empty read is a failed read: leave it unloaded so
+                    // a later generation retries.
+                    item.IsShortcutTargetLoaded = true;
+                }
+
+                // Prewarm the namespace classification here, on the UI
+                // thread's STA apartment: the drop-target policy resolves it
+                // inside drag callbacks, and a first-drag cold resolve (the
+                // shell-link CoClass load plus the vtable IDList read) can
+                // consume the entire hover-over-tile window, leaving the
+                // recycle-bin tile unarmed for that gesture's release. The
+                // stored-metadata read is cache-hot at this point, so only
+                // PIDL-only links pay the vtable pass, once per item.
+                NamespaceShortcutHelper.ResolveKind(item);
             }
         }
 
@@ -847,11 +988,17 @@ public partial class WidgetViewModel
 
         foreach (var item in Items.Where(item => item.IsShortcut))
         {
-            item.Icon = await _fileService.GetIconAsync(
+            var refreshedIcon = await _fileService.GetIconAsync(
                 item.Path,
                 _hideShortcutArrowOverlay,
                 _showImageFilesAsIcons,
                 _iconDecodePixelWidth);
+            item.Icon = refreshedIcon;
+            if (refreshedIcon is not null)
+            {
+                item.HydratedIconFileSize = item.FileSize;
+                item.HydratedIconStamp = item.LastModified;
+            }
         }
     }
 

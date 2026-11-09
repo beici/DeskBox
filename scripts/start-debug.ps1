@@ -24,26 +24,53 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $repoRootPath = $repoRoot.Path
+$repoRootPathPrefix = $repoRootPath.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
 $project = Join-Path $repoRoot "src\DeskBox\DeskBox.csproj"
 $dotnetFromRepo = Join-Path $repoRoot ".codex-temp\dotnet10\dotnet.exe"
-$dotnet = if (Test-Path -LiteralPath $dotnetFromRepo) { $dotnetFromRepo } else { "dotnet" }
-
-[xml]$projectXml = Get-Content -LiteralPath $project -Raw
-$targetFramework = $projectXml.Project.PropertyGroup |
-    Where-Object { $_.TargetFramework } |
-    Select-Object -First 1 -ExpandProperty TargetFramework
-
-if ([string]::IsNullOrWhiteSpace($targetFramework)) {
-    throw "Unable to read TargetFramework from $project"
+$dotnetCandidates = @(
+    if ($env:DOTNET_ROOT) { Join-Path $env:DOTNET_ROOT "dotnet.exe" }
+    $dotnetFromRepo
+    Join-Path $env:USERPROFILE ".dotnet\dotnet.exe"
+)
+$dotnet = $dotnetCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+if (-not $dotnet) {
+    $dotnet = "dotnet"
 }
 
 if ([string]::IsNullOrWhiteSpace($RuntimeIdentifier)) {
     $RuntimeIdentifier = if ($Platform -eq "ARM64") { "win-arm64" } else { "win-x64" }
 }
 
+if (($Platform -eq "x64" -and $RuntimeIdentifier -ne "win-x64") -or
+    ($Platform -eq "ARM64" -and $RuntimeIdentifier -ne "win-arm64")) {
+    throw "Platform and RuntimeIdentifier must select the same architecture."
+}
+
 if ($UseProductionData.IsPresent -and -not [string]::IsNullOrWhiteSpace($DataRoot)) {
     throw "-DataRoot and -UseProductionData cannot be used together."
 }
+
+$buildProperties = @(
+    "-p:Configuration=$Configuration"
+    "-p:Platform=$Platform"
+    "-p:RuntimeIdentifier=$RuntimeIdentifier"
+    "-p:DeskBoxDistribution=$Distribution"
+)
+$propertyOutput = & $dotnet msbuild $project -nologo -v:quiet @buildProperties `
+    -getProperty:TargetDir,TargetPath,DeskBoxDebugOutputDirectory
+if ($LASTEXITCODE -ne 0) {
+    throw "Unable to evaluate the DeskBox build output directory (exit code $LASTEXITCODE)."
+}
+$buildPaths = ($propertyOutput -join [Environment]::NewLine | ConvertFrom-Json).Properties
+if ([string]::IsNullOrWhiteSpace($buildPaths.TargetDir) -or
+    [string]::IsNullOrWhiteSpace($buildPaths.TargetPath)) {
+    throw "MSBuild did not return the DeskBox build output paths."
+}
+$outputDir = [System.IO.Path]::GetFullPath($buildPaths.TargetDir)
+$assembly = [System.IO.Path]::GetFullPath($buildPaths.TargetPath)
+$exe = Join-Path $outputDir "DeskBox.exe"
+$debugOutputPrefix = [System.IO.Path]::GetFullPath($buildPaths.DeskBoxDebugOutputDirectory).TrimEnd('\', '/') +
+    [System.IO.Path]::DirectorySeparatorChar
 
 if ($Configuration -eq "Debug" -and
     -not $UseProductionData.IsPresent -and
@@ -66,27 +93,30 @@ if (-not $NoStop.IsPresent) {
     Get-CimInstance Win32_Process -Filter "Name='DeskBox.exe'" |
         Where-Object {
             $_.ExecutablePath -and
-            $_.ExecutablePath.StartsWith($repoRootPath, [System.StringComparison]::OrdinalIgnoreCase)
+            ($_.ExecutablePath.StartsWith($repoRootPathPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
+             $_.ExecutablePath.StartsWith($debugOutputPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
+             $_.ExecutablePath.Equals($exe, [System.StringComparison]::OrdinalIgnoreCase))
         } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
     Start-Sleep -Milliseconds 800
 }
 
 if ($Build.IsPresent) {
+    $buildStartedUtc = [DateTime]::UtcNow
     & $dotnet build $project `
-        -c $Configuration `
-        -p:Platform=$Platform `
-        -p:RuntimeIdentifier=$RuntimeIdentifier `
-        -p:DeskBoxDistribution=$Distribution `
+        @buildProperties `
+        --no-incremental `
         -v:minimal
 
     if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
+        throw "DeskBox build failed (exit code $LASTEXITCODE)."
+    }
+
+    if (-not (Test-Path -LiteralPath $assembly -PathType Leaf) -or
+        (Get-Item -LiteralPath $assembly).LastWriteTimeUtc -lt $buildStartedUtc) {
+        throw "The build did not write a fresh assembly at $assembly. Check for a running DeskBox instance."
     }
 }
-
-$outputDir = Join-Path $repoRoot "src\DeskBox\bin\$Platform\$Configuration\$targetFramework\$RuntimeIdentifier"
-$exe = Join-Path $outputDir "DeskBox.exe"
 
 if (-not (Test-Path -LiteralPath $exe)) {
     throw "DeskBox.exe was not found at $exe. Run this script with -Build first."
@@ -113,12 +143,21 @@ finally {
 }
 
 Start-Sleep -Seconds 3
-$runningProcess = Get-Process -Id $process.Id -ErrorAction SilentlyContinue
+$runningProcesses = @(Get-CimInstance Win32_Process -Filter "Name='DeskBox.exe'" |
+    Where-Object {
+        $_.ExecutablePath -and
+        $_.ExecutablePath.Equals($exe, [System.StringComparison]::OrdinalIgnoreCase)
+    })
+if ($runningProcesses.Count -ne 1 -or $runningProcesses[0].ProcessId -ne $process.Id) {
+    throw "The requested DeskBox instance did not stay running at $exe. Check for another instance using the same data root."
+}
+$runningProcess = Get-Process -Id $process.Id
 
 [PSCustomObject]@{
     Exe = $exe
     ProcessId = $process.Id
     Running = [bool]$runningProcess
     StartTime = if ($runningProcess) { $runningProcess.StartTime } else { $null }
+    AssemblyWriteTime = (Get-Item -LiteralPath $assembly).LastWriteTime
     DataRoot = if ([string]::IsNullOrWhiteSpace($DataRoot)) { "Production" } else { $DataRoot }
 }

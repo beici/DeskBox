@@ -155,6 +155,88 @@ public sealed class ResilientJsonStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsync_LockedPrimary_KeepsFileAndDoesNotQuarantine()
+    {
+        string storePath = Path.Combine(_tempRoot, "locked.json");
+        const string newerJson = "{\"value\":\"newer\"}";
+        const string olderJson = "{\"value\":\"older\"}";
+        await File.WriteAllTextAsync(storePath, newerJson);
+        await File.WriteAllTextAsync(ResilientJsonStore.GetBackupPath(storePath), olderJson);
+
+        // A scanner holding a byte-range lock: the read fails with a lock
+        // violation, but the bytes on disk are perfectly valid and newer than
+        // .bak. The handle deliberately allows delete sharing so that the
+        // quarantine path stays reachable - that is what makes the difference
+        // between "read failed" and "content is broken" observable.
+        using (var handle = new FileStream(
+            storePath,
+            FileMode.Open,
+            FileAccess.ReadWrite,
+            FileShare.ReadWrite | FileShare.Delete))
+        {
+            handle.Lock(0, 1);
+            var result = await ResilientJsonStore.LoadWithResultAsync(
+                storePath,
+                json =>
+                {
+                    using var document = JsonDocument.Parse(json);
+                    return document.RootElement.GetProperty("value").GetString()!;
+                },
+                () => "default",
+                "ResilientJsonStoreTests");
+
+            Assert.Equal(ResilientJsonLoadSource.Backup, result.Source);
+            Assert.Equal("older", result.Value);
+        }
+
+        // The failed read must not cost the user's data: the primary keeps its
+        // bytes, nothing is quarantined, and the backup did not replace it.
+        Assert.Equal(newerJson, await File.ReadAllTextAsync(storePath));
+        Assert.Empty(Directory.EnumerateFiles(_tempRoot, "*.corrupt-*"));
+    }
+
+    [Fact]
+    public async Task SaveAsync_AfterUnreadablePrimary_KeepsTheOldBytesInsteadOfRotatingThemAway()
+    {
+        string storePath = Path.Combine(_tempRoot, "unreadable-then-saved.json");
+        const string newerJson = "{\"value\":\"newer\"}";
+        const string olderJson = "{\"value\":\"older\"}";
+        await File.WriteAllTextAsync(storePath, newerJson);
+        await File.WriteAllTextAsync(ResilientJsonStore.GetBackupPath(storePath), olderJson);
+
+        using (var handle = new FileStream(
+            storePath,
+            FileMode.Open,
+            FileAccess.ReadWrite,
+            FileShare.ReadWrite | FileShare.Delete))
+        {
+            handle.Lock(0, 1);
+            var result = await ResilientJsonStore.LoadWithResultAsync(
+                storePath,
+                json =>
+                {
+                    using var document = JsonDocument.Parse(json);
+                    return document.RootElement.GetProperty("value").GetString()!;
+                },
+                () => "default",
+                "ResilientJsonStoreTests");
+
+            Assert.Equal(ResilientJsonLoadSource.Backup, result.Source);
+        }
+
+        // The load fell back to .bak because the primary could not be read. The
+        // primary still holds the user's newest bytes, so the next two saves must
+        // not rotate them into .bak and then delete them: the first commit would
+        // move them to .bak, the second would overwrite .bak with the new data.
+        await ResilientJsonStore.SaveAsync(storePath, "{\"value\":\"saved-1\"}");
+        await ResilientJsonStore.SaveAsync(storePath, "{\"value\":\"saved-2\"}");
+
+        string asidePath = Assert.Single(Directory.EnumerateFiles(_tempRoot, "*.unreadable-*"));
+        Assert.Contains("newer", await File.ReadAllTextAsync(asidePath));
+        Assert.Contains("saved-2", await File.ReadAllTextAsync(storePath));
+    }
+
+    [Fact]
     public async Task SaveAsync_StreamedTemp_RoundTripsAndPreservesPreviousVersionAsBackup()
     {
         string storePath = Path.Combine(_tempRoot, "streamed.json");
@@ -265,6 +347,46 @@ public sealed class ResilientJsonStoreTests : IDisposable
         Assert.Equal(ResilientJsonLoadSource.Backup, result.Source);
         Assert.Equal("第一次 📁", result.Value);
         Assert.Empty(Directory.EnumerateFiles(_tempRoot, "*.tmp"));
+    }
+
+    [Fact]
+    public async Task LoadWithResultAsync_SuccessfulRetryClearsTheUnreadableMark()
+    {
+        // SettingsService re-reads once when the profile exists but was locked.
+        // That second, successful read must clear the "preserve aside" mark the
+        // failed attempt left behind; otherwise the next save renames a
+        // perfectly healthy store to settings.json.unreadable-<ts>.
+        string storePath = Path.Combine(_tempRoot, "settings.json");
+        await File.WriteAllTextAsync(storePath, "{\"value\":\"original\"}");
+
+        using (new FileStream(
+                   storePath,
+                   FileMode.Open,
+                   FileAccess.ReadWrite,
+                   FileShare.None))
+        {
+            ResilientJsonLoadResult<Dictionary<string, string>> locked =
+                await ResilientJsonStore.LoadWithResultAsync(
+                    storePath,
+                    json => JsonSerializer.Deserialize<Dictionary<string, string>>(json)!,
+                    () => new Dictionary<string, string>(),
+                    "ResilientJsonStoreTests");
+            Assert.Equal(ResilientJsonLoadSource.DefaultAfterFailure, locked.Source);
+        }
+
+        ResilientJsonLoadResult<Dictionary<string, string>> retried =
+            await ResilientJsonStore.LoadWithResultAsync(
+                storePath,
+                json => JsonSerializer.Deserialize<Dictionary<string, string>>(json)!,
+                () => new Dictionary<string, string>(),
+                "ResilientJsonStoreTests");
+        Assert.Equal(ResilientJsonLoadSource.Primary, retried.Source);
+        Assert.Equal("original", retried.Value["value"]);
+
+        await ResilientJsonStore.SaveAsync(storePath, "{\"value\":\"updated\"}");
+
+        Assert.Empty(Directory.EnumerateFiles(_tempRoot, "*.unreadable-*"));
+        Assert.Equal("{\"value\":\"updated\"}", await File.ReadAllTextAsync(storePath));
     }
 
     public void Dispose()

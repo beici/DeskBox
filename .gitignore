@@ -106,3 +106,21 @@ docs/wechat/*.webp
 .tmp/
 store-listing/
 .zcode/
+
+# Agent scratch workspace (review/fix iteration artifacts)
+.scratch/
+
+# Local cyclic audit artifacts (may contain vulnerability details; never commit/push)
+docs/audit*/
+doc/audit*/
+
+# Local diagnostics, credentials and generated review artifacts
+.tmp-test/
+.testtmp/
+.monkeycode/
+__pycache__/
+*.pyc
+.tmp-enc-probe.md
+.env
+.env.*
+!.env.example

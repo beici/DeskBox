@@ -22,8 +22,7 @@ public sealed class SettingsViewModelChromeModeTests
         var changed = SettingsViewModel.ResetWidgetChromeOverrides(
             settingsService.Settings,
             TestServices.CreateWidgetContentFactory(),
-            WidgetChromeCategory.Display,
-            SettingsService.WidgetChromeModeOverlay);
+            WidgetChromeCategory.Display);
 
         Assert.Equal(2, changed);
         AssertSystemChromeMode(settingsService.Settings.Widgets[0]);
@@ -48,8 +47,7 @@ public sealed class SettingsViewModelChromeModeTests
         var changed = SettingsViewModel.ResetWidgetChromeOverrides(
             settingsService.Settings,
             TestServices.CreateWidgetContentFactory(),
-            WidgetChromeCategory.Interactive,
-            SettingsService.WidgetChromeModeCompact);
+            WidgetChromeCategory.Interactive);
 
         Assert.Equal(3, changed);
         AssertSystemChromeMode(settingsService.Settings.Widgets[0]);

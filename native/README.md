@@ -269,8 +269,9 @@ session fixture. The final x64 AOT matrix proves process/display-name match kind
 4, product session read/write `1.0 -> 0.92 -> 1.0`, application-finally recovery,
 forced-termination recovery by an independent AOT process, preservation of the
 recovery intent when the session disappears, and unchanged system master
-volume. The Rust workspace passes 54 tests: 52 production-module tests and 2
-fixture tests. The production module remains ABI 2, capability mask 255, and
+volume. The Rust workspace passes 75 tests (55 production-module, 18
+thumbnail-proxy, and 2 fixture tests; count refreshed 2026-10-25). The
+production module remains ABI 2, capability mask 255, and
 nine required exports; only the test workspace membership changed. Full details
 are in `../docs/architecture/aot-stage-5b-3c-report.md`.
 

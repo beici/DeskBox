@@ -23,14 +23,16 @@ internal readonly record struct FileWidgetIconLayout(
     public static FileWidgetIconLayout Calculate(
         AppSettings settings,
         double? iconSizeOverride = null,
-        double systemTextScaleFactor = 1)
+        double systemTextScaleFactor = 1,
+        bool? iconLabelHiddenOverride = null)
     {
         double iconSize = SettingsService.NormalizeIconSize(iconSizeOverride ?? settings.IconSize);
         double textSize = Math.Clamp(settings.TextSize, SettingsService.MinTextSize, SettingsService.MaxTextSize);
         double horizontal = NormalizeSpacing(settings.HorizontalSpacingScale);
         double vertical = NormalizeSpacing(settings.VerticalSpacingScale);
         double nameWidth = NormalizeSpacing(settings.FileNameWidthScale);
-        int lines = SettingsService.NormalizeFileNameLineCount(settings.FileNameLineCount);
+        int lines = ResolveEffectiveFileNameLineCount(
+            settings.FileNameLineCount, iconLabelHiddenOverride);
         double labelWidth = Math.Max(iconSize, Lerp(iconSize, textSize * 10.5, nameWidth));
         return new FileWidgetIconLayout(
             iconSize,
@@ -44,6 +46,23 @@ internal readonly record struct FileWidgetIconLayout(
             new Thickness(Lerp(1, 5, horizontal), Lerp(1, 6, vertical), Lerp(1, 5, horizontal), Lerp(1, 6, vertical)),
             Lerp(1, 7, vertical),
             ResolveDecodePixelWidth(iconSize));
+    }
+
+    /// <summary>
+    /// Applies a per-widget label override to the global file-name line
+    /// count: a hidden override collapses to the hidden sentinel, while a
+    /// forced-show override promotes the hidden sentinel to a single line.
+    /// </summary>
+    internal static int ResolveEffectiveFileNameLineCount(
+        int fileNameLineCount,
+        bool? iconLabelHiddenOverride)
+    {
+        int lines = SettingsService.NormalizeFileNameLineCount(fileNameLineCount);
+        bool hidden = iconLabelHiddenOverride ??
+            lines == SettingsService.HiddenFileNameLineCount;
+        return hidden
+            ? SettingsService.HiddenFileNameLineCount
+            : Math.Max(SettingsService.MinFileNameLineCount, lines);
     }
 
     internal static double ResolveTileHeight(

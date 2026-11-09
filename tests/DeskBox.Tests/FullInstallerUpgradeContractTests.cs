@@ -107,6 +107,82 @@ public sealed class FullInstallerUpgradeContractTests : IDisposable
             StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("entry")]
+    [InlineData("install-root")]
+    [InlineData("install-parent")]
+    public async Task ManifestCleanup_RejectsJunctionsBeforeDeletingAnyFiles(string junctionLocation)
+    {
+        string physicalRoot = CreateInstallRoot(Path.Combine("physical", "install"));
+        string staleFile = WriteFile(Path.Combine(physicalRoot, "a-stale.dll"));
+        string outsideFile = WriteFile(Path.Combine(_tempRoot, "outside", "sentinel.txt"));
+        string installRoot = physicalRoot;
+        string junctionPath;
+        string junctionTarget;
+        if (junctionLocation == "entry")
+        {
+            junctionPath = Path.Combine(physicalRoot, "z-redirect");
+            junctionTarget = Path.GetDirectoryName(outsideFile)!;
+        }
+        else
+        {
+            junctionPath = Path.Combine(_tempRoot, "alias");
+            junctionTarget = junctionLocation == "install-root"
+                ? physicalRoot : Path.GetDirectoryName(physicalRoot)!;
+            installRoot = junctionLocation == "install-root"
+                ? junctionPath : Path.Combine(junctionPath, "install");
+        }
+
+        await CreateJunctionAsync(junctionPath, junctionTarget);
+        try
+        {
+            string currentManifest = Path.Combine(_tempRoot, "current.txt");
+            string previousManifest = Path.Combine(physicalRoot, "DeskBox.InstallManifest.txt");
+            File.WriteAllLines(currentManifest, ["DeskBox.exe", "DeskBox.InstallManifest.txt"]);
+            File.WriteAllLines(previousManifest,
+                ["DeskBox.exe", "DeskBox.InstallManifest.txt", "a-stale.dll", "z-redirect/sentinel.txt"]);
+
+            CleanupResult result = await RunCleanupAsync(installRoot, currentManifest, previousManifest);
+
+            Assert.True(File.Exists(outsideFile), result.ToString());
+            Assert.True(File.Exists(staleFile), result.ToString());
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("reparse point", result.StandardError, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            // Delete only the fixture link, never recursively traverse its target.
+            Directory.Delete(junctionPath);
+        }
+    }
+
+    private static async Task CreateJunctionAsync(string path, string target)
+    {
+        var startInfo = new ProcessStartInfo("powershell.exe")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        startInfo.Environment["DESKBOX_TEST_JUNCTION_PATH"] = path;
+        startInfo.Environment["DESKBOX_TEST_JUNCTION_TARGET"] = target;
+        foreach (string argument in new[]
+        {
+            "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+            "$ErrorActionPreference = 'Stop'; New-Item -ItemType Junction " +
+            "-Path $env:DESKBOX_TEST_JUNCTION_PATH -Target $env:DESKBOX_TEST_JUNCTION_TARGET | Out-Null"
+        })
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+        using Process process = Process.Start(startInfo)!;
+        Task<string> output = process.StandardOutput.ReadToEndAsync();
+        Task<string> error = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        Assert.True(process.ExitCode == 0, (await output) + (await error));
+    }
+
     private string CreateInstallRoot(string name)
     {
         string installRoot = Directory.CreateDirectory(Path.Combine(_tempRoot, name)).FullName;

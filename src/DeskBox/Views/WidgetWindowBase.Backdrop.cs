@@ -364,9 +364,20 @@ public abstract partial class WidgetWindowBase
     protected (double Thickness, Windows.UI.Color BorderColor, Windows.UI.Color DividerColor)
         GetWidgetBorderVisuals(bool isDark, Windows.UI.Color accentColor)
     {
-        WidgetBorderVisuals visuals = WidgetBorderVisualCalculator.Resolve(
+        // The per-widget border override resolves before the calculator:
+        // FollowGlobal drops the border for widgets with any image background
+        // (their own or the global unified/panorama one), and an explicit
+        // accent/neutral/none choice always wins.
+        (string style, string colorMode) = WidgetBorderCustomization.ApplyOverride(
+            WidgetBorderCustomization.GetModeOverride(Config),
             SettingsService.Settings.WidgetBorderStyle,
             SettingsService.Settings.WidgetBorderColorMode,
+            WidgetBackgroundCustomization.HasCustomBackground(Config) ||
+            WidgetBackgroundCustomization.IsGlobalImageBackgroundActive(
+                SettingsService.Settings));
+        WidgetBorderVisuals visuals = WidgetBorderVisualCalculator.Resolve(
+            style,
+            colorMode,
             isDark,
             accentColor);
         return (
@@ -727,7 +738,7 @@ public abstract partial class WidgetWindowBase
 
         // Skip backdrop refresh during drag/resize — the window is moving
         // and the backdrop will be refreshed once when the operation ends.
-        if (IsDragging || IsResizing)
+        if (IsDragging || IsResizing || _isCollapseAnimationRendering)
         {
             return;
         }

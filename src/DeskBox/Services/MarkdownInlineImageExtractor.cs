@@ -20,6 +20,14 @@ internal static partial class MarkdownInlineImageExtractor
         CancellationToken cancellationToken = default)
     {
         string source = markdown ?? string.Empty;
+        // Cheap precheck: the regex below is linear (atomic payload group)
+        // but still scans the whole body; almost all bodies carry no inline
+        // data URIs at all, so one ordinal scan avoids the engine entirely.
+        if (!source.Contains("data:image/", StringComparison.Ordinal))
+        {
+            return new MarkdownInlineImageExtractionResult(source, []);
+        }
+
         MatchCollection matches = InlineDataImageRegex().Matches(source);
         if (matches.Count == 0)
         {
@@ -124,7 +132,7 @@ internal static partial class MarkdownInlineImageExtractor
     };
 
     [GeneratedRegex(
-        "!\\[[^\\]\\r\\n]*\\]\\(\\s*(?<url>data:image/(?<subtype>png|jpe?g|gif|webp|bmp);base64,(?<payload>[A-Za-z0-9+/=\\t\\r\\n ]+))(?=\\s*(?:\\)|[\\\"']))",
+        "!\\[[^\\]\\r\\n]*\\]\\(\\s*(?<url>data:image/(?<subtype>png|jpe?g|gif|webp|bmp);base64,(?<payload>(?>[A-Za-z0-9+/=\\t\\r\\n ]+)))(?=\\s*(?:\\)|[\\\"']))",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex InlineDataImageRegex();
 

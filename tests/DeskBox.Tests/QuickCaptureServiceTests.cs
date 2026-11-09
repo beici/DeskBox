@@ -1312,6 +1312,71 @@ public sealed class QuickCaptureServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CleanupUnusedImageCacheAsync_KeepsAttachmentsWhenStoreCouldNotBeRead()
+    {
+        // A failed load hands the service the default (empty) document, so every
+        // attachment directory suddenly looks orphaned. Acting on that guess
+        // deletes managed copies of records that still exist on disk, and the
+        // deletion is irreversible.
+        await File.WriteAllTextAsync(Path.Combine(_storeRoot, "quick-capture.json"), "{ this is not json");
+        string attachmentDirectory = Path.Combine(_storeRoot, "attachments", "existing-item");
+        Directory.CreateDirectory(attachmentDirectory);
+        await File.WriteAllTextAsync(Path.Combine(attachmentDirectory, "managed.bin"), "x");
+        var service = CreateService();
+
+        await service.CleanupUnusedImageCacheAsync();
+
+        Assert.True(
+            Directory.Exists(attachmentDirectory),
+            "attachments must survive a cleanup pass that ran on a document which could not be read");
+        Assert.True(File.Exists(Path.Combine(attachmentDirectory, "managed.bin")));
+    }
+
+    [Fact]
+    public async Task CleanupUnusedImageCacheAsync_KeepsImagesWhenStoreCouldNotBeRead()
+    {
+        // Image-cache twin of the attachment guard above: a failed load hands
+        // the service the default (empty) document, so every cached image
+        // suddenly looks unreferenced and deleting on that guess is
+        // irreversible.
+        await File.WriteAllTextAsync(Path.Combine(_storeRoot, "quick-capture.json"), "{ this is not json");
+        string imageDirectory = Path.Combine(_storeRoot, "images");
+        Directory.CreateDirectory(imageDirectory);
+        string imagePath = Path.Combine(imageDirectory, "existing-item.png");
+        await File.WriteAllBytesAsync(imagePath, [1, 2, 3]);
+        var service = CreateService();
+
+        QuickCaptureImageCacheCleanupResult result = await service.CleanupUnusedImageCacheAsync();
+
+        Assert.Equal(0, result.DeletedFileCount);
+        Assert.Equal(0, result.DeletedBytes);
+        Assert.True(
+            File.Exists(imagePath),
+            "images must survive a cleanup pass that ran on a document which could not be read");
+    }
+
+    [Fact]
+    public async Task SaveAfterUnreadableStore_DoesNotReenableImageCleanup()
+    {
+        // A save from the fallback (empty) document must not launder the load
+        // failure into trust: the in-memory document still cannot know which
+        // images the unread document referenced.
+        await File.WriteAllTextAsync(Path.Combine(_storeRoot, "quick-capture.json"), "{ this is not json");
+        string imageDirectory = Path.Combine(_storeRoot, "images");
+        Directory.CreateDirectory(imageDirectory);
+        string imagePath = Path.Combine(imageDirectory, "existing-item.png");
+        await File.WriteAllBytesAsync(imagePath, [1, 2, 3]);
+        var service = CreateService();
+        await service.AddItemAsync("saved after an unreadable store");
+
+        await service.CleanupUnusedImageCacheAsync();
+
+        Assert.True(
+            File.Exists(imagePath),
+            "a save from an unread document must not re-enable image cleanup");
+    }
+
+    [Fact]
     public async Task DeleteItemAsync_KeepsAttachmentDirectoryAliveDuringUndoWindow()
     {
         // FQC-13 (mirroring DEF-012): the GC pass that runs right after a

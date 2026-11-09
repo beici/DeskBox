@@ -3,25 +3,32 @@
 """
 DeskBox 静态验证门禁（Linux 无编译环境 · 每批次推送前运行并留输出）
 检查项：
-  1. 12 语言键一致性与占位符一致性（Strings/*.json）
+  1. 13 语言键一致性与占位符一致性（Strings/*.json）
   2. async void 计数 <= 基线
   3. 剪贴板写配对：Clipboard.SetContent 附近必须有 MarkWrite/MarkText（豁免清单管理）
   4. 禁止模式：UI 路径新增 GetAwaiter().GetResult()/.Result/.Wait()、新增空 catch、新增反射
-  5. 契约断言重放：ContractTests 内字符串断言以 rg 重放
+  5. 契约断言重放：ContractTests 内字符串断言在缓存的仓库文本中重放
 用法：python3 scripts/quality/static_gate.py [--json OUT.json]
 """
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Windows GBK 控制台打印 ✗/✓ 等符号会 UnicodeEncodeError 裸退（R2-⑩ 过程缺陷）：
+# 统一重配 stdout/stderr 为 UTF-8。
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 SRC = os.path.join(ROOT, "src", "DeskBox")
 TESTS = os.path.join(ROOT, "tests", "DeskBox.Tests")
 BASELINE_FILE = os.path.join(ROOT, "scripts", "quality", "static-baseline.json")
 LANGS = ["ar-SA", "bn-BD", "de-DE", "en-US", "es-ES", "fr-FR",
-         "hi-IN", "ja-JP", "pt-BR", "ru-RU", "zh-CN", "zh-TW"]
+         "hi-IN", "ja-JP", "ko-KR", "pt-BR", "ru-RU", "zh-CN", "zh-TW"]
 
 # DEF-027: 死宿主 QuickCaptureWidgetWindow 已随统一内容窗口路径删除，其 3 处
 # 剪贴板写随之消失，豁免清单清空（后续如需豁免，在此重新登记）。
@@ -30,12 +37,74 @@ CLIPBOARD_EXEMPT_FILES = []
 PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
 
 
+_RG_AVAILABLE = shutil.which("rg") is not None
+_REPO_FILE_CACHE = None
+
+# rg 缺失时的纯 Python 回退扫描扩展集（覆盖本脚本搜索的 src 与 tests 内容）
+_FALLBACK_EXTS = {".cs", ".xaml", ".json", ".py", ".ps1", ".rs", ".iss"}
+
+
+def _fallback_scan(pattern, path):
+    """rg 不可用时的等价回退：逐行正则扫描，输出同为 '文件:行号:内容'。"""
+    compiled = re.compile(pattern)
+    results = []
+    if os.path.isfile(path):
+        candidates = [path]
+    else:
+        candidates = []
+        for dirpath, dirnames, filenames in os.walk(path):
+            dirnames[:] = [d for d in dirnames
+                           if not d.startswith(".") and d not in ("bin", "obj")]
+            candidates.extend(
+                os.path.join(dirpath, f) for f in sorted(filenames)
+                if os.path.splitext(f)[1].lower() in _FALLBACK_EXTS)
+    for file_path in candidates:
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as fh:
+                for line_no, line in enumerate(fh, 1):
+                    if compiled.search(line):
+                        results.append(f"{file_path}:{line_no}:{line.rstrip()}")
+        except OSError:
+            continue
+    return results
+
+
+def _fallback_repo_files():
+    """整仓库文本文件内容缓存（路径→内容），rg 缺失时的重放/多行搜索共用。"""
+    global _REPO_FILE_CACHE
+    if _REPO_FILE_CACHE is not None:
+        return _REPO_FILE_CACHE
+    cache = {}
+    _fallback_exts = _FALLBACK_EXTS | {".md", ".txt", ".yml", ".yaml", ".toml",
+                                       ".csproj", ".sln", ".props", ".iss", ".iss"}
+    skip_dirs = {"bin", "obj", "artifacts", ".artifacts", "node_modules",
+                 "target", "packages"}
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames
+                       if (not d.startswith(".") or d in (".github", ".githooks")) and d not in skip_dirs]
+        for fn in sorted(filenames):
+            if os.path.splitext(fn)[1].lower() not in _fallback_exts:
+                continue
+            file_path = os.path.join(dirpath, fn)
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="replace") as fh:
+                    cache[file_path] = fh.read()
+            except OSError:
+                continue
+    _REPO_FILE_CACHE = cache
+    return cache
+
+
 def rg(pattern, path, extra_args=None):
     """返回 (count, lines) —— lines 为 '文件:行号:内容' 列表"""
+    if not _RG_AVAILABLE:
+        # 环境无 ripgrep（如 CI 最小镜像）：回退到纯 Python 扫描，语义等价，
+        # 避免整门禁在第一个 rg 调用上裸 traceback 退出（R2-⑩ 过程缺陷）。
+        return _fallback_scan(pattern, path)
     cmd = ["rg", "--no-heading", "-n", pattern, path]
     if extra_args:
         cmd += extra_args
-    p = subprocess.run(cmd, capture_output=True, text=True)
+    p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     lines = [l for l in p.stdout.splitlines() if l.strip()]
     return lines
 
@@ -54,6 +123,17 @@ def parse_loc(line):
 
 def check_strings():
     errors, stats = [], []
+    # 防漂移：Strings/ 目录实际语言集必须与 LANGS 完全一致——新增/删除语言
+    # 而忘改本清单时立即失败，而不是静默漏检一个语言。
+    strings_dir = os.path.join(SRC, "Strings")
+    actual_langs = sorted(
+        f[:-5] for f in os.listdir(strings_dir) if f.endswith(".json"))
+    if actual_langs != sorted(LANGS):
+        missing = sorted(set(LANGS) - set(actual_langs))
+        extra = sorted(set(actual_langs) - set(LANGS))
+        errors.append(
+            f"Strings/ 目录与 LANGS 清单不一致: 清单多 {missing}, 目录多 {extra}")
+        return errors, stats
     keysets = {}
     for lang in LANGS:
         path = os.path.join(SRC, "Strings", f"{lang}.json")
@@ -156,21 +236,72 @@ def check_clipboard_pairing():
 def check_forbidden_patterns():
     lines_result = rg(r"GetAwaiter\(\)\.GetResult\(\)|\.Result\b|\.Wait\(\)", SRC)
     empty_catch = []
-    p = subprocess.run(
-        ["rg", "--no-heading", "-n", "-U", r"catch\s*(\([^)]*\))?\s*\{\s*\}", SRC],
-        capture_output=True, text=True)
-    for l in p.stdout.splitlines():
-        if l.strip():
-            empty_catch.append(l)
+    # Count catch blocks, not each output line of a multiline rg match.
+    compiled = re.compile(r"catch\s*(\([^)]*\))?\s*\{\s*\}", re.S)
+    for file_path, content in _fallback_repo_files().items():
+        if not file_path.startswith(SRC):
+            continue
+        for m in compiled.finditer(content):
+            line_no = content.count("\n", 0, m.start()) + 1
+            snippet = " ".join(m.group(0).split())
+            empty_catch.append(f"{file_path}:{line_no}:{snippet}")
     reflection = rg(r"GetType\(\)\.GetMethod|Activator\.CreateInstance|Assembly\.Load|typeof\([^)]*\)\.GetField|typeof\([^)]*\)\.GetProperty", SRC)
     return lines_result, empty_catch, reflection
 
 
+_ASSERTION_LITERAL_RE = re.compile(r'Assert\.(?:Contains|DoesNotContain)\(\s*"(?:[^"\\]|\\.)*"')
+
+
+def _contract_search_content(path, content):
+    # Contracts also inspect test project files, probes and other test methods.
+    # Keep those targets, but erase assertion literals so they cannot validate themselves.
+    relative = os.path.relpath(path, ROOT).replace(os.sep, "/")
+    if relative.startswith("tests/") and relative.endswith(".cs"):
+        content = _ASSERTION_LITERAL_RE.sub("", content)
+    return content.replace("\r\n", "\n")
+
+
+def _literal_repository_contents():
+    """Load repository text once, excluding test assertion literals."""
+    if not _RG_AVAILABLE:
+        return [_contract_search_content(path, content)
+                for path, content in _fallback_repo_files().items()]
+    result = subprocess.run(
+        ["rg", "--files", "--hidden", "-g", "!.git", "-g", "!.git/**", ROOT],
+        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if result.returncode not in (0, 1):
+        raise RuntimeError(f"Cannot enumerate contract search files: {result.stderr.strip()}")
+    contents = []
+    for path in result.stdout.splitlines():
+        with open(path, "rb") as source:
+            raw = source.read()
+        if b"\0" not in raw:
+            contents.append(_contract_search_content(path, raw.decode("utf-8", errors="replace")))
+    return contents
+
+
+def decode_csharp_literal(literal):
+    """Decode regular C# string escapes without corrupting non-ASCII text."""
+    simple = {"n": "\n", "r": "\r", "t": "\t", "0": "\0", "a": "\a",
+              "b": "\b", "f": "\f", "v": "\v", '"': '"', "'": "'", "\\": "\\"}
+    def replace(match):
+        value = match.group(1)
+        if value[0] in ("u", "U", "x"):
+            return chr(int(value[1:], 16))
+        return simple[value]
+    return re.sub(r"\\(u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{1,4}|.)", replace, literal)
+
+
 def replay_contract_assertions():
-    """把 ContractTests 内的字符串断言用 rg 定长匹配重放，只报告「新增失联」。
-    基线：static-baseline.json 的 contract_misses（克隆时快照）。
-    返回 (hits, new_misses, base_miss_count)。"""
+    """把 ContractTests 内的字符串断言在仓库文本缓存中定长匹配重放。
+    Contains：0 命中=失联（基线豁免历史项，新增失联才报）。
+    DoesNotContain：全仓命中仅作观察，切片作用域由真实测试裁决。
+    搜索空间包含构建描述符、探针及其他测试实现，但移除测试断言字面量。
+    返回 (hits, new_misses, all_misses, doesnot_violations)。"""
+    repository_contents = _literal_repository_contents()
+    repository_contents_lower = [content.lower() for content in repository_contents]
     all_items = []
+    doesnot_items = []
     cfiles = []
     if os.path.isdir(TESTS):
         for dirpath, _, files in os.walk(TESTS):
@@ -180,26 +311,40 @@ def replay_contract_assertions():
     for cf in cfiles:
         rel = os.path.relpath(cf, ROOT).replace(os.sep, "/")
         try:
-            src = open(cf, encoding="utf-8").read()
+            with open(cf, encoding="utf-8") as source:
+                src = source.read()
         except Exception:
             continue
-        for m in re.finditer(r'(?:Contains|DoesNotContain)\(\s*"((?:[^"\\]|\\.)*)"', src):
-            lit = m.group(1)
-            lit = lit.replace('\\"', '"').replace("\\\\", "\\")
+        # Only the explicit string-comparison overload is a source-literal assertion.
+        # Collection assertions and ordinary Contains calls require the real tests.
+        pattern = r'Assert\.(Contains|DoesNotContain)\(\s*"((?:[^"\\]|\\.)*)"\s*,\s*[A-Za-z_]\w*\s*,\s*StringComparison\.(Ordinal|OrdinalIgnoreCase)\s*\)'
+        for m in re.finditer(pattern, src):
+            kind = m.group(1)
+            raw_literal = m.group(2)
+            lit = decode_csharp_literal(raw_literal)
+            # Keep historical report/baseline identities stable while searching decoded text.
+            label = raw_literal.replace('\\"', '"').replace("\\\\", "\\")
             # 定长匹配：断言字面量按原文长度在仓库全文中查找（剔除转义空白差异影响的最小化处理）
             if len(lit) < 6:
                 continue
-            esc = re.escape(lit)
-            r = subprocess.run(["rg", "-F", "-c", "--no-filename", "--", lit, ROOT],
-                               capture_output=True, text=True)
-            total = sum(int(x) for x in r.stdout.split())
-            all_items.append((rel, lit, total))
+            normalized = lit.replace("\r\n", "\n")
+            if m.group(3) == "OrdinalIgnoreCase":
+                total = any(normalized.lower() in content for content in repository_contents_lower)
+            else:
+                total = any(normalized in content for content in repository_contents)
+            if kind == "DoesNotContain":
+                doesnot_items.append((rel, label, total))
+            else:
+                all_items.append((rel, label, total))
     misses = [f"{rel} :: {lit[:70]}" for rel, lit, total in all_items if total == 0]
     hits_n = sum(1 for _, _, t in all_items if t > 0)
+    doesnot_violations = [
+        f"DoesNotContain violation :: {rel} :: {lit[:70]}"
+        for rel, lit, total in doesnot_items if total > 0]
     baseline = load_baseline()
     base_misses = set(baseline.get("contract_misses", []))
     new_misses = [m for m in misses if m not in base_misses]
-    return hits_n, new_misses, misses
+    return hits_n, new_misses, misses, doesnot_violations
 
 
 def load_baseline():
@@ -225,9 +370,9 @@ def main():
     print("DeskBox 静态验证门禁 static_gate.py")
     print("=" * 62)
 
-    # 1. 12 语言
+    # 1. 13 语言
     errs, stats = check_strings()
-    print(f"\n[1] 12 语言键/占位符一致性: {'PASS' if not errs else 'FAIL'}")
+    print(f"\n[1] 13 语言键/占位符一致性: {'PASS' if not errs else 'FAIL'}")
     for s in stats:
         print("    " + s)
     for e in errs:
@@ -266,11 +411,17 @@ def main():
             failures.append(f"{label} 新增 {cur - base} 处")
 
     # 5. 契约断言重放
-    hits, new_misses, all_misses = replay_contract_assertions()
+    hits, new_misses, all_misses, doesnot_hits = replay_contract_assertions()
     print(f"\n[5] 契约断言重放: 命中 {hits} / 失联 {len(all_misses)}（其中新增 {len(new_misses)}）")
     for m in new_misses:
         print("    ✗ 新增失联: " + m)
         failures.append("contract-replay: " + m)
+    # DoesNotContain 断言钉的是「某生产文件切片内不得出现 X」，其作用域是
+    # 断言的第二个参数（切片变量），不是全仓。全仓定长重放必然在无关生产
+    # 文件命中（实测 Windows10WidgetMotion/WindowShadow 系列 40+ 假阳性），
+    # 因此这里只记录为可观察项，真裁决由 x64 全量测试中的断言本体执行。
+    if doesnot_hits:
+        print(f"    ⚠ DoesNotContain 全仓命中 {len(doesnot_hits)} 处（切片作用域断言，仅供参考）")
 
     print("\n" + "=" * 62)
     if failures:
@@ -291,10 +442,29 @@ def main():
         "reflection_count": len(reflection),
         "contract_hits": hits,
         "contract_misses": all_misses,
+        "doesnot_hits": doesnot_hits,
         "failures": failures,
     }
     if out_json:
-        save_baseline(report) if "--update-baseline" in args else None
+        if "--update-baseline" in args:
+            # A baseline written while the gate is red turns today's failure into
+            # tomorrow's budget (DEF-151): the file used to keep a stale
+            # `"failures": ["async void 257 > 基线 254"]` from exactly that.
+            # Counting/structural failures block the write; contract-replay
+            # misses are observations that the baseline keeps on purpose, so they
+            # only need an explicit --accept-new-misses after a human review.
+            blocking = [f for f in failures if not f.startswith("contract-replay:")]
+            if blocking:
+                print("拒绝写入基线：门禁当前为 FAIL（" + "; ".join(blocking) + "），先消除红灯再更新（DEF-151）。")
+            elif new_misses and "--accept-new-misses" not in args:
+                print(f"拒绝写入基线：有 {len(new_misses)} 条新增契约失联，核验后加 --accept-new-misses 再更新。")
+            else:
+                # The baseline is a budget ledger, not a run report: keep the
+                # counters/known sets, drop the run-time failure list.
+                save_baseline({k: v for k, v in report.items() if k != "failures"})
+        out_dir = os.path.dirname(out_json)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
         with open(out_json, "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
         print(f"报告已写入 {out_json}")

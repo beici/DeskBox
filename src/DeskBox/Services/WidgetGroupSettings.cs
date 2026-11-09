@@ -73,6 +73,11 @@ public static class WidgetGroupSettings
         settings.Widgets ??= [];
         settings.WidgetGroups ??= [];
         settings.DeletedWidgetIds ??= [];
+        // R20-S8-01 / V2-02: an explicit JSON null element survives the list
+        // initializers above, and every loop below dereferences its elements.
+        // Filter here - this is the single ownership point that both
+        // settings.json and widget-layout.json load paths pass through.
+        int removedNullWidgets = settings.Widgets.RemoveAll(widget => widget is null);
         string normalizedDefaultStyle = WidgetGroupNavigationStyles.Normalize(
             settings.WidgetGroupDefaultNavigationStyle,
             allowFollowDefault: false);
@@ -81,6 +86,7 @@ public static class WidgetGroupSettings
                 settings.WidgetGroupDefaultTitleDisplayMode,
                 allowFollowDefault: false);
         bool changed =
+            removedNullWidgets > 0 ||
             !string.Equals(
                 settings.WidgetGroupDefaultNavigationStyle,
                 normalizedDefaultStyle,

@@ -1,0 +1,483 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="DeskBox.Views.ScreenshotCaptureWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:DeskBox.Controls"
+    Title="DeskBox">
+
+    <Grid x:Name="RootGrid" Background="Black" KeyboardAcceleratorPlacementMode="Hidden" RightTapped="RootGrid_RightTapped">
+        <Grid.Resources>
+            <!-- WeChat's capture bar is a light strip of thin dark line icons.
+                 The button itself is transparent and only tints on hover, so the
+                 icons carry the bar instead of a row of raised chips. The
+                 template is replaced because the stock one paints the dark-theme
+                 hover fill, which is invisible on a white panel. -->
+            <Style x:Key="ToolButtonStyle" TargetType="Button">
+                <Setter Property="Width" Value="34" />
+                <Setter Property="Height" Value="30" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="Foreground" Value="#FF333333" />
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="CornerRadius" Value="6" />
+                <Setter Property="HorizontalContentAlignment" Value="Center" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Grid
+                                x:Name="ButtonRoot"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="{TemplateBinding CornerRadius}">
+                                <VisualStateManager.VisualStateGroups>
+                                    <VisualStateGroup x:Name="CommonStates">
+                                        <VisualState x:Name="Normal" />
+                                        <VisualState x:Name="PointerOver">
+                                            <VisualState.Setters>
+                                                <Setter Target="ButtonRoot.Background" Value="#0F000000" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Pressed">
+                                            <VisualState.Setters>
+                                                <Setter Target="ButtonRoot.Background" Value="#1F000000" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                        <VisualState x:Name="Disabled">
+                                            <VisualState.Setters>
+                                                <Setter Target="ButtonRoot.Opacity" Value="0.35" />
+                                            </VisualState.Setters>
+                                        </VisualState>
+                                    </VisualStateGroup>
+                                </VisualStateManager.VisualStateGroups>
+                                <ContentPresenter
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    Content="{TemplateBinding Content}" />
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+            <!-- One stroke recipe for every toolbar glyph, so the bar reads as a
+                 single set of line icons instead of a mix of fonts and emoji. -->
+            <Style x:Key="ToolIconStyle" TargetType="Path">
+                <!-- A fixed 16x16 box: without it a Path measures to its own
+                     geometry bounds, so icons of different shapes drift off the
+                     shared optical centre. -->
+                <Setter Property="Width" Value="16" />
+                <Setter Property="Height" Value="16" />
+                <Setter Property="Stroke" Value="#FF333333" />
+                <Setter Property="StrokeThickness" Value="1.2" />
+                <Setter Property="StrokeLineJoin" Value="Round" />
+                <Setter Property="StrokeStartLineCap" Value="Round" />
+                <Setter Property="StrokeEndLineCap" Value="Round" />
+            </Style>
+            <Style x:Key="SwatchButtonStyle" TargetType="Button">
+                <Setter Property="Width" Value="18" />
+                <Setter Property="Height" Value="18" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="BorderBrush" Value="#33000000" />
+                <Setter Property="CornerRadius" Value="9" />
+            </Style>
+        </Grid.Resources>
+
+        <Grid.KeyboardAccelerators>
+            <KeyboardAccelerator Key="Escape" Invoked="EscapeAccelerator_Invoked" />
+            <KeyboardAccelerator Key="C" Modifiers="Control" Invoked="CopyAccelerator_Invoked" />
+            <KeyboardAccelerator Key="C" Invoked="ColorPickAccelerator_Invoked" />
+            <KeyboardAccelerator Key="F3" Invoked="PinAccelerator_Invoked" />
+            <KeyboardAccelerator Key="Z" Modifiers="Control" Invoked="UndoAccelerator_Invoked" />
+            <KeyboardAccelerator Key="Y" Modifiers="Control" Invoked="RedoAccelerator_Invoked" />
+        </Grid.KeyboardAccelerators>
+
+        <Image
+            x:Name="FrozenScreenImage"
+            Stretch="Fill"
+            DoubleTapped="FrozenScreenImage_DoubleTapped"
+            PointerCaptureLost="FrozenScreenImage_PointerCaptureLost"
+            PointerExited="FrozenScreenImage_PointerExited"
+            PointerMoved="FrozenScreenImage_PointerMoved"
+            PointerPressed="FrozenScreenImage_PointerPressed"
+            PointerReleased="FrozenScreenImage_PointerReleased" />
+
+        <!-- Half-black veil over everything that is not being captured, with a
+             hole punched at the selection so the picked region keeps its real
+             colours. Black at 50% is what QQ and WeChat use, and it is what
+             produces the familiar mid grey over a light desktop: the reported
+             #707274 is that composite, not a fixed colour, so a flat fill of it
+             would either hide the screen outright or wash out on dark desktops.
+             A Path with EvenOdd fill gives one seamless veil; four bands around
+             the selection would leave seams at the corners. -->
+        <Path
+            x:Name="DimVeil"
+            Fill="#80000000"
+            IsHitTestVisible="False" />
+
+        <Border
+            x:Name="SelectionBorder"
+            Background="Transparent"
+            BorderBrush="#FF409EFF"
+            BorderThickness="3"
+            IsHitTestVisible="False"
+            Visibility="Collapsed">
+            <Canvas x:Name="ThirdsCanvas" IsHitTestVisible="False" Visibility="Collapsed">
+                <Rectangle
+                    x:Name="ThirdsVertical1"
+                    Width="1"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Stretch"
+                    Fill="#80FFFFFF" />
+                <Rectangle
+                    x:Name="ThirdsVertical2"
+                    Width="1"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Stretch"
+                    Fill="#80FFFFFF" />
+                <Rectangle
+                    x:Name="ThirdsHorizontal1"
+                    Height="1"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Top"
+                    Fill="#80FFFFFF" />
+                <Rectangle
+                    x:Name="ThirdsHorizontal2"
+                    Height="1"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Top"
+                    Fill="#80FFFFFF" />
+            </Canvas>
+        </Border>
+
+        <!-- Annotation surface. It is only hit-test visible while a tool is
+             armed, so an unarmed overlay never swallows the drag that starts a
+             new region. -->
+        <controls:ScreenshotAnnotationLayer
+            x:Name="AnnotationLayer"
+            HorizontalAlignment="Left"
+            VerticalAlignment="Top"
+            Visibility="Collapsed" />
+
+        <!-- Corner brackets around the region, the way WeChat marks a capture
+             area. Purely decorative: two hairlines per corner, built in code and
+             positioned by UpdateCornerBrackets. -->
+        <Canvas x:Name="BracketCanvas" IsHitTestVisible="False" Visibility="Collapsed" />
+
+        <!-- Eight resize grips, above the annotation surface so a selection can
+             still be adjusted while a tool is armed. The empty canvas itself
+             never hit tests (null background); only the grips do, and each one
+             hands the pointer back to the frozen image so a single drag
+             implementation serves both paths. -->
+        <Canvas x:Name="HandleCanvas" Visibility="Collapsed" />
+
+        <Canvas Canvas.ZIndex="100" IsHitTestVisible="False">
+            <Border x:Name="MagnifierPanel" Width="160"
+                    Background="#FCFAFAFB" BorderBrush="#30000000"
+                    BorderThickness="1" CornerRadius="10" Visibility="Collapsed">
+                <StackPanel>
+                    <Grid x:Name="MagnifierClip" Width="158" Height="158"
+                          CornerRadius="9,9,0,0" Background="#FFFFFFFF">
+                        <Image x:Name="MagnifierImage" Width="158" Height="158" Stretch="Fill" />
+                        <Rectangle Height="1" VerticalAlignment="Center" Fill="#D920B878" />
+                        <Rectangle Width="1" HorizontalAlignment="Center" Fill="#D920B878" />
+                        <Rectangle Width="8" Height="8" HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" Stroke="#FF169C66" StrokeThickness="1" />
+                    </Grid>
+                    <Border x:Name="PointerInfoPanel" Padding="10,8,10,9"
+                            BorderBrush="#18000000" BorderThickness="0,1,0,0">
+                        <Grid ColumnSpacing="8" RowSpacing="4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock x:Name="CoordLabelText" FontSize="12" Foreground="#FF686B72" />
+                            <TextBlock x:Name="PointerCoordText" Grid.Column="1" HorizontalAlignment="Right"
+                                       FontSize="12" Foreground="#FF24272D" />
+                            <TextBlock x:Name="ColorLabelText" Grid.Row="1" FontSize="12" Foreground="#FF686B72" />
+                            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal"
+                                        Spacing="6" HorizontalAlignment="Right">
+                                <Border x:Name="PixelColorSwatch" Width="10" Height="10" CornerRadius="3"
+                                        BorderThickness="1" BorderBrush="#30000000" VerticalAlignment="Center" />
+                                <TextBlock x:Name="PointerColorText" FontFamily="Consolas" FontSize="12" Foreground="#FF24272D" />
+                            </StackPanel>
+                            <TextBlock x:Name="ColorHintText" Grid.Row="2" Grid.ColumnSpan="2"
+                                       Margin="0,3,0,0" FontSize="11" TextWrapping="Wrap"
+                                       Foreground="#FF858891" />
+                        </Grid>
+                    </Border>
+                </StackPanel>
+            </Border>
+        </Canvas>
+
+        <Border
+            x:Name="HintPanel"
+            Padding="8,5"
+            HorizontalAlignment="Right"
+            VerticalAlignment="Top"
+            Background="#FFFAFAFA"
+            BorderBrush="#1A000000"
+            BorderThickness="1"
+            CornerRadius="8"
+            Margin="0,24,24,0">
+                <StackPanel Orientation="Vertical" Spacing="6">
+                    <!-- One toolbar row, WeChat style: shape tools first, then
+                         history, then the actions that finish the capture. The
+                         icons are line paths and the localized caption lives in
+                         the tooltip, which keeps the bar narrow instead of
+                         letting translated captions dictate its width. -->
+                    <StackPanel
+                        x:Name="ToolRow"
+                        Orientation="Horizontal"
+                        Spacing="2">
+                        <TextBlock
+                            x:Name="SelectionHintText"
+                            MaxWidth="150"
+                            Margin="4,0,10,0"
+                            VerticalAlignment="Center"
+                            FontSize="12"
+                            Foreground="#FF8A8A8A"
+                            TextTrimming="CharacterEllipsis" />
+
+                        <Button
+                            x:Name="RectangleToolButton"
+                            Tag="Rectangle"
+                            Style="{StaticResource ToolButtonStyle}"
+                            Click="ToolButton_Click">
+                            <Path Style="{StaticResource ToolIconStyle}" Data="M2.5,3.5 H13.5 V12.5 H2.5 Z" />
+                        </Button>
+                        <Button
+                            x:Name="EllipseToolButton"
+                            Tag="Ellipse"
+                            Style="{StaticResource ToolButtonStyle}"
+                            Click="ToolButton_Click">
+                            <Ellipse
+                                Width="11"
+                                Height="11"
+                                Stroke="#FF333333"
+                                StrokeThickness="1.2" />
+                        </Button>
+                        <Button
+                            x:Name="ArrowToolButton"
+                            Tag="Arrow"
+                            Style="{StaticResource ToolButtonStyle}"
+                            Click="ToolButton_Click">
+                            <Path Style="{StaticResource ToolIconStyle}" Data="M2.5,13.5 L13.5,2.5 M7.5,2.5 H13.5 V8.5" />
+                        </Button>
+                        <Button
+                            x:Name="PencilToolButton"
+                            Tag="Pencil"
+                            Style="{StaticResource ToolButtonStyle}"
+                            Click="ToolButton_Click">
+                            <Path Style="{StaticResource ToolIconStyle}" Data="M2.5,13.5 L4,10.5 L10.8,3.5 L12.5,5.2 L5.5,12 Z M9.5,4.8 L11.2,6.5" />
+                        </Button>
+                        <Button
+                            x:Name="MosaicToolButton"
+                            Tag="Mosaic"
+                            Style="{StaticResource ToolButtonStyle}"
+                            Click="ToolButton_Click">
+                            <Path Style="{StaticResource ToolIconStyle}" Data="M2.5,2.5 H13.5 V13.5 H2.5 Z M6.2,2.5 V13.5 M9.8,2.5 V13.5 M2.5,6.2 H13.5 M2.5,9.8 H13.5" />
+                        </Button>
+                        <Button
+                            x:Name="TextToolButton"
+                            Tag="Text"
+                            Style="{StaticResource ToolButtonStyle}"
+                            Click="ToolButton_Click">
+                            <Path Style="{StaticResource ToolIconStyle}" Data="M3,3.5 H13 M8,3.5 V13" />
+                        </Button>
+                        <Button
+                            x:Name="LineToolButton"
+                            Tag="Line"
+                            Style="{StaticResource ToolButtonStyle}"
+                            Click="ToolButton_Click">
+                            <Path Style="{StaticResource ToolIconStyle}" Data="M2.5,13.5 L13.5,2.5" />
+                        </Button>
+                        <Button
+                            x:Name="MarkerToolButton"
+                            Tag="Marker"
+                            Style="{StaticResource ToolButtonStyle}"
+                            Click="ToolButton_Click">
+                            <Path Style="{StaticResource ToolIconStyle}" Data="M2.5,11 L8.5,5 L11,7.5 L5,13.5 Z M8.5,5 L10.5,3 L13,5.5 L11,7.5" />
+                        </Button>
+                        <Button
+                            x:Name="BlurToolButton"
+                            Tag="Blur"
+                            Style="{StaticResource ToolButtonStyle}"
+                            Click="ToolButton_Click">
+                            <Path
+                                Style="{StaticResource ToolIconStyle}"
+                                Data="M8,2.5 A5.5,5.5 0 1 1 7.99,2.5 M8,5.5 A2.5,2.5 0 1 1 7.99,5.5"
+                                StrokeDashArray="1.6,1.6" />
+                        </Button>
+                        <Button
+                            x:Name="EraserToolButton"
+                            Tag="Eraser"
+                            Style="{StaticResource ToolButtonStyle}"
+                            Click="ToolButton_Click">
+                            <Path Style="{StaticResource ToolIconStyle}" Data="M5.5,3.5 H13.5 V12.5 H5.5 L2,8 Z M7.5,6 L10.5,10 M10.5,6 L7.5,10" />
+                        </Button>
+
+                        <Rectangle
+                            Width="1"
+                            Height="18"
+                            Margin="4,0"
+                            Fill="#1A000000" />
+
+                        <Button
+                            x:Name="UndoButton"
+                            Style="{StaticResource ToolButtonStyle}"
+                            Click="UndoButton_Click">
+                            <Path Style="{StaticResource ToolIconStyle}" Data="M2.5,8.5 H9.5 A3.2,3.2 0 0 1 9.5,14.9 H6" />
+                        </Button>
+                        <Button
+                            x:Name="RedoButton"
+                            Style="{StaticResource ToolButtonStyle}"
+                            Click="RedoButton_Click">
+                            <Path Style="{StaticResource ToolIconStyle}" Data="M13.5,8.5 H6.5 A3.2,3.2 0 0 0 6.5,14.9 H10" />
+                        </Button>
+
+                        <Rectangle
+                            Width="1"
+                            Height="18"
+                            Margin="4,0"
+                            Fill="#1A000000" />
+
+                        <Button
+                            x:Name="ResetButton"
+                            Style="{StaticResource ToolButtonStyle}"
+                            Click="ResetButton_Click"
+                            Visibility="Collapsed">
+                            <Path Style="{StaticResource ToolIconStyle}" Data="M13.5,8 A5.5,5.5 0 1 1 8,2.5 M8,2.5 H12 M8,2.5 V6.5" />
+                        </Button>
+                        <Button
+                            x:Name="PinButton"
+                            Style="{StaticResource ToolButtonStyle}"
+                            Click="PinButton_Click"
+                            Visibility="Collapsed">
+                            <Path Style="{StaticResource ToolIconStyle}" Data="M8,2.5 A3.2,3.2 0 0 1 11.2,5.7 C11.2,8.2 8,13.5 8,13.5 C8,13.5 4.8,8.2 4.8,5.7 A3.2,3.2 0 0 1 8,2.5 Z" />
+                        </Button>
+                        <Button
+                            x:Name="SaveButton"
+                            Style="{StaticResource ToolButtonStyle}"
+                            Click="SaveButton_Click"
+                            Visibility="Collapsed">
+                            <Path Style="{StaticResource ToolIconStyle}" Data="M3,3 H10.5 L13,5.5 V13 H3 Z M5.5,3 V6.5 H10.5 V3 M5.5,13 V9.5 H10.5 V13" />
+                        </Button>
+                        <Button
+                            x:Name="CopyButton"
+                            Style="{StaticResource ToolButtonStyle}"
+                            Click="CopyButton_Click"
+                            Visibility="Collapsed">
+                            <Path
+                                Style="{StaticResource ToolIconStyle}"
+                                Data="M3,8.5 L6.5,12 L13,4"
+                                Stroke="#FF07C160"
+                                StrokeThickness="1.7" />
+                        </Button>
+                        <Button
+                            x:Name="CancelButton"
+                            Style="{StaticResource ToolButtonStyle}"
+                            Click="CancelButton_Click">
+                            <Path
+                                Style="{StaticResource ToolIconStyle}"
+                                Data="M4,4 L12,12 M12,4 L4,12"
+                                Stroke="#FFFA5151"
+                                StrokeThickness="1.5" />
+                        </Button>
+                    </StackPanel>
+
+                    <!-- Palette: only meaningful while a drawing tool is armed, so
+                         it stays collapsed until one is picked. -->
+                    <StackPanel
+                        x:Name="PaletteRow"
+                        Orientation="Horizontal"
+                        Spacing="2"
+                        Visibility="Collapsed">
+                        <Button
+                            x:Name="ColorRedButton"
+                            Tag="#FFFF3B30"
+                            Style="{StaticResource SwatchButtonStyle}"
+                            Background="#FFFF3B30"
+                            Click="ColorSwatch_Click" />
+                        <Button
+                            x:Name="ColorOrangeButton"
+                            Tag="#FFFF9500"
+                            Style="{StaticResource SwatchButtonStyle}"
+                            Background="#FFFF9500"
+                            Click="ColorSwatch_Click" />
+                        <Button
+                            x:Name="ColorYellowButton"
+                            Tag="#FFFFCC00"
+                            Style="{StaticResource SwatchButtonStyle}"
+                            Background="#FFFFCC00"
+                            Click="ColorSwatch_Click" />
+                        <Button
+                            x:Name="ColorGreenButton"
+                            Tag="#FF34C759"
+                            Style="{StaticResource SwatchButtonStyle}"
+                            Background="#FF34C759"
+                            Click="ColorSwatch_Click" />
+                        <Button
+                            x:Name="ColorCyanButton"
+                            Tag="#FF32ADE6"
+                            Style="{StaticResource SwatchButtonStyle}"
+                            Background="#FF32ADE6"
+                            Click="ColorSwatch_Click" />
+                        <Button
+                            x:Name="ColorBlueButton"
+                            Tag="#FF007AFF"
+                            Style="{StaticResource SwatchButtonStyle}"
+                            Background="#FF007AFF"
+                            Click="ColorSwatch_Click" />
+                        <Button
+                            x:Name="ColorPurpleButton"
+                            Tag="#FFAF52DE"
+                            Style="{StaticResource SwatchButtonStyle}"
+                            Background="#FFAF52DE"
+                            Click="ColorSwatch_Click" />
+                        <Button
+                            x:Name="ColorWhiteButton"
+                            Tag="#FFFFFFFF"
+                            Style="{StaticResource SwatchButtonStyle}"
+                            Background="#FFFFFFFF"
+                            Click="ColorSwatch_Click" />
+                        <Button
+                            x:Name="ColorBlackButton"
+                            Tag="#FF101010"
+                            Style="{StaticResource SwatchButtonStyle}"
+                            Background="#FF101010"
+                            Click="ColorSwatch_Click" />
+
+                        <Rectangle
+                            Width="1"
+                            Height="18"
+                            Margin="4,0"
+                            Fill="#1A000000" />
+
+                        <Button
+                            x:Name="ColorPickButton"
+                            Style="{StaticResource ToolButtonStyle}"
+                            Click="ColorPickButton_Click">
+                            <Path Style="{StaticResource ToolIconStyle}" Data="M8,2.5 A5.5,5.5 0 1 1 7.99,2.5 M8,5.5 A2.5,2.5 0 1 1 7.99,5.5" />
+                        </Button>
+
+                        <Slider
+                            x:Name="ThicknessSlider"
+                            Width="72"
+                            Margin="6,0,0,0"
+                            VerticalAlignment="Center"
+                            Maximum="12"
+                            Minimum="1"
+                            StepFrequency="1"
+                            Value="3"
+                            ValueChanged="ThicknessSlider_ValueChanged" />
+                    </StackPanel>
+                </StackPanel>
+        </Border>
+    </Grid>
+</Window>

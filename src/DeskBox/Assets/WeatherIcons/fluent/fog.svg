@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="cloud" x1="10" y1="4" x2="21" y2="20" gradientUnits="userSpaceOnUse"><stop stop-color="#FCFBFF"/><stop offset=".48" stop-color="#E8E5FA"/><stop offset="1" stop-color="#A4A1D0"/></linearGradient>
+    <radialGradient id="light" cx=".3" cy=".2" r=".8"><stop stop-color="#FFFFFF" stop-opacity=".8"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/></radialGradient>
+    <linearGradient id="mist" x1="3" y1="20" x2="28" y2="29" gradientUnits="userSpaceOnUse"><stop stop-color="#C7D7ED"/><stop offset=".45" stop-color="#94ABCC"/><stop offset="1" stop-color="#677BA9"/></linearGradient>
+  </defs>
+  <g transform="translate(1 0) scale(.94)">
+    <path d="M8.1 19.2a5.6 5.6 0 0 1-.7-11.16A7.4 7.4 0 0 1 21.5 7a6.15 6.15 0 0 1 2.1 12.2Z" fill="url(#cloud)"/>
+    <path d="M8.1 19.2a5.6 5.6 0 0 1-.7-11.16A7.4 7.4 0 0 1 21.5 7a6.15 6.15 0 0 1 2.1 12.2Z" fill="url(#light)"/>
+  </g>
+  <g stroke="url(#mist)" stroke-width="2.6" stroke-linecap="round">
+    <path d="M4 21.5h17.5M25.2 21.5H28"/>
+    <path d="M7 25.5h19"/>
+    <path d="M4 29h3M11 29h11"/>
+  </g>
+</svg>

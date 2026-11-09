@@ -8,7 +8,7 @@ namespace DeskBox.Views;
 
 public sealed partial class ContentWidgetWindow
 {
-    internal void ActivateQuickLookNavigationTarget(FileSurfaceContent content)
+    internal void ActivateQuickLookNavigationTarget(FileWidgetContentAdapter content)
     {
         if (!Visible || !ReferenceEquals(CurrentContent, content))
         {
@@ -16,12 +16,12 @@ public sealed partial class ContentWidgetWindow
         }
 
         base.Activate();
-        Win32Helper.SetForegroundWindow(HWnd);
+        Win32Helper.TrySetForegroundWindow(HWnd, "quick-look-navigation");
         content.FocusQuickLookNavigationTarget();
     }
 
     private WidgetCompactPresentation CreateFileCompactPresentation(
-        FileSurfaceContent file,
+        FileWidgetContentAdapter file,
         string contentMode)
     {
         bool hidesSensitiveContent =

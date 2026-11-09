@@ -53,6 +53,9 @@ public sealed partial class QuickCaptureWidgetViewModel : ObservableObject, IDis
     private int _visibleItemsRefreshGeneration;
     private QuickCaptureStoreData? _cachedData;
     private readonly Dictionary<string, QuickCaptureItemViewModel> _itemViewModelCache = new(StringComparer.Ordinal);
+    private string? _attachmentCreationIntentId;
+    private string? _attachmentCreationFingerprint;
+    private QuickCaptureItem? _attachmentCreationItem;
 
     public ObservableCollection<QuickCaptureItemViewModel> Items { get; } = [];
 

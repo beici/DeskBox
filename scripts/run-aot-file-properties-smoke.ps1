@@ -11,6 +11,13 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+# Single source of truth for the audit gates below: keep these in sync with
+# publish-aot-audit.ps1 ($auditProfileVersion, the summary schema version it
+# emits, and the current WMC1510 baseline in warningCodeCounts). Bump all of
+# them together when the audit profile changes.
+$requiredAuditProfileVersion = 65
+$requiredSummarySchemaVersion = 55
+$requiredWmc1510Count = 808
 $scenario = "FilePropertiesReadOnly"
 $smokeEnvironmentVariable = "DESKBOX_AOT_MANAGED_UI_SMOKE"
 $runIdEnvironmentVariable =
@@ -218,10 +225,10 @@ if (-not (Test-Path -LiteralPath $SummaryPath -PathType Leaf)) {
     throw "Native AOT audit summary was not found: '$SummaryPath'."
 }
 $auditSummary = Get-Content -LiteralPath $SummaryPath -Raw | ConvertFrom-Json
-if ([int]$auditSummary.schemaVersion -ne 46 -or
-    [int]$auditSummary.auditProfileVersion -ne 49 -or
+if ([int]$auditSummary.schemaVersion -ne $requiredSummarySchemaVersion -or
+    [int]$auditSummary.auditProfileVersion -ne $requiredAuditProfileVersion -or
     -not [bool]$auditSummary.sourceStableDuringAudit) {
-    throw "File Properties smoke requires stable AOT audit profile 49 / schema 46."
+    throw "File Properties smoke requires stable AOT audit profile $requiredAuditProfileVersion / schema $requiredSummarySchemaVersion."
 }
 
 New-Item -ItemType Directory -Path $evidenceRoot -Force | Out-Null
@@ -299,7 +306,7 @@ $utf8WithoutBom = [System.Text.UTF8Encoding]::new($false)
     $utf8WithoutBom)
 
 $settings = [ordered]@{
-    schemaVersion = 5
+    schemaVersion = 9
     language = "en-US"
     autoStart = $false
     autoCheckForUpdates = $false
@@ -519,7 +526,7 @@ try {
         -Name "visibleWidgetKinds"
     if ([int]$smokeResult.loadedSurfaceCount -ne 2 -or
         [int]$smokeResult.visibleSurfaceCount -ne 2 -or
-        @($smokeResult.locales).Count -ne 12) {
+        @($smokeResult.locales).Count -ne 13) {
         throw "File Properties smoke did not restore its two real widget surfaces and locale baseline."
     }
 
@@ -581,9 +588,9 @@ try {
             [long]$dialog.rootOwnerWindowHandle -or
         -not [bool]$dialog.rootOwner.isWindow -or
         [string]$dialog.className -cne "#32770" -or
-        -not ([string]$dialog.title).Contains(
+        -not (([string]$dialog.title).IndexOf(
             $targetName,
-            [System.StringComparison]::OrdinalIgnoreCase) -or
+            [System.StringComparison]::OrdinalIgnoreCase) -ge 0) -or
         -not [bool]$dialog.visibleBeforeClose -or
         -not [bool]$dialog.closePosted -or
         -not [bool]$dialog.windowDestroyedAfterClose) {

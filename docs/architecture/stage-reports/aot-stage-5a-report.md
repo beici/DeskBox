@@ -90,7 +90,7 @@
 
 最终隔离根为：
 
-`C:\Users\simon\AppData\Local\DeskBox-AotPreview\wingezi-B073278E-stage5a-final`
+`C:\Users\developer\AppData\Local\DeskBox-AotPreview\wingezi-B073278E-stage5a-final`
 
 受审计可执行文件为：
 

@@ -103,7 +103,7 @@ public sealed class MusicSettingsStoreTests : IDisposable
         string pipelineSource = File.ReadAllText(TestPaths.SourceFile(
             "src/DeskBox/Services/SettingsMigrationService.cs"));
         Assert.Contains("_migrations.Add(new Migration_9_To_10(dataDirectory));", pipelineSource, StringComparison.Ordinal);
-        Assert.Contains("CurrentSchemaVersion = 10", pipelineSource, StringComparison.Ordinal);
+        Assert.Contains("CurrentSchemaVersion = 15", pipelineSource, StringComparison.Ordinal);
         Assert.DoesNotContain("GetAwaiter().GetResult()", pipelineSource, StringComparison.Ordinal);
     }
 

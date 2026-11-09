@@ -14,7 +14,15 @@ namespace DeskBox.ViewModels;
 
 public partial class SettingsViewModel
 {
-    public Color GetCurrentAccentColor() => _currentAccentColor;
+    // Host-side working state for the accent card. The XAML binding surface
+    // lives on the appearance editor (section-level DataContext switch); the
+    // shell keeps the accent-mode flag its theme-service write chain needs
+    // and pushes the accent presentation onto the editor on every change.
+    internal bool UseSystemAccentColor
+    {
+        get => _useSystemAccentColor;
+        private set => SetProperty(ref _useSystemAccentColor, value);
+    }
 
     public bool SuppressAppearanceNotifications { get; set; }
     public bool DeferAppearancePersistence { get; set; }
@@ -35,10 +43,7 @@ public partial class SettingsViewModel
 
         if (UseSystemAccentColor)
         {
-            _useSystemAccentColor = false;
-            OnPropertyChanged(nameof(UseSystemAccentColor));
-            OnPropertyChanged(nameof(CanEditCustomAccent));
-            OnPropertyChanged(nameof(AccentColorDescription));
+            UseSystemAccentColor = false;
         }
 
         RefreshAccentPreview();
@@ -46,14 +51,21 @@ public partial class SettingsViewModel
 
     public void UpdateManagedStorageRootPath(string path)
     {
+        // The verified migration already committed both durable settings files.
+        // This only refreshes presentation, without another settings write.
         string normalizedPath = SettingsService.NormalizeManagedStorageRootPath(path);
         ManagedStorageRootPath = normalizedPath;
-        _settingsService.Settings.DefaultManagedStorageRootPath = normalizedPath;
-        _settingsService.SaveDebounced();
+        _managedStorageSettings.UpdateRootPath(normalizedPath);
         _ = RefreshQuickAccessStateAsync(showBusy: true);
     }
 
-    public async Task RestoreDefaultPreferencesAsync()
+    /// <summary>
+    /// Restores every preference to its default. Returns <see langword="false"/>
+    /// when the restored defaults could not be written to disk (R21-S3-02: the
+    /// caller used to have no way to tell, so a failed save left the UI showing
+    /// defaults that would be gone after a restart).
+    /// </summary>
+    public async Task<bool> RestoreDefaultPreferencesAsync()
     {
         _isRestoringDefaults = true;
         SuppressAppearanceNotifications = true;
@@ -67,18 +79,26 @@ public partial class SettingsViewModel
 
             if (App.Current is { } app)
             {
-                app.ResizeGuideOverlay.IsSnapEnabled = _settingsService.Settings.ResizeSnapEnabled;
+                // ApplySettingsSnapshot above already re-projected the
+                // restored snap state onto the interaction editor.
+                app.ResizeGuideOverlay.IsSnapEnabled = _interactionSettings.SnapEnabled;
             }
 
-            App.Current?.GlobalHotkeyService?.RefreshRegistration();
+            if (App.Current?.GlobalHotkeyService is { } globalHotkeyService)
+            {
+                // Await the async twin: the reserved-hook handshake blocks
+                // up to ~1.5 s on the synchronous path.
+                await globalHotkeyService.RefreshRegistrationAsync();
+            }
+
             App.Current?.UpdateTrayIcon();
             RefreshGlobalHotkeyState();
             _themeService.RefreshAppearance();
             RefreshAccentPreview();
-            await _settingsService.SaveAsync();
-            App.Current?.RefreshQuickCaptureClipboardService();
-            App.Current?.RefreshTodoReminderService();
+            bool saved = await _settingsService.SaveCheckedAsync();
+            _quickCaptureSettings.RefreshFromSettings();
             _settingsService.NotifyAppearancePreviewNow();
+            return saved;
         }
         finally
         {

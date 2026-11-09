@@ -8,7 +8,7 @@ public sealed class WidgetChromeModeResolverTests
     [Fact]
     public void Resolve_UsesDisplayGlobalDefaultForMusic()
     {
-        var settingsService = new SettingsService();
+        var settingsService = TestServices.CreateSettingsService();
         settingsService.Settings.DisplayWidgetChromeMode = SettingsService.WidgetChromeModeHidden;
         var descriptor = TestServices.CreateWidgetContentFactory().GetDescriptor(WidgetKind.Music);
         var config = new WidgetConfig { WidgetKind = WidgetKind.Music };
@@ -21,7 +21,7 @@ public sealed class WidgetChromeModeResolverTests
     [Fact]
     public void Resolve_UsesInteractiveGlobalDefaultForTodo()
     {
-        var settingsService = new SettingsService();
+        var settingsService = TestServices.CreateSettingsService();
         settingsService.Settings.InteractiveWidgetChromeMode = SettingsService.WidgetChromeModeCompact;
         var descriptor = TestServices.CreateWidgetContentFactory().GetDescriptor(WidgetKind.Todo);
         var config = new WidgetConfig { WidgetKind = WidgetKind.Todo };
@@ -34,7 +34,7 @@ public sealed class WidgetChromeModeResolverTests
     [Fact]
     public void Resolve_InstanceOverrideWinsOverGlobalDefault()
     {
-        var settingsService = new SettingsService();
+        var settingsService = TestServices.CreateSettingsService();
         settingsService.Settings.DisplayWidgetChromeMode = SettingsService.WidgetChromeModeOverlay;
         var descriptor = TestServices.CreateWidgetContentFactory().GetDescriptor(WidgetKind.Music);
         var config = new WidgetConfig { WidgetKind = WidgetKind.Music };

@@ -1,0 +1,116 @@
+namespace DeskBox.Tests;
+
+public sealed class WidgetRaiseBandContractTests
+{
+    [Fact]
+    public void GroupRaise_NeverVisitsTheTopmostBand()
+    {
+        string layerService = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Services/WidgetLayerService.cs"));
+        // The merged tree inserts the fork-only BringTitleActivatedGroupToFront
+        // between the group raise and ApplyPeerOrderHighestToLowest, so the
+        // slice must end at that method: otherwise it swallows the single
+        // widget transient raise (which legitimately pulses TOPMOST) and the
+        // assertion below stops testing the group path.
+        string groupRaise = SliceMethod(
+            layerService,
+            "public static void BringGroupTemporarilyToFront",
+            "public static void BringTitleActivatedGroupToFront");
+
+        // #375: the historical 2N+2 TOPMOST/NOTOPMOST pulse storm contested
+        // the topmost band tail with resident topmost floaters (IME bars).
+        // The replacement is one relative ordering into the normal band.
+        Assert.Contains("ApplyWindowOrderHighestToLowest", groupRaise, StringComparison.Ordinal);
+        Assert.DoesNotContain("SetWindowTopMost", groupRaise, StringComparison.Ordinal);
+        Assert.DoesNotContain("ClearWindowTopMost", groupRaise, StringComparison.Ordinal);
+        Assert.DoesNotContain("BringWindowTemporarilyToFront", groupRaise, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SingleWidgetTemporaryRaise_UsesNormalBandFrontWithoutPulse()
+    {
+        string layerService = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Services/WidgetLayerService.cs"));
+        string hold = SliceMethod(
+            layerService,
+            "public static void HoldTemporaryTopMost",
+            "/// <summary>\r\n    /// Raises one dynamically layered widget to the top of the normal band".ReplaceLineEndings("\r\n"));
+
+        Assert.Contains("RaiseWindowToNormalBandFront(windowHandle, showWindow)", hold, StringComparison.Ordinal);
+        Assert.DoesNotContain("BringWindowTemporarilyToFront", hold, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TitleActivation_ReusesLiveRaiseWithinSuppressWindow()
+    {
+        string manager = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Services/WidgetManager.ZOrder.cs"));
+        string activation = SliceMethod(
+            manager,
+            "public void ActivateAllVisibleWidgetsFromTitle",
+            "private void TryRestoreRaisedWidgetsAfterInteraction");
+
+        Assert.Contains(
+            "TitleActivationRaisePolicy.ShouldSkipRepeatRaise",
+            activation,
+            StringComparison.Ordinal);
+        // Trigger timing itself is unchanged: the raise still fires on every
+        // title press that is not covered by the suppress window.
+        //
+        // Fork: a title click raises only the clicked widget, so the raise
+        // goes through BringTitleActivatedGroupToFront (single handle) rather
+        // than the whole-group BringGroupTemporarilyToFront path. The #375
+        // repeat-raise coalescing guard above is retained unchanged.
+        Assert.Contains(
+            "BringTitleActivatedGroupToFront(handles, activeHwnd)",
+            activation,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AuxiliaryWindowFrontPath_IsUnchanged()
+    {
+        // Settings/search popups and raised-band guests keep their existing
+        // topmost-band semantics; the normal-band rewrite is widget-only.
+        string manager = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Services/WidgetManager.ZOrder.cs"));
+        string bring = SliceMethod(
+            manager,
+            "public void BringAuxiliaryWindowToFront",
+            "public void ReleaseRaisedBandGuest");
+
+        Assert.Contains("BringWindowTemporarilyToFront(windowHandle)", bring, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void QuickRevealHoldTopMost_IsUnchanged()
+    {
+        string layerService = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Services/WidgetLayerService.cs"));
+        string hold = SliceMethod(
+            layerService,
+            "public static void HoldGroupTopMostWithoutActivation",
+            "public static void BringToFront");
+
+        Assert.Contains("SetWindowTopMost(handle)", hold, StringComparison.Ordinal);
+    }
+
+    private static string SliceMethod(string source, string startMarker, string endMarker)
+    {
+        // WidgetLayerService.cs is checked in with LF endings; markers written
+        // with the checkout default would never match on an autocrlf=true clone.
+        // Normalize both sides the way CapsuleClickAndMorphContinuityTests does.
+        string normalizedSource = NormalizeNewlines(source);
+        string normalizedStart = NormalizeNewlines(startMarker);
+        string normalizedEnd = NormalizeNewlines(endMarker);
+        int start = normalizedSource.IndexOf(normalizedStart, StringComparison.Ordinal);
+        int end = normalizedSource.IndexOf(normalizedEnd, start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        return normalizedSource[start..end];
+    }
+
+    private static string NormalizeNewlines(string source)
+    {
+        return source.Replace("\r\n", "\n").Replace('\r', '\n');
+    }
+}

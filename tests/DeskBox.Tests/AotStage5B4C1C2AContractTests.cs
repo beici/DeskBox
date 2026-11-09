@@ -49,7 +49,9 @@ public sealed class AotStage5B4C1C2AContractTests
         Assert.Contains("bool? copyWhenMapped = null", surface, StringComparison.Ordinal);
         Assert.Contains("copyWhenMapped switch", surface, StringComparison.Ordinal);
         Assert.Contains("FileDropIntentPolicy.ResolveMappedTransfer(", surface, StringComparison.Ordinal);
-        Assert.Contains("bool? moveWhenMapped = mapped", surface, StringComparison.Ordinal);
+        // The move/copy decision honors explicit modifiers even before the
+        // widget has a managed folder (the import creates one on demand).
+        Assert.Contains("ResolveMoveWhenMapped(", surface, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -115,7 +117,7 @@ public sealed class AotStage5B4C1C2AContractTests
     }
 
     [Fact]
-    public void ProgressEvidence_RequiresTopLayerAcrylicAndReleasedOleCallback()
+    public void ProgressEvidence_DelegatesCardToShellAndReleasesOleCallback()
     {
         string scenario = ReadRepositoryFile(
             "src/DeskBox/App.AotNativeDropSmoke.cs");
@@ -124,11 +126,31 @@ public sealed class AotStage5B4C1C2AContractTests
         string xaml = ReadRepositoryFile(
             "src/DeskBox/Controls/WidgetContents/FileSurfaceContent.xaml");
 
+        // Physical-file copies run on the Windows Shell engine, which owns the
+        // native progress window: the scenario proves the surface stays busy
+        // without painting a second, competing widget card. The acrylic card
+        // contract itself (top-layered, translated, acrylic background) stays
+        // pinned statically through the probe capture and the XAML below.
         Assert.Contains("OleCallbackReleasedBeforeProgress", scenario, StringComparison.Ordinal);
-        Assert.Contains("ProgressCardVisibleAboveDragVisual", scenario, StringComparison.Ordinal);
-        Assert.Contains("CanvasZIndex >= 1000", scenario, StringComparison.Ordinal);
-        Assert.Contains("TranslationZ >= 64", scenario, StringComparison.Ordinal);
-        Assert.Contains("BackgroundIsAcrylicBrush", scenario, StringComparison.Ordinal);
+        Assert.Contains("ProgressDeferredToShellTransfer", scenario, StringComparison.Ordinal);
+        Assert.Contains("duringImport.IsImportBusy", scenario, StringComparison.Ordinal);
+        Assert.Contains("!duringImport.CardVisible", scenario, StringComparison.Ordinal);
+        // The busy sample must be taken past the product's 120 ms card-show
+        // delay, or the "card invisible" result is indistinguishable from
+        // "not due to show yet" — the timing hole this stage closed.
+        Assert.Contains("WaitForAotImportBusyPastCardDelayAsync", scenario, StringComparison.Ordinal);
+        Assert.Contains("AotImportCardDelayProofFloorMilliseconds", scenario, StringComparison.Ordinal);
+        Assert.Contains("duringImport.BusyElapsedMilliseconds", scenario, StringComparison.Ordinal);
+        // The managed (non-shell-delegated) transfer must show the acrylic
+        // card at runtime while busy — the positive counterpart of the shell
+        // suppression proof above.
+        Assert.Contains("WaitForAotImportCardVisibleSnapshotAsync", scenario, StringComparison.Ordinal);
+        Assert.Contains("containsTemporaryFiles: true", scenario, StringComparison.Ordinal);
+        Assert.Contains("NativeDropManagedImportShowedAcrylicCard", scenario, StringComparison.Ordinal);
+        Assert.Contains("cardShown.BackgroundIsAcrylicBrush", scenario, StringComparison.Ordinal);
+        Assert.Contains("cardShown.CanvasZIndex == 1000", scenario, StringComparison.Ordinal);
+        Assert.Contains("NativeDropManagedImportSettled", scenario, StringComparison.Ordinal);
+        Assert.Contains("NativeDropManagedCardProbeCleanedUp", scenario, StringComparison.Ordinal);
         Assert.Contains("GetAotNativeFolderVisualState(", probe, StringComparison.Ordinal);
         // The drop visual is a neutral hover surface with no border, so the
         // probe reports the recorded drop target instead of drawing state.
@@ -179,7 +201,13 @@ public sealed class AotStage5B4C1C2AContractTests
         Assert.Contains("Remove-Item -LiteralPath $resolvedRoot -Recurse -Force", runner, StringComparison.Ordinal);
         Assert.Contains("Wait-NaturalPreviewExit", runner, StringComparison.Ordinal);
         Assert.Contains("Stop-ExactPreviewProcess", runner, StringComparison.Ordinal);
-        Assert.Contains("profile 56 / schema 53", runner, StringComparison.Ordinal);
+        Assert.Contains("profile $requiredAuditProfileVersion / schema $requiredSummarySchemaVersion", runner, StringComparison.Ordinal);
+        // The runner re-checks both directions of the card contract from the
+        // serialized evidence: shell-delegated stays cardless, managed shows
+        // the acrylic top-layer card.
+        Assert.Contains("managedCardImport.cardShown.cardVisible", runner, StringComparison.Ordinal);
+        Assert.Contains("managedCardImport.cardShown.backgroundIsAcrylicBrush", runner, StringComparison.Ordinal);
+        Assert.Contains("managedCardImport.destinationRemovedAfterProbe", runner, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -190,7 +218,7 @@ public sealed class AotStage5B4C1C2AContractTests
         string project = ReadRepositoryFile("src/DeskBox/DeskBox.csproj");
         string rust = ReadRepositoryFile("native/deskbox-native/src/lib.rs");
 
-        Assert.Contains("$auditProfileVersion = 63", audit, StringComparison.Ordinal);
+        Assert.Contains("$auditProfileVersion = 65", audit, StringComparison.Ordinal);
         Assert.Contains("schemaVersion = 55", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1C2ARequiredProductPatterns", audit, StringComparison.Ordinal);
         Assert.Contains("stage5B4C1C2AMissingSmokeScriptPatterns", audit, StringComparison.Ordinal);
@@ -199,7 +227,7 @@ public sealed class AotStage5B4C1C2AContractTests
         Assert.Contains("$sourceFile -eq $stage5B4C1ASourceFiles[4]", audit, StringComparison.Ordinal);
         Assert.Contains("$pattern -eq 'NativeDrop'", audit, StringComparison.Ordinal);
         Assert.Contains("C1C2A applies its own narrow gate", audit, StringComparison.Ordinal);
-        Assert.Contains("$RequiredAuditProfileVersion = 63", launcher, StringComparison.Ordinal);
+        Assert.Contains("$RequiredAuditProfileVersion = 65", launcher, StringComparison.Ordinal);
         Assert.Contains("$RequiredSummarySchemaVersion = 55", launcher, StringComparison.Ordinal);
         Assert.Contains("Native AOT stage 5B-4C3B2B1", project, StringComparison.Ordinal);
         Assert.Contains("assert_eq!(deskbox_native_capabilities(), 511);", rust, StringComparison.Ordinal);

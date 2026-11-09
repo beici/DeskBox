@@ -20,7 +20,7 @@ public sealed partial class FileSurfaceContent
     private CancellationToken ActiveImportCancellationToken =>
         _activeImportCancellation?.Token ?? CancellationToken.None;
 
-    private void BeginTrackedImport()
+    private CancellationTokenSource BeginTrackedImport()
     {
         CancelAndResetTrackedImport();
         _isImportBusy = true;
@@ -52,14 +52,18 @@ public sealed partial class FileSurfaceContent
         ImportBusyChanged?.Invoke(true);
 
         _ = ShowImportCardAfterDelayAsync(_importCardDelayCancellation.Token);
+
+        return _activeImportCancellation;
     }
 
-    private void EnsureTrackedImportStarted()
+    private CancellationTokenSource? EnsureTrackedImportStarted()
     {
         if (_activeImportCancellation is null)
         {
-            BeginTrackedImport();
+            return BeginTrackedImport();
         }
+
+        return _activeImportCancellation;
     }
 
     private async Task ShowImportCardAfterDelayAsync(
@@ -99,13 +103,25 @@ public sealed partial class FileSurfaceContent
 
     private void ReportImportProgress(FileService.FileTransferProgress progress)
     {
+        // R8 B17: the callback belongs to the import session that created it.
+        // A report queued just before session N completes must not repaint
+        // the card of session N+1 that has since begun on the same surface.
+        CancellationTokenSource session = _activeImportCancellation!;
         if (!DispatcherQueue.HasThreadAccess)
         {
-            DispatcherQueue.TryEnqueue(() => ReportImportProgress(progress));
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (ReferenceEquals(_activeImportCancellation, session))
+                {
+                    ReportImportProgress(progress);
+                }
+            });
             return;
         }
 
-        if (!_isImportBusy || _isDisposed)
+        if (!ReferenceEquals(_activeImportCancellation, session) ||
+            !_isImportBusy ||
+            _isDisposed)
         {
             return;
         }
@@ -300,11 +316,21 @@ public sealed partial class FileSurfaceContent
                 break;
         }
 
+        // The terminal state is shown for a moment before the card is torn
+        // down. Another import can start inside that window (a sibling busy
+        // producer clears the busy flag without touching this session), so the
+        // teardown must only run while this session still owns the card.
+        CancellationTokenSource? completedSession = _activeImportCancellation;
         if (_importCardWasShown)
         {
             await Task.Delay(completionState == ImportCompletionState.Failed
                 ? TimeSpan.FromSeconds(1.8)
                 : TimeSpan.FromMilliseconds(650));
+        }
+
+        if (!ReferenceEquals(_activeImportCancellation, completedSession))
+        {
+            return;
         }
 
         CancelAndResetTrackedImport();
@@ -361,6 +387,23 @@ public sealed partial class FileSurfaceContent
         ImportDescriptionText.Visibility = e.NewSize.Width >= 250
             ? Visibility.Visible
             : Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Tears down the tracked import only when <paramref name="expectedSession"/>
+    /// is still the active one. An import that finished can spend up to 1.8s in
+    /// its terminal delay; if the user starts another import inside that window,
+    /// the stale caller must not cancel the transfer it no longer owns.
+    /// </summary>
+    private void CancelAndResetTrackedImport(CancellationTokenSource? expectedSession)
+    {
+        if (expectedSession is not null &&
+            !ReferenceEquals(_activeImportCancellation, expectedSession))
+        {
+            return;
+        }
+
+        CancelAndResetTrackedImport();
     }
 
     private void CancelAndResetTrackedImport()

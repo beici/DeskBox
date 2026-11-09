@@ -31,14 +31,17 @@ public abstract partial class WidgetWindowBase
     /// <summary>
     /// Shows a widget-owned editor in its own always-on-top window, centred over
     /// the widget and clamped into the work area. Returns true when the primary
-    /// button was used.
+    /// button was used. <paramref name="validatePrimary"/>, when supplied, runs
+    /// before the dialog is allowed to close on the primary path; returning
+    /// false keeps the dialog open (the editor shows its own inline error).
     /// </summary>
     protected async Task<bool> ShowToolDialogAsync(
         string title,
         FrameworkElement content,
         string primaryText,
         string closeText,
-        WidgetDialogViewport viewport)
+        WidgetDialogViewport viewport,
+        Func<bool>? validatePrimary = null)
     {
         RectInt32 ownerBounds = GetToolDialogOwnerBounds();
         RectInt32 workArea = ResolveWorkArea(ownerBounds);
@@ -56,7 +59,8 @@ public abstract partial class WidgetWindowBase
                 content,
                 primaryText,
                 closeText,
-                viewport);
+                viewport,
+                validatePrimary);
             return await host.ShowAtAsync(bounds);
         }
         catch (Exception ex)

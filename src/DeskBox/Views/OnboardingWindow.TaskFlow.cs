@@ -89,6 +89,15 @@ public sealed partial class OnboardingWindow
 
         if (_isClosed || generation != _storageEntryStateRefreshGeneration)
         {
+            // A superseded pass must not leave the toggles disabled. The pass
+            // that replaced it only re-enables the toggle the user touched, so
+            // the other one would stay greyed out until the window is reopened.
+            if (!_isClosed)
+            {
+                TaskStep3QuickAccessToggle.IsEnabled = true;
+                TaskStep3DesktopShortcutToggle.IsEnabled = true;
+            }
+
             return;
         }
 
@@ -118,6 +127,10 @@ public sealed partial class OnboardingWindow
         }
 
         bool requestedState = toggle.IsOn;
+        // A refresh that started before this gesture carries the pre-toggle
+        // state; invalidate it so its late completion cannot snap the switch
+        // back to the value the user just changed.
+        _storageEntryStateRefreshGeneration++;
         toggle.IsEnabled = false;
         try
         {
@@ -138,6 +151,17 @@ public sealed partial class OnboardingWindow
                     ? "Onboarding.Step4.PinFailedBody"
                     : "Common.OperationFailedRetry");
         }
+        catch (Exception ex)
+        {
+            // An exception leaves the toggle on with the entry unchanged —
+            // roll it back like the failure branch above.
+            global::DeskBox.App.Log(
+                $"[Onboarding] Task-storage quick-access toggle failed: {ex.Message}");
+            SetTaskStorageToggleState(toggle, !requestedState);
+            await ShowTaskStorageEntryErrorAsync(
+                "Onboarding.Step4.PinTitle",
+                "Common.OperationFailedRetry");
+        }
         finally
         {
             toggle.IsEnabled = true;
@@ -155,6 +179,9 @@ public sealed partial class OnboardingWindow
         }
 
         bool requestedState = toggle.IsOn;
+        // Same guard as the quick-access toggle: drop any in-flight refresh that
+        // still holds the pre-toggle shortcut state.
+        _storageEntryStateRefreshGeneration++;
         toggle.IsEnabled = false;
         try
         {
@@ -168,6 +195,16 @@ public sealed partial class OnboardingWindow
                 return;
             }
 
+            SetTaskStorageToggleState(toggle, !requestedState);
+            await ShowTaskStorageEntryErrorAsync(
+                "Settings.ManagedPath.DesktopShortcut.Title",
+                "Common.OperationFailedRetry");
+        }
+        catch (Exception ex)
+        {
+            // Same as above: an exception must not leave the toggle on.
+            global::DeskBox.App.Log(
+                $"[Onboarding] Task-storage desktop-shortcut toggle failed: {ex.Message}");
             SetTaskStorageToggleState(toggle, !requestedState);
             await ShowTaskStorageEntryErrorAsync(
                 "Settings.ManagedPath.DesktopShortcut.Title",
@@ -306,8 +343,24 @@ public sealed partial class OnboardingWindow
         catch (Exception ex)
         {
             App.Log($"[Onboarding] Failed to persist feature selection kind={kind} enabled={enabled}: {ex}");
-            FeatureWidgetSettings.SetEnabled(_settingsService.Settings, kind, enabled);
-            await _settingsService.SaveAsync();
+
+            // R21-S3-01: the fallback save used to run unprotected, so its own
+            // failure faulted the chain; the window then awaited that faulted
+            // task on close and threw out of a void event handler. Keep the
+            // chain completed and make the second failure visible instead.
+            // R21-V8-04: the in-memory fallback lives inside this try too, so the
+            // "chain never faults" invariant does not depend on SetEnabled never
+            // throwing.
+            try
+            {
+                FeatureWidgetSettings.SetEnabled(_settingsService.Settings, kind, enabled);
+                await _settingsService.SaveAsync();
+            }
+            catch (Exception fallbackEx)
+            {
+                App.Log(
+                    $"[Onboarding] Fallback save failed kind={kind} enabled={enabled}: {fallbackEx}");
+            }
         }
     }
 
@@ -389,8 +442,16 @@ public sealed partial class OnboardingWindow
     private async void TaskStep4ToggleWidgets_Click(object sender, RoutedEventArgs e)
     {
         TaskStep4ToggleButton.IsEnabled = false;
-        await global::DeskBox.App.Current.ToggleWidgetsForOnboardingAsync();
-        TaskStep4ToggleButton.IsEnabled = true;
+        try
+        {
+            await global::DeskBox.App.Current.ToggleWidgetsForOnboardingAsync();
+        }
+        finally
+        {
+            // The global handler swallows the exception, so this finally is
+            // the only place the button state recovers.
+            TaskStep4ToggleButton.IsEnabled = true;
+        }
     }
 
     private void TaskStep4OpenTrayMenu_Click(object sender, RoutedEventArgs e)

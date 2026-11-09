@@ -13,6 +13,7 @@ using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
@@ -46,6 +47,8 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
     private long _titleRenameOpenedAtTick;
     private bool _compactPresentationRefreshQueued;
     private INotifyPropertyChanged? _compactPresentationSource;
+    private PomodoroWidgetViewModel? _pomodoroAlertSource;
+    private readonly PomodoroSettingsStore _pomodoroSettingsStore = new();
     private IWidgetFeedbackSource? _feedbackSource;
     private IWidgetHostContextMenuSource? _hostContextMenuSource;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _autoRestoreTimer;
@@ -116,7 +119,7 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
 
     protected override bool HasBlockingFlyoutOpen() =>
         base.HasBlockingFlyoutOpen() ||
-        CurrentContent is FileSurfaceContent
+        CurrentContent is FileWidgetContentAdapter
         {
             IsStackPopoverBlockingSurfaceOpen: true
         };
@@ -143,17 +146,19 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
         string contentMode = ResolveEffectiveCompactContentMode();
         return CurrentContent switch
         {
-            FileSurfaceContent file =>
+            FileWidgetContentAdapter file =>
                 CreateFileCompactPresentation(file, contentMode),
             TodoWidgetContentAdapter todo => CreateTodoCompactPresentation(todo, contentMode, localization),
             GlanceWidgetContentAdapter glance =>
                 CreateGlanceCompactPresentation(glance),
             MusicWidgetContentAdapter music =>
                 CreateMusicCompactPresentation(music, contentMode),
-            QuickCaptureSurfaceContent quickCapture =>
+            QuickCaptureWidgetContentAdapter quickCapture =>
                 CreateQuickCaptureCompactPresentation(quickCapture, contentMode),
             WeatherWidgetContentAdapter weather => CreateWeatherCompactPresentation(weather, contentMode),
             SearchWidgetContentAdapter => CreateSearchCompactPresentation(contentMode, localization),
+            PomodoroWidgetContentAdapter pomodoro =>
+                CreatePomodoroCompactPresentation(pomodoro, contentMode),
             _ => new WidgetCompactPresentation(
                 _titleViewModel.DisplayName,
                 string.Empty,
@@ -202,7 +207,8 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
         string summary = string.Join(" · ", summaryParts);
         bool hasText = !string.IsNullOrWhiteSpace(title) || !string.IsNullOrWhiteSpace(summary);
         ImageSource? backgroundImage = viewModel.HasVisibleCurrentImage
-            ? glance.GetCompactBackgroundImage()
+            ? glance.GetCompactBackgroundImage(
+                ResolveGlanceCompactBackgroundDecodeWidth())
             : null;
         return new WidgetCompactPresentation(
             title,
@@ -223,6 +229,28 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
             FullBleedOverlayOpacity: hasText ? viewModel.ReadabilityStrengthOpacity : 0,
             UseUniformFullBleedOverlay: true,
             FullBleedBackgroundOpacity: viewModel.BackgroundImageOpacity);
+    }
+
+    /// <summary>
+    /// Physical decode width for the glance capsule's full-bleed background:
+    /// the capsule's actual logical width (aligned mode tracks the panel,
+    /// otherwise the compact width) at the current DPI, with the same 1.25
+    /// headroom the expanded surface uses. The old fixed 768 under-decoded
+    /// wide capsules and paid ~3x on narrow ones.
+    /// </summary>
+    private int ResolveGlanceCompactBackgroundDecodeWidth()
+    {
+        double logicalWidth = UsesAlignedCompactWidth()
+            ? Config.Width
+            : Config.CompactWidth ?? WidgetCompactBoundsCalculator.SummaryWidth;
+        double scale = RootElement.XamlRoot?.RasterizationScale ?? 1;
+        if (!double.IsFinite(scale) || scale <= 0)
+        {
+            scale = 1;
+        }
+
+        double physicalWidth = logicalWidth * scale * GlanceImageDecodeSizeCalculator.CompactBackgroundSupersamplingFactor;
+        return (int)Math.Clamp(Math.Ceiling(physicalWidth), 320, 1600);
     }
 
     private WidgetCompactPresentation CreateSearchCompactPresentation(
@@ -264,6 +292,67 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
             EnableMarquee: true,
             LiveStateKey: string.Join("|", _titleViewModel.DisplayName, recentKey));
     }
+
+    private WidgetCompactPresentation CreatePomodoroCompactPresentation(
+        PomodoroWidgetContentAdapter pomodoro,
+        string contentMode)
+    {
+        PomodoroWidgetViewModel viewModel = pomodoro.ViewModel;
+        bool showSummary = contentMode != SettingsService.WidgetCompactContentModeMinimal;
+        Windows.UI.Color accent = GetPomodoroPhaseAccent(viewModel.Phase);
+
+        return new WidgetCompactPresentation(
+            viewModel.CountdownText,
+            showSummary
+                ? $"{viewModel.PhaseText} · {viewModel.RoundSummaryText}"
+                : string.Empty,
+            _descriptor.DefaultGlyph,
+            string.Empty,
+            ShowPrimaryAction: true,
+            PrimaryActionGlyph: viewModel.PrimaryActionGlyph,
+            PrimaryActionLabel: viewModel.PrimaryActionText,
+            IsPlaying: viewModel.IsRunning,
+            UseStackedText: showSummary,
+            EnableMarquee: false,
+            Progress: viewModel.Progress,
+            LiveStateKey: string.Join(
+                "|",
+                viewModel.Phase,
+                viewModel.IsRunning,
+                viewModel.RoundNumber,
+                viewModel.RoundCount,
+                viewModel.PhaseText,
+                viewModel.RoundSummaryText,
+                viewModel.PrimaryActionText),
+            BadgeText: showSummary
+                ? $"{viewModel.RoundNumber}/{viewModel.RoundCount}"
+                : string.Empty,
+            BackgroundColorStart: Windows.UI.Color.FromArgb(
+                34,
+                accent.R,
+                accent.G,
+                accent.B),
+            BackgroundColorEnd: Windows.UI.Color.FromArgb(
+                8,
+                accent.R,
+                accent.G,
+                accent.B),
+            EdgeGlowColor: accent,
+            IconColor: accent,
+            IsLiveTextUpdate: true);
+    }
+
+    private static Windows.UI.Color GetPomodoroPhaseAccent(
+        PomodoroTimerPhase phase) => phase switch
+        {
+            PomodoroTimerPhase.Focus =>
+                Windows.UI.Color.FromArgb(255, 244, 123, 103),
+            PomodoroTimerPhase.ShortBreak =>
+                Windows.UI.Color.FromArgb(255, 112, 174, 139),
+            PomodoroTimerPhase.LongBreak =>
+                Windows.UI.Color.FromArgb(255, 87, 150, 166),
+            _ => throw new ArgumentOutOfRangeException(nameof(phase), phase, null)
+        };
 
     private WidgetCompactPresentation CreateMusicCompactPresentation(
         MusicWidgetContentAdapter music,
@@ -354,8 +443,7 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
             EnableMarquee: true,
             Progress: isAttention ? 1 : null,
             IsAttention: isAttention,
-            EmojiIcon: Helpers.WeatherCodeMapper.GetEmoji(
-                weather.ViewModel.CurrentWeatherCode, isDay),
+            IconImage: weather.ViewModel.CurrentIcon,
             BackgroundColorStart: colorStart,
             BackgroundColorEnd: colorEnd,
             // Avoid the former 50 ms UI-thread particle timer (20 Canvas writes
@@ -474,7 +562,7 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
             return localization.Format("Todo.Due.TomorrowAt", localDueDate.ToString("HH:mm"));
         }
 
-        return localDueDate.ToString("M/d");
+        return localDueDate.ToString("M/d", DisplayCulture.GregorianCurrent);
     }
 
     private static TodoItemViewModel? GetNextCompactTodoItem(TodoWidgetContentAdapter todo) =>
@@ -508,6 +596,12 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
 
     protected override async Task OnCompactPrimaryActionRequestedAsync()
     {
+        if (CurrentContent is PomodoroWidgetContentAdapter pomodoro)
+        {
+            pomodoro.ViewModel.StartPause();
+            return;
+        }
+
         if (CurrentContent is SearchWidgetContentAdapter)
         {
             App.Current.OpenSearchPopup();
@@ -657,12 +751,26 @@ public sealed partial class ContentWidgetWindow : WidgetWindowBase, IDesktopWidg
             dividerColor);
         ContentWidgetShell.TitleIconAccentColor = iconForeground;
         ContentWidgetShell.TitleIconMode = SettingsService.Settings.WidgetTitleIconMode;
+        ApplyCustomTitleIcon();
+        ApplyCustomWidgetBackground();
+        WidgetTextShadow.SetEnabled(
+            SettingsService.Settings.WidgetShell.WidgetTextShadowEnabled);
     }
 
     protected override void OnRootElementLoaded()
     {
         RootGrid.Focus(FocusState.Programmatic);
         QueueNativeFileDropTargetRegistration();
+    }
+
+    protected override void OnCustomWidgetBackgroundChanged(bool active)
+    {
+        // User-set background wins over the Glance surface's own background
+        // image (per-widget customization rule).
+        if (CurrentContent?.View is DeskBox.Controls.WidgetContents.GlanceWidgetContent glance)
+        {
+            glance.SetShellCustomBackgroundActive(active);
+        }
     }
 
     // ── IDesktopWidgetWindow implementation ────────────────────
@@ -779,6 +887,7 @@ private bool PrepareTrayShowAnimationCore(bool restoreBoundsForCurrentTopology)
 
     public void ShowPreparedAtDesktopLayer(bool persistVisibility = true)
     {
+        ReconcileStaleExpandedWidgetLayerLease();
         ShowWithoutActivation(persistVisibility);
         TrayAnimation.PrepareHiddenState();
         PushToBottom(showWindow: false);
@@ -787,6 +896,7 @@ private bool PrepareTrayShowAnimationCore(bool restoreBoundsForCurrentTopology)
 
     public void ShowPreparedRaisedFromTray(bool persistVisibility = true)
     {
+        ReconcileStaleExpandedWidgetLayerLease();
         ShowWithoutActivation(persistVisibility);
         TrayAnimation.PrepareHiddenState();
         HoldTemporaryTopMost(showWindow: false);
@@ -950,7 +1060,7 @@ IsHideAnimationRunning = true;
         HoldTemporaryTopMost();
     }
 
-    public void ForceRestoreDesktopLayerFromManager()
+    public void ForceRestoreDesktopLayerFromManager(bool absoluteDesktopBottom = false)
     {
         if (!Visible)
         {
@@ -961,7 +1071,7 @@ IsHideAnimationRunning = true;
         // whole group is returning to its resting layer, so ending the lease
         // here keeps later interaction elevates working after the teardown.
         EndExpandedWidgetLayerLease();
-        RestoreDesktopLayer(force: true);
+        RestoreDesktopLayer(force: true, absoluteDesktopBottom: absoluteDesktopBottom);
         _contentHost.OnDeactivated();
     }
 
@@ -990,14 +1100,14 @@ IsHideAnimationRunning = true;
         TrayAnimation.RevealWindowForTrayShow();
         IsHideAnimationRunning = false;
         _isHidePrepared = false;
-        SetTrayHideInputSuppressed(false);
         Visible = false;
         _autoRestoreTimer?.Stop();
         CancelPendingDesktopLayerRestore();
         UpdatePersistedVisibility(isVisible: false, persistVisibility: true);
-        WidgetLayerService.ClearTopMost(HWnd);
         Win32Helper.ShowWindow(HWnd, Win32Helper.SW_HIDE);
         AppWindow.Hide();
+        WidgetLayerService.ReleaseHiddenWindowLayer(HWnd);
+        SetTrayHideInputSuppressed(false);
         WidgetShellControl.SuspendVisualActivity();
         NotifyCompactHostVisibilityChanged(false);
         TrayAnimation.RestoreVisualState();
@@ -1072,7 +1182,7 @@ IsHideAnimationRunning = true;
 
     private void AttachHostContextMenuSource(IWidgetContent content)
     {
-        if (content is FileSurfaceContent fileSurface)
+        if (content is FileWidgetContentAdapter fileSurface)
         {
             fileSurface.SetHostWindowHandle(HWnd);
         }
@@ -1110,12 +1220,13 @@ IsHideAnimationRunning = true;
 
         _compactPresentationSource = content switch
         {
-            FileSurfaceContent file => file.ViewModel,
+            FileWidgetContentAdapter file => file.ViewModel,
             TodoWidgetContentAdapter todo => todo.ViewModel,
             GlanceWidgetContentAdapter glance => glance.ViewModel,
             MusicWidgetContentAdapter music => music.ViewModel,
             WeatherWidgetContentAdapter weather => weather.ViewModel,
-            QuickCaptureSurfaceContent quickCapture => quickCapture.ViewModel,
+            QuickCaptureWidgetContentAdapter quickCapture => quickCapture.ViewModel,
+            PomodoroWidgetContentAdapter pomodoroAdapter => pomodoroAdapter.ViewModel,
             _ => null
         };
 
@@ -1123,6 +1234,8 @@ IsHideAnimationRunning = true;
         {
             _compactPresentationSource.PropertyChanged += CompactPresentationSource_PropertyChanged;
         }
+
+        AttachPomodoroAlertSource(content);
 
         // The search capsule's dynamic subtitle ("最近：xxx") tracks the recent-query
         // list, which has no INotifyPropertyChanged surface, so subscribe to the
@@ -1145,6 +1258,90 @@ IsHideAnimationRunning = true;
 
             historyService.RecentQueriesChanged += OnRecentQueriesChanged;
             _subscribedSearchHistoryService = historyService;
+        }
+    }
+
+    private void AttachPomodoroAlertSource(IWidgetContent content)
+    {
+        if (_pomodoroAlertSource is not null)
+        {
+            _pomodoroAlertSource.PropertyChanged -=
+                PomodoroAlertSource_PropertyChanged;
+            _pomodoroAlertSource.CompletionOccurred -=
+                PomodoroAlertSource_CompletionOccurred;
+        }
+
+        _pomodoroAlertSource = content is PomodoroWidgetContentAdapter pomodoro
+            ? pomodoro.ViewModel
+            : null;
+        if (_pomodoroAlertSource is null)
+        {
+            ContentWidgetShell.SetPersistentAttention(false, Colors.Transparent);
+            return;
+        }
+
+        _pomodoroAlertSource.PropertyChanged +=
+            PomodoroAlertSource_PropertyChanged;
+        _pomodoroAlertSource.CompletionOccurred +=
+            PomodoroAlertSource_CompletionOccurred;
+        ApplyPomodoroAttention(_pomodoroAlertSource);
+    }
+
+    private void PomodoroAlertSource_PropertyChanged(
+        object? sender,
+        PropertyChangedEventArgs e)
+    {
+        if (sender is not PomodoroWidgetViewModel viewModel ||
+            !ReferenceEquals(viewModel, _pomodoroAlertSource))
+        {
+            return;
+        }
+
+        if (string.IsNullOrEmpty(e.PropertyName) ||
+            e.PropertyName is nameof(PomodoroWidgetViewModel.Phase) or
+                nameof(PomodoroWidgetViewModel.IsCompletionAlertActive))
+        {
+            ApplyPomodoroAttention(viewModel);
+        }
+    }
+
+    private void ApplyPomodoroAttention(PomodoroWidgetViewModel viewModel)
+    {
+        ContentWidgetShell.SetPersistentAttention(
+            viewModel.IsCompletionAlertActive,
+            GetPomodoroPhaseAccent(viewModel.Phase));
+    }
+
+    private void PomodoroAlertSource_CompletionOccurred(
+        object? sender,
+        EventArgs e)
+    {
+        if (sender is not PomodoroWidgetViewModel viewModel ||
+            !ReferenceEquals(viewModel, _pomodoroAlertSource))
+        {
+            return;
+        }
+
+        ApplyPomodoroAttention(viewModel);
+
+        // 本 fork 适配:开关存放在 per-kind PomodoroSettingsStore,
+        // 不在冻结的 AppSettings 上。
+        PomodoroWidgetSettings settings = _pomodoroSettingsStore.Load();
+        if (settings.CompletionNotificationEnabled)
+        {
+            LocalizationService localization = App.Current.LocalizationService;
+            App.Current.NativeNotificationService?.TryShow(
+                localization.T("Pomodoro.Notification.Title"),
+                localization.Format(
+                    "Pomodoro.Notification.Message",
+                    viewModel.PhaseText,
+                    viewModel.RoundSummaryText),
+                options: new NativeAppNotificationOptions(MuteAudio: true));
+        }
+
+        if (settings.CompletionSoundEnabled)
+        {
+            _ = PomodoroCompletionSoundService.TryPlay();
         }
     }
 
@@ -1190,6 +1387,13 @@ IsHideAnimationRunning = true;
             if (!IsClosing && IsWidgetCollapsed)
             {
                 RefreshCompactPresentation();
+                if (_pomodoroAlertSource is not null)
+                {
+                    // 折叠呈现会在下一帧更新紧凑表面。随后重新挂载
+                    // 持续提醒,避免完成事件与折叠层提交处于同一帧时
+                    // Composition 动画未真正启动。
+                    ApplyPomodoroAttention(_pomodoroAlertSource);
+                }
             }
         }))
         {
@@ -1258,6 +1462,27 @@ IsHideAnimationRunning = true;
         ToolTipService.SetToolTip(ContentWidgetShell.AddActionButton, localization.T("Widget.Tooltip.Add"));
         ToolTipService.SetToolTip(ContentWidgetShell.MoreActionButton, localization.T("Widget.Tooltip.More"));
         ToolTipService.SetToolTip(ContentWidgetShell.CloseActionButton, localization.T("Widget.FeatureWidget.Disable"));
+        ApplyTitleActionAccessibleNames();
+    }
+
+    /// <summary>
+    /// Accessible names for the shell title action buttons. The lock buttons are
+    /// state-aware (lock/unlock wording), so this runs on language change and
+    /// whenever the lock state is reapplied via ApplyLockActionIconState.
+    /// </summary>
+    private void ApplyTitleActionAccessibleNames()
+    {
+        var localization = App.Current.LocalizationService;
+        AutomationProperties.SetName(
+            ContentWidgetShell.PositionLockActionButton,
+            localization.T(_config.IsPositionLocked ? "Widget.UnlockPosition" : "Widget.LockPosition"));
+        AutomationProperties.SetName(
+            ContentWidgetShell.SizeLockActionButton,
+            localization.T(_config.IsSizeLocked ? "Widget.UnlockSize" : "Widget.LockSize"));
+        AutomationProperties.SetName(ContentWidgetShell.AddActionButton, localization.T("Widget.Tooltip.Add"));
+        AutomationProperties.SetName(ContentWidgetShell.MoreActionButton, localization.T("Widget.Tooltip.More"));
+        AutomationProperties.SetName(ContentWidgetShell.CloseActionButton, localization.T("Widget.FeatureWidget.Disable"));
+        AutomationProperties.SetName(ContentWidgetShell.CollapseActionButton, localization.T("Widget.Shell.Collapse"));
     }
 
     private void SetupEventHandlers()
@@ -1293,10 +1518,29 @@ IsHideAnimationRunning = true;
             AppWindow.Changed -= OnAppWindowChanged;
             ContentWidgetShell.RightTapped -= ContentWidgetShell_RightTapped;
             ContentWidgetShell.TitleDoubleTapped -= ContentWidgetShell_TitleDoubleTapped;
+            if (_feedbackSource is not null)
+            {
+                _feedbackSource.FeedbackRequested -= FeedbackSource_FeedbackRequested;
+                _feedbackSource = null;
+            }
+            if (_hostContextMenuSource is not null)
+            {
+                _hostContextMenuSource.HostContextMenuOpening -=
+                    HostContextMenuSource_HostContextMenuOpening;
+                _hostContextMenuSource = null;
+            }
             if (_compactPresentationSource is not null)
             {
                 _compactPresentationSource.PropertyChanged -= CompactPresentationSource_PropertyChanged;
                 _compactPresentationSource = null;
+            }
+            if (_pomodoroAlertSource is not null)
+            {
+                _pomodoroAlertSource.PropertyChanged -=
+                    PomodoroAlertSource_PropertyChanged;
+                _pomodoroAlertSource.CompletionOccurred -=
+                    PomodoroAlertSource_CompletionOccurred;
+                _pomodoroAlertSource = null;
             }
             if (_subscribedSearchHistoryService is { } historyService)
             {
@@ -1395,6 +1639,7 @@ IsHideAnimationRunning = true;
                         WidgetKind.Music => "Music.Title",
                         WidgetKind.Glance => "Glance.Title",
                         WidgetKind.Search => "Search.Title",
+                        WidgetKind.Pomodoro => "Pomodoro.Title",
                         WidgetKind.SystemMonitor => "SystemMonitor.Title",
                         _ => ""
                     };

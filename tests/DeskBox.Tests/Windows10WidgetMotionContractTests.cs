@@ -179,7 +179,9 @@ public sealed class Windows10WidgetMotionContractTests
 
         Assert.DoesNotContain("_collapseAnimationUsesVisualOnlyBounds", collapse, StringComparison.Ordinal);
         Assert.Contains("CommitCollapseAnimationBounds", collapse, StringComparison.Ordinal);
-        Assert.Contains("suppressRedraw: completed is null", collapse, StringComparison.Ordinal);
+        Assert.Contains("discardCopiedPixels: completed is null", collapse, StringComparison.Ordinal);
+        Assert.DoesNotContain("Win32Helper.SWP_NOREDRAW", collapse, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReconcileFrozenBackdropSampleAfterBoundsTransition", collapse, StringComparison.Ordinal);
         Assert.Contains("WidgetCompactAnimationCoordinator.TryQueueBoundsMove", collapse, StringComparison.Ordinal);
         Assert.Contains("internal const int MaximumConcurrentBoundsTransitions = int.MaxValue", coordinator, StringComparison.Ordinal);
         Assert.Contains("Win32Helper.BeginDeferWindowPos", coordinator, StringComparison.Ordinal);
@@ -246,7 +248,7 @@ public sealed class Windows10WidgetMotionContractTests
 
         Assert.Contains("WidgetAnimationFramePacingPolicy", collapse, StringComparison.Ordinal);
         Assert.Contains("GetFrameBudgetMilliseconds(HWnd)", collapse, StringComparison.Ordinal);
-        Assert.Contains("s_compactSessionFrameSkipLevel", collapse, StringComparison.Ordinal);
+        Assert.DoesNotContain("s_compactSessionFrameSkipLevel", collapse, StringComparison.Ordinal);
         Assert.DoesNotContain("(int)Math.Round(Math.Max(1, refreshRateHz) / 60.0)", collapse, StringComparison.Ordinal);
         Assert.Contains("ShouldSubmit", frameSkipPolicy, StringComparison.Ordinal);
         Assert.Contains("RecoverySamples", frameSkipPolicy, StringComparison.Ordinal);
@@ -336,8 +338,14 @@ public sealed class Windows10WidgetMotionContractTests
             "await _trayBatchAnimationDriver.WaitForIdleAsync();",
             widgetManager,
             StringComparison.Ordinal);
+        // R8 B14: the tray waiter captures its batch's idle task and drops
+        // out when a newer batch has replaced it (CurrentIdleTask mismatch).
         Assert.Contains(
-            "await _trayBatchAnimationDriver.WaitForIdleAsync();",
+            "Task idleTask = _trayBatchAnimationDriver.WaitForIdleAsync();",
+            trayAnimation,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "_trayBatchAnimationDriver.CurrentIdleTask",
             trayAnimation,
             StringComparison.Ordinal);
 

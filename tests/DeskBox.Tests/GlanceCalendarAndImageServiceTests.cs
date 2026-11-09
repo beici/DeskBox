@@ -16,8 +16,8 @@ public sealed class GlanceCalendarAndImageServiceTests : IDisposable
         Guid.NewGuid().ToString("N"));
 
     [Theory]
-    [InlineData(360, 247, 1, 874)]
-    [InlineData(360, 247, 2, 1747)]
+    [InlineData(360, 247, 1, 546)]
+    [InlineData(360, 247, 2, 1092)]
     [InlineData(100, 100, 1, GlanceImageDecodeSizeCalculator.MinimumDecodePixelWidth)]
     [InlineData(2000, 1400, 2, GlanceImageDecodeSizeCalculator.MaximumDecodePixelWidth)]
     public void ImageDecodeSize_UsesBoundedPhysicalSupersampling(
@@ -74,6 +74,8 @@ public sealed class GlanceCalendarAndImageServiceTests : IDisposable
             "src/DeskBox/ViewModels/GlanceWidgetViewModel.cs"));
         string codeBehind = File.ReadAllText(TestPaths.FromRepository(
             "src/DeskBox/Controls/WidgetContents/GlanceWidgetContent.xaml.cs"));
+        string decorationBuilder = File.ReadAllText(TestPaths.FromRepository(
+            "src/DeskBox/Services/GlanceCalendarDayDecorationBuilder.cs"));
         string visualCalculator = File.ReadAllText(TestPaths.FromRepository(
             "src/DeskBox/Services/WidgetMaterialVisualCalculator.cs"));
         string backdrop = File.ReadAllText(TestPaths.FromRepository(
@@ -181,11 +183,21 @@ public sealed class GlanceCalendarAndImageServiceTests : IDisposable
         Assert.Contains("ApplyImageAwareTheme", codeBehind, StringComparison.Ordinal);
         Assert.Contains("x:Key=\"GlanceCalendarDayItemStyle\"", xaml, StringComparison.Ordinal);
         Assert.Contains("CalendarItemCornerRadius=\"6\"", xaml, StringComparison.Ordinal);
-        Assert.Contains("TodayBackground=\"{ThemeResource AccentFillColorDefaultBrush}\"", xaml, StringComparison.Ordinal);
+        // The today accent is host-side: the native TodayBackground runs on a
+        // today date the CalendarView caches once at creation and never
+        // refreshes across midnight (microsoft-ui-xaml #11205), so the surface
+        // must keep the native chrome off and draw the pill from Tag.IsToday.
+        Assert.Contains("IsTodayHighlighted=\"False\"", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("TodayBackground=", xaml, StringComparison.Ordinal);
+        // Pin the host-side pill binding itself: without it the flag above
+        // would silently drop today's visual distinction entirely.
+        Assert.Contains("Tag.IsToday", xaml, StringComparison.Ordinal);
         Assert.Contains("Tag.SecondaryText", xaml, StringComparison.Ordinal);
         Assert.Contains("Tag.HasSecondaryText", xaml, StringComparison.Ordinal);
-        Assert.Contains("day?.FestivalText", codeBehind, StringComparison.Ordinal);
-        Assert.Contains("day?.TraditionalText", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("day?.FestivalText", decorationBuilder, StringComparison.Ordinal);
+        Assert.Contains("day?.TraditionalText", decorationBuilder, StringComparison.Ordinal);
+        Assert.Contains("GlanceCalendarDayDecorationBuilder.Build", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("RefreshIfObservedDateChanged", viewModel, StringComparison.Ordinal);
         Assert.Contains("TraditionalCalendarTitle", xaml, StringComparison.Ordinal);
         Assert.Contains("LineHeight=\"10\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Opacity=\"0.86\"", xaml, StringComparison.Ordinal);
@@ -499,6 +511,44 @@ public sealed class GlanceCalendarAndImageServiceTests : IDisposable
     }
 
     [Fact]
+    public void FormatDateText_UsesGregorianCalendarForNonGregorianDefaultCulture()
+    {
+        DateTime date = new(2026, 10, 24);
+        CultureInfo arabic = CultureInfo.GetCultureInfo("ar-SA");
+        Assert.False(arabic.Calendar is GregorianCalendar, "ar-SA is expected to default to a non-Gregorian calendar");
+
+        CultureInfo gregorianArabic = (CultureInfo)arabic.Clone();
+        gregorianArabic.DateTimeFormat.Calendar =
+            arabic.OptionalCalendars.First(calendar => calendar is GregorianCalendar);
+
+        string withoutYear = GlanceWidgetViewModel.FormatDateText(date, arabic, includeYear: false);
+        string withYear = GlanceWidgetViewModel.FormatDateText(date, arabic, includeYear: true);
+
+        // The main date must match the same culture rendered with a forced
+        // Gregorian calendar (October 2026), not the default Um Al-Qura
+        // calendar (Rabi' II 1448) — the Glance grid and every other date in
+        // the app are Gregorian.
+        Assert.Equal(date.ToString("M", gregorianArabic), withoutYear);
+        Assert.NotEqual(date.ToString("M", arabic), withoutYear);
+        Assert.Equal(
+            GlanceWidgetViewModel.FormatDateText(date, gregorianArabic, includeYear: true),
+            withYear);
+    }
+
+    [Fact]
+    public void FormatDateText_KeepsGregorianCulturesUnchanged()
+    {
+        DateTime date = new(2026, 10, 24);
+
+        string chinese = GlanceWidgetViewModel.FormatDateText(date, CultureInfo.GetCultureInfo("zh-CN"), includeYear: true);
+        string english = GlanceWidgetViewModel.FormatDateText(date, CultureInfo.GetCultureInfo("en-US"), includeYear: false);
+
+        Assert.Equal("2026年10月24日", chinese);
+        Assert.Equal("October 24", english);
+    }
+
+
+    [Fact]
     public void TimeFormat_FollowSystemUsesTheSystemShortTimePattern()
     {
         DateTime date = new(2026, 8, 19, 17, 5, 0);
@@ -768,7 +818,7 @@ public sealed class GlanceCalendarAndImageServiceTests : IDisposable
         RemoteImageFixture fixture = new("first.jpg", "https://images.test/first.jpg");
         using HttpClient httpClient = CreateOnlineClient(
             [fixture],
-            _ => CreateBytesResponse([1, 2, 3, 4]));
+            _ => CreateBytesResponse([0xFF, 0xD8, 0xFF, 0x04]));
         var service = new GlanceImageService(cacheDirectory, httpClient, () => true);
 
         IReadOnlyList<GlanceImageInfo> images = await service.RefreshOnlineImagesAsync();
@@ -777,7 +827,7 @@ public sealed class GlanceCalendarAndImageServiceTests : IDisposable
         Assert.True(File.Exists(image.LocalPath));
         string catalogPath = Path.Combine(cacheDirectory, "catalog.json");
         Assert.True(File.Exists(catalogPath));
-        Assert.Equal([1, 2, 3, 4], await File.ReadAllBytesAsync(image.LocalPath!));
+        Assert.Equal([0xFF, 0xD8, 0xFF, 0x04], await File.ReadAllBytesAsync(image.LocalPath!));
         Assert.Empty(Directory.EnumerateFiles(cacheDirectory, "*.tmp", SearchOption.AllDirectories));
         using (JsonDocument catalog = JsonDocument.Parse(await File.ReadAllTextAsync(catalogPath)))
         {
@@ -808,14 +858,14 @@ public sealed class GlanceCalendarAndImageServiceTests : IDisposable
             [first, second],
             request => request.RequestUri == new Uri(first.ImageUrl)
                 ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
-                : CreateBytesResponse([9, 8, 7]));
+                : CreateBytesResponse([0xFF, 0xD8, 0xFF, 0x07]));
         var service = new GlanceImageService(cacheDirectory, httpClient, () => true);
 
         IReadOnlyList<GlanceImageInfo> images = await service.RefreshOnlineImagesAsync();
 
         GlanceImageInfo image = Assert.Single(images);
         Assert.Equal(second.ImageUrl, image.RemoteImageUrl);
-        Assert.Equal([9, 8, 7], await File.ReadAllBytesAsync(image.LocalPath!));
+        Assert.Equal([0xFF, 0xD8, 0xFF, 0x07], await File.ReadAllBytesAsync(image.LocalPath!));
         Assert.Empty(Directory.EnumerateFiles(cacheDirectory, "*.tmp", SearchOption.AllDirectories));
     }
 
@@ -857,7 +907,7 @@ public sealed class GlanceCalendarAndImageServiceTests : IDisposable
                 }));
             }
 
-            return Task.FromResult(CreateBytesResponse([4, 5, 6]));
+            return Task.FromResult(CreateBytesResponse([0xFF, 0xD8, 0xFF, 0x06]));
         }));
         var service = new GlanceImageService(cacheDirectory, httpClient, () => true);
 
@@ -928,7 +978,7 @@ public sealed class GlanceCalendarAndImageServiceTests : IDisposable
                 }));
             }
 
-            return Task.FromResult(CreateBytesResponse([7, 8, 9]));
+            return Task.FromResult(CreateBytesResponse([0xFF, 0xD8, 0xFF, 0x09]));
         }));
         var service = new GlanceImageService(cacheDirectory, httpClient, () => true);
 
@@ -1000,7 +1050,7 @@ public sealed class GlanceCalendarAndImageServiceTests : IDisposable
             }
 
             downloadRequests++;
-            return Task.FromResult(CreateBytesResponse([1, 2, 3]));
+            return Task.FromResult(CreateBytesResponse([0xFF, 0xD8, 0xFF, 0x03]));
         }));
         var service = new GlanceImageService(cacheDirectory, httpClient, () => true);
 
@@ -1020,7 +1070,7 @@ public sealed class GlanceCalendarAndImageServiceTests : IDisposable
         RemoteImageFixture fixture = new("cached.jpg", "https://images.test/cached.jpg");
         using (HttpClient populateClient = CreateOnlineClient(
                    [fixture],
-                   _ => CreateBytesResponse([5, 4, 3])))
+                   _ => CreateBytesResponse([0xFF, 0xD8, 0xFF, 0x33])))
         {
             var populateService = new GlanceImageService(cacheDirectory, populateClient, () => true);
             Assert.Single(await populateService.RefreshOnlineImagesAsync());
@@ -1033,7 +1083,7 @@ public sealed class GlanceCalendarAndImageServiceTests : IDisposable
         IReadOnlyList<GlanceImageInfo> images = await service.RefreshOnlineImagesAsync();
 
         GlanceImageInfo cached = Assert.Single(images);
-        Assert.Equal([5, 4, 3], await File.ReadAllBytesAsync(cached.LocalPath!));
+        Assert.Equal([0xFF, 0xD8, 0xFF, 0x33], await File.ReadAllBytesAsync(cached.LocalPath!));
     }
 
     [Fact]
@@ -1053,6 +1103,123 @@ public sealed class GlanceCalendarAndImageServiceTests : IDisposable
 
         Assert.False(Directory.Exists(cacheDirectory) &&
                      Directory.EnumerateFiles(cacheDirectory, "*.tmp", SearchOption.AllDirectories).Any());
+    }
+
+    [Fact]
+    public void ImageCachePathContainment_RequiresSeparatorBoundaryAndRejectsEscapes()
+    {
+        string root = Path.Combine(_tempRoot, "cache", "images");
+
+        Assert.True(GlanceImageService.IsPathInsideDirectory(root, Path.Combine(root, "photo.jpg")));
+        Assert.True(GlanceImageService.IsPathInsideDirectory(
+            root,
+            Path.Combine(root, "nested", "photo.jpg")));
+        Assert.False(GlanceImageService.IsPathInsideDirectory(
+            root,
+            Path.Combine(_tempRoot, "cache", "images-evil", "photo.jpg")));
+        Assert.False(GlanceImageService.IsPathInsideDirectory(
+            root,
+            Path.Combine(root, "..", "..", "victim.jpg")));
+        Assert.False(GlanceImageService.IsPathInsideDirectory(root, @"\\server\share\photo.jpg"));
+        Assert.False(GlanceImageService.IsPathInsideDirectory(root, @"\\?\C:\cache\images\photo.jpg"));
+        Assert.False(GlanceImageService.IsPathInsideDirectory(root, @"cache\images\photo.jpg"));
+        Assert.False(GlanceImageService.IsPathInsideDirectory(root, null));
+        Assert.False(GlanceImageService.IsPathInsideDirectory(root, "   "));
+        Assert.False(GlanceImageService.IsPathInsideDirectory(root, "C:\\bad\0name.jpg"));
+    }
+
+    [Fact]
+    public async Task OnlineRefresh_RejectsCatalogEntriesOutsideImageCacheWithoutDeletingThem()
+    {
+        string cacheDirectory = Path.Combine(_tempRoot, "cache");
+        string imageDirectory = Path.Combine(cacheDirectory, "images");
+        Directory.CreateDirectory(imageDirectory);
+        string outsideDirectory = Path.Combine(_tempRoot, "outside");
+        Directory.CreateDirectory(outsideDirectory);
+        string staleOutsidePath = Path.Combine(outsideDirectory, "stale-victim.jpg");
+        string freshOutsidePath = Path.Combine(outsideDirectory, "fresh-victim.jpg");
+        await File.WriteAllBytesAsync(staleOutsidePath, [0xFF, 0xD8, 0xFF]);
+        await File.WriteAllBytesAsync(freshOutsidePath, [0xFF, 0xD8, 0xFF]);
+
+        var entries = new List<object>();
+        for (int index = 0; index < 19; index++)
+        {
+            string path = Path.Combine(imageDirectory, $"cached-{index:D2}.jpg");
+            await File.WriteAllBytesAsync(path, [0xFF, 0xD8, 0xFF, (byte)index]);
+            entries.Add(new
+            {
+                id = $"cached-{index:D2}",
+                localPath = path,
+                sourcePageUrl = $"https://commons.wikimedia.org/wiki/File:cached-{index}.jpg",
+                remoteImageUrl = $"https://images.test/cached-{index}.jpg",
+                pixelWidth = 1600,
+                pixelHeight = 900,
+                cachedAtUtc = DateTimeOffset.UtcNow.AddSeconds(index),
+                onlineCategory = (int)GlanceOnlineImageCategory.Featured,
+                onlineProvider = (int)GlanceOnlineImageProvider.Wikimedia
+            });
+        }
+
+        entries.Add(new
+        {
+            id = "stale-outside",
+            localPath = staleOutsidePath,
+            sourcePageUrl = "https://commons.wikimedia.org/wiki/File:stale-outside.jpg",
+            remoteImageUrl = "https://images.test/stale-outside.jpg",
+            pixelWidth = 1600,
+            pixelHeight = 900,
+            cachedAtUtc = DateTimeOffset.UtcNow.AddSeconds(-30),
+            onlineCategory = (int)GlanceOnlineImageCategory.Featured,
+            onlineProvider = (int)GlanceOnlineImageProvider.Wikimedia
+        });
+        entries.Add(new
+        {
+            id = "fresh-outside",
+            localPath = freshOutsidePath,
+            sourcePageUrl = "https://commons.wikimedia.org/wiki/File:fresh-outside.jpg",
+            remoteImageUrl = "https://images.test/fresh-outside.jpg",
+            pixelWidth = 1600,
+            pixelHeight = 900,
+            cachedAtUtc = DateTimeOffset.UtcNow.AddSeconds(120),
+            onlineCategory = (int)GlanceOnlineImageCategory.Featured,
+            onlineProvider = (int)GlanceOnlineImageProvider.Wikimedia
+        });
+        await File.WriteAllTextAsync(
+            Path.Combine(cacheDirectory, "catalog.json"),
+            JsonSerializer.Serialize(entries));
+
+        using var httpClient = new HttpClient(new StubHttpMessageHandler((_, _) =>
+            Task.FromResult(CreateJsonResponse(new
+            {
+                query = new { categorymembers = Array.Empty<object>() }
+            }))));
+        var service = new GlanceImageService(cacheDirectory, httpClient, () => true);
+
+        IReadOnlyList<GlanceImageInfo> images = await service.RefreshOnlineImagesAsync();
+
+        // The older out-of-root entry would have been pruned and the newer one
+        // kept; both must be rejected without ever touching their files.
+        Assert.True(File.Exists(staleOutsidePath), "an out-of-cache image must never be deleted");
+        Assert.True(File.Exists(freshOutsidePath));
+        Assert.Equal(18, images.Count);
+        string imageRootPrefix = Path.GetFullPath(imageDirectory) + Path.DirectorySeparatorChar;
+        Assert.All(images, image => Assert.StartsWith(
+            imageRootPrefix,
+            Path.GetFullPath(image.LocalPath),
+            StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(images, image => image.LocalPath == staleOutsidePath);
+        Assert.DoesNotContain(images, image => image.LocalPath == freshOutsidePath);
+
+        using JsonDocument catalog = JsonDocument.Parse(
+            await File.ReadAllTextAsync(Path.Combine(cacheDirectory, "catalog.json")));
+        string[] catalogPaths = catalog.RootElement
+            .EnumerateArray()
+            .Select(entry => entry.GetProperty("localPath").GetString() ?? string.Empty)
+            .ToArray();
+        Assert.Equal(18, catalogPaths.Length);
+        Assert.DoesNotContain(staleOutsidePath, catalogPaths);
+        Assert.DoesNotContain(freshOutsidePath, catalogPaths);
+        Assert.DoesNotContain(Path.Combine(imageDirectory, "cached-00.jpg"), catalogPaths);
     }
 
     private static HttpClient CreateOnlineClient(

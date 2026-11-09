@@ -502,7 +502,7 @@ public partial class WidgetViewModel
         return string.IsNullOrWhiteSpace(name) ? normalized : name;
     }
 
-    private static bool PathsEqual(string? first, string? second)
+    internal static bool PathsEqual(string? first, string? second)
     {
         if (string.IsNullOrWhiteSpace(first) ||
             string.IsNullOrWhiteSpace(second))

@@ -12,6 +12,43 @@ public sealed class OrganizerService
     private readonly DesktopOrganizationRecoveryStore _sharedRecoveryStore;
     private readonly Func<string> _desktopPathProvider;
     private readonly DesktopAutoOrganizationSuppressionRegistry _autoOrganizationSuppressions;
+
+    /// <summary>
+    /// The widget's mapped folder (or the destination folder inside it) is
+    /// missing or on an offline drive. Inherits DirectoryNotFoundException so
+    /// background consumers — the auto-organization watcher's storage
+    /// recovery catch — classify it as recoverable unavailability instead of
+    /// spending finite retry budget. The English message is a log diagnostic;
+    /// user-facing copy comes from Widget.Import.MappedFolderUnavailable.
+    /// </summary>
+    public sealed class MappedFolderUnavailableException : DirectoryNotFoundException
+    {
+        internal MappedFolderUnavailableException(string path)
+            : base($"The mapped folder is unavailable: '{path}'.")
+            => Path = path;
+
+        public string Path { get; }
+    }
+
+    /// <summary>
+    /// The drop destination resolved outside the widget's mapped folder.
+    /// Inherits InvalidOperationException — the request is invalid for the
+    /// widget's current state, the storage itself is not broken — which also
+    /// keeps existing callers that catch InvalidOperationException working.
+    /// The English message is a log diagnostic; user-facing copy comes from
+    /// Widget.Import.DestinationOutsideMappedRoot.
+    /// </summary>
+    public sealed class DestinationOutsideMappedRootException : InvalidOperationException
+    {
+        internal DestinationOutsideMappedRootException(string destinationPath, string mappedRootPath)
+            : base("The requested destination is outside the widget's mapped folder.")
+            => (DestinationPath, MappedRootPath) = (destinationPath, mappedRootPath);
+
+        public string DestinationPath { get; }
+
+        public string MappedRootPath { get; }
+    }
+
     private sealed record DropPreparation(
         string RootPath,
         IReadOnlyList<string> SourcePaths);
@@ -24,7 +61,10 @@ public sealed class OrganizerService
             settingsService,
             fileService,
             desktopPathProvider,
-            new DesktopAutoOrganizationSuppressionRegistry())
+            new DesktopAutoOrganizationSuppressionRegistry(
+                ledgerPath: Path.Combine(
+                    DeskBoxDataPathService.Current.DataDirectory,
+                    "desktop-organization-suppressions.json")))
     {
     }
 
@@ -47,14 +87,6 @@ public sealed class OrganizerService
 
     internal DesktopAutoOrganizationSuppressionRegistry AutoOrganizationSuppressions =>
         _autoOrganizationSuppressions;
-
-    public IReadOnlyList<OrganizationHistoryEntry> GetRecentHistory(int maxCount = 6)
-    {
-        return _settingsService.OrganizationHistory.Entries
-            .OrderByDescending(entry => entry.TimestampUtc)
-            .Take(Math.Max(0, maxCount))
-            .ToList();
-    }
 
     public OrganizationHistoryEntry? GetLatestUndoableEntry()
     {
@@ -167,10 +199,13 @@ public sealed class OrganizerService
                 partial.CompletedResults;
             if (completedResults.Count > 0)
             {
-                bool canUndoCompletedMove = move && completedResults.All(
-                    result =>
-                        !File.Exists(result.SourcePath) &&
-                        !Directory.Exists(result.SourcePath));
+                // Source-gone probing touches the filesystem per item; keep it
+                // off the dispatcher.
+                bool canUndoCompletedMove = await Task.Run(() =>
+                    move && completedResults.All(
+                        result =>
+                            !File.Exists(result.SourcePath) &&
+                            !Directory.Exists(result.SourcePath)));
                 var partialReceipts = canUndoCompletedMove
                     ? await CaptureUndoReceiptsAsync(completedResults)
                     : UndoReceiptBatch.Empty;
@@ -224,15 +259,18 @@ public sealed class OrganizerService
         string rootPath = string.IsNullOrWhiteSpace(destinationFolderPath)
             ? mappedRootPath
             : Path.GetFullPath(destinationFolderPath);
-        if (!Directory.Exists(rootPath) ||
-            !FileService.TryIsPathUnderDirectoryResolved(
+        if (!Directory.Exists(rootPath))
+        {
+            throw new MappedFolderUnavailableException(rootPath);
+        }
+
+        if (!FileService.TryIsPathUnderDirectoryResolved(
                 rootPath,
                 mappedRootPath,
                 out bool isUnderMappedRoot) ||
             !isUnderMappedRoot)
         {
-            throw new InvalidOperationException(
-                "The requested destination is outside the widget's mapped folder.");
+            throw new DestinationOutsideMappedRootException(rootPath, mappedRootPath);
         }
 
         string[] normalizedSourcePaths = sourcePaths
@@ -289,12 +327,14 @@ public sealed class OrganizerService
             throw new InvalidOperationException("This widget does not have a folder path.");
         }
 
-        var normalizedSourcePaths = sourcePaths
+        // Existence filtering is filesystem I/O; run it off the dispatcher so
+        // unreachable paths (offline shares) cannot stall the caller.
+        var normalizedSourcePaths = await Task.Run(() => sourcePaths
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Select(Path.GetFullPath)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Where(path => File.Exists(path) || Directory.Exists(path))
-            .ToList();
+            .ToList());
         if (normalizedSourcePaths.Count == 0)
         {
             throw new FileNotFoundException("No items to restore could be found.");
@@ -356,9 +396,17 @@ public sealed class OrganizerService
             // Explorer semantics: items that physically completed before the
             // failure ride the exception — record them as an undoable entry
             // instead of folding them into the failure record.
+            // R21-V6-02: the receipt set is the shell's bookkeeping, not proof
+            // that each entry left its source. An unfiltered set made the undo
+            // history claim "moved" for entries the view still shows, so filter
+            // to moves that are confirmed on disk, like the view consumers do.
             IReadOnlyList<FileService.FileTransferResult> completed =
                 ex is FileService.IFileTransferWithCompletedResults partial
                     ? partial.CompletedResults
+                        .Where(result => FileService.IsCompletedShellMove(
+                            result.SourcePath,
+                            result.DestinationPath))
+                        .ToList()
                     : [];
             if (completed.Count > 0)
             {
@@ -380,11 +428,19 @@ public sealed class OrganizerService
                     canUndo: true));
             }
 
-            string[] failedPaths = normalizedSourcePaths
-                .Except(
-                    completed.Select(result => result.SourcePath),
-                    StringComparer.OrdinalIgnoreCase)
-                .ToArray();
+            // A user-cancelled Shell transfer is not a failure: whatever
+            // did not move was declined in the Shell's own dialog, not
+            // lost. Record only the completed set; the retired legacy
+            // bridge recorded nothing for cancelled remainder either.
+            bool userCancelledShellTransfer =
+                ex is FileService.FileTransferCanceledException;
+            string[] failedPaths = userCancelledShellTransfer
+                ? []
+                : normalizedSourcePaths
+                    .Except(
+                        completed.Select(result => result.SourcePath),
+                        StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
             if (failedPaths.Length > 0)
             {
                 await AddHistoryEntryAsync(CreateFailureEntry(
@@ -448,32 +504,40 @@ public sealed class OrganizerService
         // failure must never move an already-restored item again (its undo
         // target is gone, and re-running it against whatever reappeared at
         // that path would relocate an unrelated object).
+        // The whole build phase is filesystem probing (existence, receipt
+        // revalidation, available-path reservation); keep it off the caller's
+        // dispatcher so a slow network drive cannot freeze the UI.
         var reservedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var pending = new List<(OrganizationHistoryItem Item, FileService.FileTransferPlan Plan)>(
-            historyEntry.Items.Count);
-        foreach (var item in historyEntry.Items.Where(item => !item.IsRestored))
+        var pending = await Task.Run(() =>
         {
-            if (!File.Exists(item.DestinationPath) && !Directory.Exists(item.DestinationPath))
+            var built = new List<(OrganizationHistoryItem Item, FileService.FileTransferPlan Plan)>(
+                historyEntry.Items.Count);
+            foreach (var item in historyEntry.Items.Where(item => !item.IsRestored))
             {
-                throw new InvalidOperationException($"Could not find undo target: {item.Name}");
+                if (!File.Exists(item.DestinationPath) && !Directory.Exists(item.DestinationPath))
+                {
+                    throw new InvalidOperationException($"Could not find undo target: {item.Name}");
+                }
+
+                // Undo authority comes from the receipt recorded at move time.
+                // A replacement that later occupies the destination path fails
+                // this check; legacy entries without a receipt have no automatic
+                // undo at all rather than a freshly captured identity.
+                if (!FileService.UndoReceiptStillMatches(
+                        item.DestinationPath,
+                        item.DestinationIdentity))
+                {
+                    throw new InvalidOperationException(
+                        $"The undo target changed on disk and can no longer be " +
+                        $"undone safely: {item.Name}");
+                }
+
+                string restorePath = FileService.GetAvailablePath(item.SourcePath, reservedPaths);
+                built.Add((item, new FileService.FileTransferPlan(item.DestinationPath, restorePath)));
             }
 
-            // Undo authority comes from the receipt recorded at move time.
-            // A replacement that later occupies the destination path fails
-            // this check; legacy entries without a receipt have no automatic
-            // undo at all rather than a freshly captured identity.
-            if (!FileService.UndoReceiptStillMatches(
-                    item.DestinationPath,
-                    item.DestinationIdentity))
-            {
-                throw new InvalidOperationException(
-                    $"The undo target changed on disk and can no longer be " +
-                    $"undone safely: {item.Name}");
-            }
-
-            string restorePath = FileService.GetAvailablePath(item.SourcePath, reservedPaths);
-            pending.Add((item, new FileService.FileTransferPlan(item.DestinationPath, restorePath)));
-        }
+            return built;
+        });
 
         var plans = pending.Select(pair => pair.Plan).ToList();
         string operationId = Guid.NewGuid().ToString("N");

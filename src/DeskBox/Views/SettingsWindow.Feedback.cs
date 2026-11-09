@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Windows.System;
+using DeskBox.Helpers;
 
 namespace DeskBox.Views;
 
@@ -55,6 +56,8 @@ public sealed partial class SettingsWindow
             Padding = new Thickness(10, 8, 10, 8),
             CornerRadius = new CornerRadius(6),
             BorderThickness = new Thickness(1),
+            Background = TryThemeBrush("CardBackgroundFillColorSecondaryBrush"),
+            BorderBrush = TryThemeBrush("CardStrokeColorDefaultBrush"),
             Child = noticeText,
         };
 
@@ -414,7 +417,18 @@ public sealed partial class SettingsWindow
                 },
             };
 
-            DeskBoxFeedbackMineResult result = await FeedbackService.GetMyFeedbackAsync();
+            DeskBoxFeedbackMineResult result;
+            try
+            {
+                result = await FeedbackService.GetMyFeedbackAsync();
+            }
+            catch (Exception ex)
+            {
+                // R8 B9: a thrown network failure must reach the retry view,
+                // not leave the ProgressRing up for the dialog's lifetime.
+                App.Log($"[Feedback] Load my feedback failed: {ex.Message}");
+                result = new DeskBoxFeedbackMineResult(Ok: false, Items: []);
+            }
             if (!result.Ok)
             {
                 var retryButton = new Button { Content = T("Feedback.My.Retry") };
@@ -467,7 +481,7 @@ public sealed partial class SettingsWindow
         string typeLabel = item.Type == "bug" ? T("Feedback.Dialog.TypeBug") : T("Feedback.Dialog.TypeSuggestion");
         var metaText = new TextBlock
         {
-            Text = $"#{item.Id} · {typeLabel} · {StatusText(item.Status)} · {item.CreatedAt.ToLocalTime().ToString("d")}"
+            Text = $"#{item.Id} · {typeLabel} · {StatusText(item.Status)} · {item.CreatedAt.ToLocalTime().ToString("d", DisplayCulture.GregorianCurrent)}"
                 + (string.IsNullOrEmpty(item.AppVersion) ? string.Empty : $" · v{item.AppVersion}"),
             FontSize = 11.5,
             Opacity = 0.75,
@@ -505,6 +519,8 @@ public sealed partial class SettingsWindow
                 Padding = new Thickness(10, 8, 10, 8),
                 CornerRadius = new CornerRadius(6),
                 BorderThickness = new Thickness(1),
+                Background = TryThemeBrush("CardBackgroundFillColorSecondaryBrush"),
+                BorderBrush = TryThemeBrush("CardStrokeColorDefaultBrush"),
                 Margin = new Thickness(0, 4, 0, 0),
                 Child = new StackPanel(),
             };
@@ -532,6 +548,19 @@ public sealed partial class SettingsWindow
     private static Brush? TryAccentBrush()
     {
         if (Application.Current?.Resources.TryGetValue("AccentTextFillColorPrimaryBrush", out object brush) == true)
+        {
+            return brush as Brush;
+        }
+
+        return null;
+    }
+
+    // Same lookups as the nested snapshot rows in SettingsWindow.xaml: the
+    // notice/reply borders were declared with thickness+radius but no brushes,
+    // so they never actually rendered a box.
+    private static Brush? TryThemeBrush(string key)
+    {
+        if (Application.Current?.Resources.TryGetValue(key, out object brush) == true)
         {
             return brush as Brush;
         }

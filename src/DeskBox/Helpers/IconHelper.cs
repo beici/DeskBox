@@ -88,7 +88,19 @@ public static class IconHelper
             ReleasedIconByteEntries > 0;
     }
 
-    private static readonly SemaphoreSlim s_thumbLoadSemaphore = new(2, 2);
+    // Matches ShellThumbnailProxy.MaximumBatchRequests: the proxy coalesces
+    // whatever is in flight into one batch process, so a lower cap silently
+    // shrinks every batch (a 2-cap turned an 8-item batch into 2 items and
+    // multiplied process spawns). Only the shell path holds this permit; its
+    // payloads are 256 px frames.
+    private static readonly SemaphoreSlim s_thumbLoadSemaphore = new(8, 8);
+
+    // The media path reads the whole source file into memory while holding a
+    // permit (File.ReadAllBytesAsync below), and ItemHydration fans out eight
+    // of these at once (IconHydrationBatchSize), so an eight-wide permit there
+    // would multiply the peak by eight (a 24 MP photo is ~192 MB). Keep that
+    // path at the old width; it is not part of the proxy batch.
+    private static readonly SemaphoreSlim s_mediaThumbLoadSemaphore = new(2, 2);
     private static readonly SemaphoreSlim s_shellIconLoadSemaphore = new(8, 8);
     private static readonly BoundedBackgroundWorkScheduler s_iconSourceScheduler =
         BoundedBackgroundWorkScheduler.SharedShell;
@@ -305,8 +317,10 @@ public static class IconHelper
             return await cachedTask;
         }
 
-        // Remove stale entry for the same path but different version
-        RemoveStaleThumbnailEntries(pathPrefix, cacheKey);
+        // Remove stale entry for the same path and decode width but a different
+        // version (R18-S10-01: the width must be part of the match, otherwise
+        // loading one path at 96px evicts its 192px entry and vice versa).
+        RemoveStaleThumbnailEntries(pathPrefix, cacheKey, decodePixelWidth);
 
         Task<BitmapImage?> task;
         bool createdTask = false;
@@ -346,14 +360,19 @@ public static class IconHelper
     }
 
     /// <summary>
-    /// Removes old cache entries for the same file path but different
-    /// modification-time version, preventing stale thumbnails from
-    /// accumulating when files are edited.
+    /// Removes old cache entries for the same file path and decode width but a
+    /// different modification-time version, preventing stale thumbnails from
+    /// accumulating when files are edited. The decode width is part of the
+    /// match on purpose: the same file is legitimately cached at several
+    /// widths, and evicting across widths would turn the cache into a
+    /// thrashing one-entry-per-path store.
     /// </summary>
     private static void RemoveStaleThumbnailEntries(
         string pathPrefix,
-        string currentKey)
+        string currentKey,
+        int decodePixelWidth)
     {
+        string decodeSuffix = $":decode={decodePixelWidth}";
         lock (s_thumbLock)
         {
             if (s_thumbCache.Count == 0)
@@ -365,7 +384,8 @@ public static class IconHelper
             foreach (var key in s_thumbCache.Keys)
             {
                 if (!key.Equals(currentKey, StringComparison.OrdinalIgnoreCase) &&
-                    key.StartsWith(pathPrefix, StringComparison.OrdinalIgnoreCase))
+                    key.StartsWith(pathPrefix, StringComparison.OrdinalIgnoreCase) &&
+                    key.EndsWith(decodeSuffix, StringComparison.OrdinalIgnoreCase))
                 {
                     staleKeys.Add(key);
                 }
@@ -407,12 +427,30 @@ public static class IconHelper
         string path,
         int decodePixelWidth)
     {
-        await s_thumbLoadSemaphore.WaitAsync();
+        await s_mediaThumbLoadSemaphore.WaitAsync();
         try
         {
-            // Try Windows native thumbnail first — leverages the system
-            // thumbnail cache and avoids reading the full image into memory.
             bool isVideo = IsVideoFile(path);
+
+            // Persist reduced image thumbnails on disk. The cache is consulted
+            // only for a file that is being shown; no startup scan or
+            // continuous refresh is introduced. Video previews stay with the
+            // Windows thumbnail provider, which is their only reliable decoder.
+            if (!isVideo)
+            {
+                byte[]? diskThumbnail = await ThumbnailDiskCache.GetOrCreateAsync(path, decodePixelWidth);
+                if (diskThumbnail is { Length: > 0 })
+                {
+                    BitmapImage? cachedImage = await CreateBitmapImageAsync(dispatcher, diskThumbnail, decodePixelWidth);
+                    if (cachedImage is not null)
+                    {
+                        return cachedImage;
+                    }
+                }
+            }
+
+            // Try the Windows native thumbnail next — leverages the system
+            // thumbnail cache and avoids reading the full image into memory.
             var image = await TryLoadNativeThumbnailAsync(
                 dispatcher,
                 path,
@@ -452,7 +490,7 @@ public static class IconHelper
         }
         finally
         {
-            s_thumbLoadSemaphore.Release();
+            s_mediaThumbLoadSemaphore.Release();
         }
     }
 
@@ -467,6 +505,19 @@ public static class IconHelper
             byte[]? bytes = await ShellThumbnailProxy.TryLoadAsync(
                 path,
                 decodePixelWidth);
+            if (bytes is not { Length: > 0 })
+            {
+                // The proxy failed, or the path sits in its 30 s failure
+                // blacklist (feedback 226/452/495: the proxy process could
+                // die with CRT runtime error R6016 after sleep/resume).
+                // Containers a built-in WIC decoder can read are still
+                // decodable in-process; the decoder is pinned by GUID so no
+                // third-party codec loads into DeskBox.
+                bytes = await WicBuiltInThumbnailDecoder.DecodeAsync(
+                    path,
+                    decodePixelWidth);
+            }
+
             return bytes is { Length: > 0 }
                 ? await CreateBitmapImageAsync(
                     dispatcher,
@@ -627,6 +678,7 @@ public static class IconHelper
         if (resetTransientFailures)
         {
             ShellThumbnailProxy.Invalidate(path);
+            WicBuiltInThumbnailDecoder.Invalidate(path);
         }
 
         if (IsMediaFile(path))
@@ -739,6 +791,21 @@ public static class IconHelper
         }
 
         ShellThumbnailProxy.ClearTransientFailures();
+        WicBuiltInThumbnailDecoder.ClearTransientFailures();
+    }
+
+    /// <summary>
+    /// Clears only the retry-state markers (timeout blacklists), keeping
+    /// every decoded entry. Recovery refreshes call this so previously
+    /// timed-out sources get a fresh attempt without the visual cost of the
+    /// blanket icon clear the freshness ledger retired.
+    /// </summary>
+    internal static void ResetTransientFailures()
+    {
+        s_iconSourceTimeouts.Clear();
+        s_iconBytesTimeouts.Clear();
+        ShellThumbnailProxy.ClearTransientFailures();
+        WicBuiltInThumbnailDecoder.ClearTransientFailures();
     }
 
     /// <summary>
@@ -907,6 +974,7 @@ public static class IconHelper
         s_iconSourceTimeouts.Clear();
         s_iconBytesTimeouts.Clear();
         ShellThumbnailProxy.ClearTransientFailures();
+        WicBuiltInThumbnailDecoder.ClearTransientFailures();
 
         return new IdleIconCacheReleaseResult(
             Math.Max(0, thumbnailCountBefore - thumbnailCountAfter),
@@ -1041,17 +1109,24 @@ public static class IconHelper
                 }
             }
 
-            if (!ShortcutHelper.IsShortcutPath(loadIconSource.Path))
+            // A resolved source with an explicit icon index (a custom icon
+            // location such as "shell32.dll,-238" or the Steam executable)
+            // names the exact frame the shortcut author picked. The Shell
+            // item pipeline ignores that index and answers with the file's
+            // default frame, so those sources must keep going to the indexed
+            // extraction below instead of taking this branch.
+            if (!ShortcutHelper.IsShortcutPath(loadIconSource.Path) &&
+                !loadIconSource.UsesExplicitIconIndex)
             {
                 // Ask the same isolated Shell-item pipeline used by Explorer for
                 // every real file and folder. This also covers a shortcut whose
-                // icon source resolved past the .lnk (target file or explicit
-                // icon location): the resolved source is an ordinary file, no
-                // shortcut overlay is involved, and skipping this pipeline is
-                // what made shortcut tiles render as pre-scaled 32/48 px
-                // image-list bitmaps. A source that still is the .lnk itself
-                // keeps the image-list path so the arrow-overlay rendering the
-                // user chose is preserved.
+                // icon source resolved past the .lnk (the target file): the
+                // resolved source is an ordinary file, no shortcut overlay is
+                // involved, and skipping this pipeline is what made shortcut
+                // tiles render as pre-scaled 32/48 px image-list bitmaps. A
+                // source that still is the .lnk itself keeps the image-list
+                // path so the arrow-overlay rendering the user chose is
+                // preserved.
                 bytes = await TryLoadFileShellItemIconAsync(loadIconSource.Path);
                 if (bytes is { Length: > 0 })
                 {
@@ -1191,6 +1266,28 @@ public static class IconHelper
             {
                 StoreCachedIconBytes(iconBytesCacheKey, bytes);
                 EvictIconCachesIfNeeded();
+            }
+
+            if (bytes is not { Length: > 0 } &&
+                loadIconSource.UsesExplicitIconIndex)
+            {
+                // An explicit icon index can name a resource no extractor can
+                // satisfy (a packed executable, a stripped resource section):
+                // both the Shell item route above and the indexed extraction
+                // answer null for the same source, and because null results
+                // are never cached the tile stays blank across restarts. The
+                // Shell item still resolves a default frame for such a file;
+                // a default icon beats a permanently blank tile, and only a
+                // successful recovery is cached.
+                bytes = await TryLoadFileShellItemIconAsync(loadIconSource.Path);
+                if (bytes is { Length: > 0 })
+                {
+                    StoreCachedIconBytes(iconBytesCacheKey, bytes);
+                    EvictIconCachesIfNeeded();
+                    App.LogVerbose(
+                        $"[IconHelper] Recovered explicit index icon through " +
+                        $"Shell item path={loadIconSource.Path}");
+                }
             }
 
             if (bytes is not { Length: > 0 } &&
@@ -1509,8 +1606,11 @@ public static class IconHelper
                 return null;
             }
 
-            var imageList = (ShellIconNativeMethods.IImageList)Marshal.GetObjectForIUnknown(imageListPtr);
-            int result = imageList.GetIcon(iconIndex, ShellIconNativeMethods.ILD_TRANSPARENT, ref iconHandle);
+            int result = ShellIconNativeMethods.ImageListGetIcon(
+                imageListPtr,
+                iconIndex,
+                ShellIconNativeMethods.ILD_TRANSPARENT,
+                ref iconHandle);
             if (result != 0 || iconHandle == IntPtr.Zero)
             {
                 return null;
@@ -1559,7 +1659,43 @@ public static class IconHelper
         {
             using var icon = Icon.FromHandle(shinfo.hIcon);
             using var bitmap = icon.ToBitmap();
-            return EncodeIconBitmapAsPng(bitmap, rejectPaddedShortcutIcon);
+            return EncodeIconBitmapAsPng(bitmap, rejectPaddedShortcutIcon: false);
+        }
+        finally
+        {
+            ShellIconNativeMethods.DestroyIcon(shinfo.hIcon);
+        }
+    }
+
+    /// <summary>
+    /// PNG bytes for a file TYPE's icon, resolved from the extension
+    /// association alone — the file does not have to exist. Used by the
+    /// New submenu, whose entries have no backing file yet.
+    /// </summary>
+    internal static byte[]? GetFileTypeIconPngBytes(
+        string fileNameWithExtension)
+    {
+        const uint fileAttributeNormal = 0x80;
+        var shinfo = new ShellIconNativeMethods.SHFILEINFO();
+        IntPtr hImg = ShellIconNativeMethods.SHGetFileInfo(
+            fileNameWithExtension,
+            fileAttributeNormal,
+            ref shinfo,
+            (uint)Marshal.SizeOf(shinfo),
+            ShellIconNativeMethods.SHGFI_ICON |
+            ShellIconNativeMethods.SHGFI_LARGEICON |
+            ShellIconNativeMethods.SHGFI_USEFILEATTRIBUTES);
+
+        if (hImg == IntPtr.Zero || shinfo.hIcon == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var icon = Icon.FromHandle(shinfo.hIcon);
+            using var bitmap = icon.ToBitmap();
+            return EncodeIconBitmapAsPng(bitmap, rejectPaddedShortcutIcon: false);
         }
         finally
         {
@@ -1673,7 +1809,107 @@ public static class IconHelper
         }
     }
 
-    private static Task<BitmapImage?> CreateBitmapImageAsync(
+    /// <summary>
+    /// Menu-sized indexed icon as PNG bytes, extracted in-process
+    /// (SHDefExtractIcon); safe to call from background threads. Used for
+    /// Open With app entries, where the extraction starts when the menu is
+    /// built so the icons are ready by the time the submenu opens on hover.
+    /// </summary>
+    internal static byte[]? GetIndexedIconPngBytes(
+        string filePath,
+        int iconIndex,
+        int size) => TryExtractHighResIndexedIcon(filePath, iconIndex, size);
+
+    /// <summary>
+    /// Icon for a shell-namespace item addressed by its parsing name
+    /// ("::{645FF040-5081-101B-9F08-00AA002F954E}", "shell:ControlPanelFolder",
+    /// …) as PNG bytes. Unlike file-path icons, namespace icons can be
+    /// state-aware — the Recycle Bin returns the empty or the full graphic
+    /// for the same PIDL — so callers re-query when the state may have moved.
+    /// Safe to call from background threads.
+    /// </summary>
+    internal static byte[]? GetShellItemIconPngBytes(string parsingName)
+    {
+        IntPtr pidl = IntPtr.Zero;
+        IntPtr hImg = IntPtr.Zero;
+        try
+        {
+            int hr = ShellIconNativeMethods.SHParseDisplayName(
+                parsingName,
+                IntPtr.Zero,
+                out pidl,
+                0,
+                out _);
+            if (hr != 0 || pidl == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            // Resolve the system image-list index, then pull the large
+            // (32px) icon out of SHIL_LARGE-quality handles for crispness.
+            var shinfo = new ShellIconNativeMethods.SHFILEINFO();
+            hImg = ShellIconNativeMethods.SHGetFileInfoPidl(
+                pidl,
+                0,
+                ref shinfo,
+                (uint)Marshal.SizeOf(shinfo),
+                ShellIconNativeMethods.SHGFI_PIDL |
+                ShellIconNativeMethods.SHGFI_SYSICONINDEX);
+            if (hImg != IntPtr.Zero)
+            {
+                byte[]? bytes = TryGetIconFromImageList(
+                    ShellIconNativeMethods.SHIL_EXTRALARGE,
+                    shinfo.iIcon);
+                bytes ??= TryGetIconFromImageList(
+                    ShellIconNativeMethods.SHIL_LARGE,
+                    shinfo.iIcon);
+                if (bytes is not null)
+                {
+                    return bytes;
+                }
+            }
+
+            // Fallback: let the shell hand us the icon handle directly.
+            var direct = new ShellIconNativeMethods.SHFILEINFO();
+            hImg = ShellIconNativeMethods.SHGetFileInfoPidl(
+                pidl,
+                0,
+                ref direct,
+                (uint)Marshal.SizeOf(direct),
+                ShellIconNativeMethods.SHGFI_PIDL |
+                ShellIconNativeMethods.SHGFI_ICON |
+                ShellIconNativeMethods.SHGFI_LARGEICON);
+            if (hImg == IntPtr.Zero || direct.hIcon == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            try
+            {
+                using var icon = Icon.FromHandle(direct.hIcon);
+                using var bitmap = icon.ToBitmap();
+                return EncodeIconBitmapAsPng(bitmap, rejectPaddedShortcutIcon: false);
+            }
+            finally
+            {
+                ShellIconNativeMethods.DestroyIcon(direct.hIcon);
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[IconHelper] Shell item icon failed for {parsingName}: {ex.Message}");
+            return null;
+        }
+        finally
+        {
+            if (pidl != IntPtr.Zero)
+            {
+                ShellIconNativeMethods.ILFree(pidl);
+            }
+        }
+    }
+
+    internal static Task<BitmapImage?> CreateBitmapImageAsync(
         Microsoft.UI.Dispatching.DispatcherQueue dispatcher,
         byte[]? bytes,
         int decodePixelWidth = 0)
@@ -1685,7 +1921,9 @@ public static class IconHelper
 
         if (dispatcher.HasThreadAccess)
         {
-            return CreateBitmapImageOnUiThreadAsync(bytes, decodePixelWidth);
+            // Same contract as the enqueued path below: a decode failure
+            // resolves to null instead of faulting the caller's await.
+            return CreateBitmapImageOnUiThreadSafeAsync(bytes, decodePixelWidth);
         }
 
         var tcs = new TaskCompletionSource<BitmapImage?>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1706,6 +1944,19 @@ public static class IconHelper
         }
 
         return tcs.Task;
+    }
+
+    private static async Task<BitmapImage?> CreateBitmapImageOnUiThreadSafeAsync(byte[] bytes, int decodePixelWidth)
+    {
+        try
+        {
+            return await CreateBitmapImageOnUiThreadAsync(bytes, decodePixelWidth);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[IconHelper] UI thread set source failed: {ex.Message}");
+            return null;
+        }
     }
 
     private static async Task<BitmapImage?> CreateBitmapImageOnUiThreadAsync(byte[] bytes, int decodePixelWidth = 0)

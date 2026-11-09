@@ -11,6 +11,13 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+# Single source of truth for the audit gates below: keep these in sync with
+# publish-aot-audit.ps1 ($auditProfileVersion, the summary schema version it
+# emits, and the current WMC1510 baseline in warningCodeCounts). Bump all of
+# them together when the audit profile changes.
+$requiredAuditProfileVersion = 65
+$requiredSummarySchemaVersion = 55
+$requiredWmc1510Count = 808
 $scenario = "NativeDropPersistenceRestart"
 $smokeEnvironmentVariable = "DESKBOX_AOT_MANAGED_UI_SMOKE"
 $phaseEnvironmentVariable = "DESKBOX_AOT_MANAGED_UI_NATIVE_DROP_PHASE"
@@ -364,18 +371,18 @@ if (-not (Test-Path -LiteralPath $auditSummaryPath -PathType Leaf)) {
 $auditSummary = Get-Content `
     -LiteralPath $auditSummaryPath `
     -Raw | ConvertFrom-Json
-if ([int]$auditSummary.auditProfileVersion -ne 54 -or
-    [int]$auditSummary.schemaVersion -ne 51 -or
+if ([int]$auditSummary.auditProfileVersion -ne $requiredAuditProfileVersion -or
+    [int]$auditSummary.schemaVersion -ne $requiredSummarySchemaVersion -or
     -not [bool]$auditSummary.sourceStableDuringAudit -or
     [string]$auditSummary.configuration -cne "Release" -or
     [string]$auditSummary.platform -cne "x64" -or
     [string]$auditSummary.runtimeIdentifier -cne "win-x64" -or
     @($auditSummary.warningCodes | Where-Object { $_ -ceq "WMC1506" }).Count -ne 0 -or
-    [int]$auditSummary.warningCodeCounts.WMC1510 -ne 1213 -or
+    [int]$auditSummary.warningCodeCounts.WMC1510 -ne $requiredWmc1510Count -or
     @($auditSummary.alwaysThrowMessages).Count -ne 0 -or
     [int]$auditSummary.rustNative.abiVersion -ne 2 -or
     [int]$auditSummary.rustNative.capabilities -ne 511) {
-    throw "Native-drop smoke requires a successful profile 56 / schema 53 audit."
+    throw "Native-drop smoke requires a successful profile $requiredAuditProfileVersion / schema $requiredSummarySchemaVersion audit."
 }
 
 if ([string]::IsNullOrWhiteSpace($DataRoot)) {
@@ -462,9 +469,12 @@ Set-Content `
     -Encoding UTF8
 
 $settings = [ordered]@{
-    schemaVersion = 5
+    schemaVersion = 9
     language = "zh-CN"
-    managedDropAction = "Copy"
+    # The no-modifier probe must freeze a Move (its sources have to disappear),
+    # so the widget's native default transfer has to be the product default
+    # "Move"; the Ctrl probes explicitly force Copy on top of it.
+    managedDropAction = "Move"
     autoStart = $false
     autoCheckForUpdates = $false
     globalHotkeyEnabled = $false
@@ -577,14 +587,23 @@ try {
             [string]$initialHashes.moveNested) {
         throw "Native-drop destination content hashes do not match their sources."
     }
-    if (-not [bool]$mutate.result.nativeDrop.copyImport.duringImport.cardVisible -or
-        -not [bool]$mutate.result.nativeDrop.copyImport.duringImport.backgroundIsAcrylicBrush -or
-        [int]$mutate.result.nativeDrop.copyImport.duringImport.canvasZIndex -lt 1000 -or
-        [double]$mutate.result.nativeDrop.copyImport.duringImport.translationZ -lt 64 -or
+    if (-not [bool]$mutate.result.nativeDrop.copyImport.duringImport.isImportBusy -or
+        [bool]$mutate.result.nativeDrop.copyImport.duringImport.cardVisible -or
         [bool]$mutate.result.nativeDrop.copyImport.immediatelyAfterCallback.isImportBusy -or
         [bool]$mutate.result.nativeDrop.nativePointerClear.highlightActiveAfter -or
         [bool]$mutate.result.nativeDrop.nativeLeaveClear.highlightActiveAfter) {
-        throw "Mutate phase did not prove progress layering or stale-highlight cleanup."
+        throw "Mutate phase did not prove deferred shell progress or stale-highlight cleanup."
+    }
+    if (-not [bool]$mutate.result.nativeDrop.copyImport.duringImport.busyElapsedMilliseconds -or
+        [int]$mutate.result.nativeDrop.copyImport.duringImport.busyElapsedMilliseconds -lt 150) {
+        throw "Mutate phase did not sample the shell-delegated busy window past the 150 ms import-card delay floor."
+    }
+    if (-not [bool]$mutate.result.nativeDrop.managedCardImport.cardShown.cardVisible -or
+        -not [bool]$mutate.result.nativeDrop.managedCardImport.cardShown.isImportBusy -or
+        -not [bool]$mutate.result.nativeDrop.managedCardImport.cardShown.backgroundIsAcrylicBrush -or
+        [int]$mutate.result.nativeDrop.managedCardImport.cardShown.canvasZIndex -ne 1000 -or
+        -not [bool]$mutate.result.nativeDrop.managedCardImport.destinationRemovedAfterProbe) {
+        throw "Mutate phase did not prove the managed-transfer acrylic card display or probe cleanup."
     }
 
     $verifyRestore = Invoke-NativeDropPhase `

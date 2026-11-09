@@ -193,20 +193,6 @@ public sealed partial class TodoWidgetContent
         await ViewModel.DeleteItemsAsync(selectedIds);
     }
 
-        private void BeginItemEdit(TodoItemViewModel item)
-    {
-        ClearCopySelection();
-        CloseCustomDueDateOverlay();
-
-        if (!item.IsExpanded && ViewModel is not null)
-        {
-            ViewModel.ToggleExpanded(item.Id);
-            TodoListView.ScrollIntoView(item);
-        }
-
-        ViewModel?.BeginEdit(item.Id);
-    }
-
     private async void TodoEditSaveButton_Click(object sender, RoutedEventArgs e)
     {
         await SaveTodoEditAsync();
@@ -228,6 +214,13 @@ public sealed partial class TodoWidgetContent
 
         if (e.Key == VirtualKey.Enter)
         {
+            // Enter confirms an IME candidate before it reaches us; submitting here would
+            // save the raw composition buffer as the task title.
+            if (TextCompositionTracker.IsComposing(TodoEditTextBox))
+            {
+                return;
+            }
+
             e.Handled = true;
             if (ShouldSubmitTodoEditor(e))
             {
@@ -459,11 +452,6 @@ public sealed partial class TodoWidgetContent
             await ViewModel.UndoLastActionAsync();
             ShowUndoToast(App.Current.LocalizationService.T("Common.Undone"));
         }
-    }
-
-    private void DismissUndoButton_Click(object sender, RoutedEventArgs e)
-    {
-        HideUndoToast(clearUndo: true);
     }
 
     private void ShowUndoToast(

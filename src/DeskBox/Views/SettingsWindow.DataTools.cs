@@ -21,27 +21,28 @@ namespace DeskBox.Views;
 
 public sealed partial class SettingsWindow
 {
-    private void OpenQuickCaptureSettingsButton_Click(object sender, RoutedEventArgs e)
+    // Crash guard for async void handlers on this partial (same shape as the
+    // Glance / DesktopOrganization settings sections).
+    private static async Task RunGuardedAsync(string operationName, Func<Task> action)
     {
-        NavigateToSettingsSection("QuickCaptureSettings");
-    }
-
-    private void OpenTodoSettingsButton_Click(object sender, RoutedEventArgs e)
-    {
-        NavigateToSettingsSection("TodoSettings");
-    }
-
-    private void OpenAppearanceDetailButton_Click(object sender, RoutedEventArgs e)
-    {
-        NavigateToSettingsSection("AppearanceDetail");
+        try
+        {
+            await action();
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[SettingsWindow] {operationName} failed: {ex.Message}");
+        }
     }
 
     private async void ClearQuickCaptureDataButton_Click(object sender, RoutedEventArgs e)
     {
-        if (SettingsRoot.XamlRoot is null)
+        await RunGuardedAsync("clear-quick-capture-data", async () =>
         {
-            return;
-        }
+            if (SettingsRoot.XamlRoot is null)
+            {
+                return;
+            }
 
         var data = await App.Current.QuickCaptureService.GetDataAsync();
         int recordCount = data.Items.Count(item => !item.IsDeleted);
@@ -73,14 +74,17 @@ public sealed partial class SettingsWindow
             App.Current.QuickCaptureService,
             _localizationService);
         await ViewModel.RefreshQuickCaptureImageCacheInfoAsync();
+        });
     }
 
     private async void ClearQuickCaptureRecentButton_Click(object sender, RoutedEventArgs e)
     {
-        if (SettingsRoot.XamlRoot is null)
+        await RunGuardedAsync("clear-quick-capture-recent", async () =>
         {
-            return;
-        }
+            if (SettingsRoot.XamlRoot is null)
+            {
+                return;
+            }
 
         var data = await App.Current.QuickCaptureService.GetDataAsync();
         int recentCount = data.RecentItems.Count(item => !item.IsDeleted);
@@ -107,14 +111,17 @@ public sealed partial class SettingsWindow
 
         await App.Current.QuickCaptureService.ClearRecentAsync();
         await ViewModel.RefreshQuickCaptureImageCacheInfoAsync();
+        });
     }
 
     private async void CleanupQuickCaptureImageCacheButton_Click(object sender, RoutedEventArgs e)
     {
-        if (SettingsRoot.XamlRoot is null)
+        await RunGuardedAsync("cleanup-quick-capture-image-cache", async () =>
         {
-            return;
-        }
+            if (SettingsRoot.XamlRoot is null)
+            {
+                return;
+            }
 
         var result = await App.Current.QuickCaptureService.CleanupUnusedImageCacheAsync();
         await ViewModel.RefreshQuickCaptureImageCacheInfoAsync();
@@ -123,7 +130,7 @@ public sealed partial class SettingsWindow
         {
             XamlRoot = SettingsRoot.XamlRoot,
             Title = _localizationService.T("Settings.QuickCapture.ImageCacheCleanupTitle"),
-            CloseButtonText = _localizationService.T("Common.Ok"),
+            CloseButtonText = _localizationService.T("Common.GotIt"),
             DefaultButton = ContentDialogButton.Close,
             Content = new TextBlock
             {
@@ -136,6 +143,7 @@ public sealed partial class SettingsWindow
         };
 
         await dialog.ShowAsync();
+        });
     }
 
     private void ShowOnboardingButton_Click(object sender, RoutedEventArgs e)
@@ -366,7 +374,9 @@ public sealed partial class SettingsWindow
 
         try
         {
-            await App.Current.WidgetManager.DeleteOrphanManagedStorageFolderAsync(folderPath);
+            await App.Current.WidgetManager.DeleteOrphanManagedStorageFolderAsync(
+                folderPath,
+                _hWnd);
             RefreshManagedStorageFolderList();
             await ShowInfoDialogAsync(
                 _localizationService.T("Settings.ManagedStorage.DeleteCompleteTitle"),
@@ -405,21 +415,26 @@ public sealed partial class SettingsWindow
         return await dialog.ShowAsync() == ContentDialogResult.Primary;
     }
 
-    private async Task ShowInfoDialogAsync(string title, string message)
+    private Task ShowInfoDialogAsync(string title, string message)
     {
-        var dialog = new ContentDialog
-        {
-            XamlRoot = SettingsRoot.XamlRoot,
-            Title = title,
-            CloseButtonText = _localizationService.T("Common.Ok"),
-            DefaultButton = ContentDialogButton.Close,
-            Content = new TextBlock
+        // R20-S3-02: these dialogs are raised from async continuations (backup,
+        // restore, export results). A bare ShowAsync while another dialog owns
+        // the XamlRoot throws InvalidOperationException - and a missing root
+        // throws too - so route through the coordinator instead of losing the
+        // message silently inside the caller's void event handler.
+        return ShowDialogWhenFreeAsync(() => SettingsRoot.XamlRoot is null
+            ? null
+            : new ContentDialog
             {
-                Text = message,
-                TextWrapping = TextWrapping.Wrap
-            }
-        };
-
-        await dialog.ShowAsync();
+                XamlRoot = SettingsRoot.XamlRoot,
+                Title = title,
+                CloseButtonText = _localizationService.T("Common.GotIt"),
+                DefaultButton = ContentDialogButton.Close,
+                Content = new TextBlock
+                {
+                    Text = message,
+                    TextWrapping = TextWrapping.Wrap
+                }
+            });
     }
 }

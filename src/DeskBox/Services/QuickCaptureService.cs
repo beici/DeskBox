@@ -3,6 +3,7 @@ using DeskBox.Models;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
 using Windows.Storage.Streams;
+using System.Globalization;
 
 namespace DeskBox.Services;
 
@@ -34,10 +35,29 @@ public sealed class QuickCaptureService
     private const uint ThumbnailMaxPixelSize = 180;
 
     private readonly QuickCaptureStore _store;
+    private readonly Func<string, Task<bool>>? _recycleAttachmentFileAsync;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _thumbnailTaskLock = new();
     private readonly Dictionary<string, Task<string?>> _thumbnailTasks = new(StringComparer.OrdinalIgnoreCase);
     private QuickCaptureStoreData? _data;
+
+    /// <summary>
+    /// True when <see cref="_data"/> reflects what is on disk: the stored
+    /// document was actually read, or this process wrote it. A load that fell
+    /// back to defaults leaves this false, and every destructive cleanup keyed
+    /// on "which attachments are referenced" is skipped while it is false — an
+    /// unreadable document must never be mistaken for an empty one.
+    /// </summary>
+    private bool _dataTrusted;
+
+    /// <summary>
+    /// True when this process loaded the document from a source that reflects
+    /// disk (Primary, or DefaultMissing on a first run). A successful save
+    /// only preserves this verdict: rebuilding from an unreadable document's
+    /// empty fallback must not re-enable destructive cleanup, because the
+    /// in-memory list still has no idea which images the unread document owned.
+    /// </summary>
+    private bool _loadTrustedSource;
 
     /// <summary>
     /// DEF-012: image paths belonging to items inside the delete-undo window.
@@ -65,9 +85,12 @@ public sealed class QuickCaptureService
 
     public event Action? Changed;
 
-    public QuickCaptureService(QuickCaptureStore? store = null)
+    public QuickCaptureService(
+        QuickCaptureStore? store = null,
+        Func<string, Task<bool>>? recycleAttachmentFileAsync = null)
     {
         _store = store ?? new QuickCaptureStore();
+        _recycleAttachmentFileAsync = recycleAttachmentFileAsync;
     }
 
     public async Task<QuickCaptureStoreData> GetDataAsync()
@@ -113,6 +136,7 @@ public sealed class QuickCaptureService
         }
 
         string itemId = Guid.NewGuid().ToString("N");
+        await RegisterAttachmentImportRetentionAsync(itemId);
         var attachments = new List<TodoAttachment>();
         normalizedBody = await ExtractInlineMarkdownImagesAsync(
             itemId,
@@ -382,47 +406,12 @@ public sealed class QuickCaptureService
         try
         {
             await EnsureLoadedCoreAsync();
-            var recentItem = _data!.RecentItems.FirstOrDefault(entry =>
-                string.Equals(entry.Id, recentItemId, StringComparison.Ordinal) &&
-                !entry.IsDeleted);
-            if (recentItem is null ||
-                (string.IsNullOrWhiteSpace(recentItem.Body) &&
-                 string.IsNullOrWhiteSpace(recentItem.ImagePath)))
+            var item = TryConvertRecentToRecordCore(recentItemId, pin, DateTimeOffset.UtcNow);
+            if (item is null)
             {
                 return null;
             }
 
-            var now = DateTimeOffset.UtcNow;
-            var item = new QuickCaptureItem
-            {
-                Body = recentItem.Body,
-                ContentFormat = TextContentFormat.PlainText,
-                Title = recentItem.Title,
-                Type = recentItem.Type,
-                Url = recentItem.Url,
-                ImagePath = recentItem.ImagePath,
-                ContentHash = recentItem.ContentHash,
-                Attachments = recentItem.Attachments.Select(attachment => attachment.Clone()).ToList(),
-                SourceKind = QuickCaptureSourceKind.Clipboard,
-                IsPinned = pin,
-                IsRecent = false,
-                SortOrder = 0,
-                PinnedSortOrder = pin ? 0 : -1,
-                CreatedAt = now,
-                UpdatedAt = now
-            };
-
-            foreach (var existing in _data.Items)
-            {
-                existing.SortOrder++;
-                if (pin && existing.IsPinned)
-                {
-                    existing.PinnedSortOrder++;
-                }
-            }
-
-            _data.Items.Insert(0, item);
-            NormalizePinnedSortOrders(_data.Items);
             await SaveCoreAsync();
             return Clone(item);
         }
@@ -430,6 +419,97 @@ public sealed class QuickCaptureService
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Converts several recent items into records under one gate acquisition and
+    /// one document save (R17-P3-04). The per-item overload saves the whole
+    /// document each time, so dropping ten chips used to rewrite the store ten
+    /// times.
+    /// </summary>
+    public async Task<int> SaveRecentItemsToRecordsAsync(IReadOnlyList<string> recentItemIds, bool pin)
+    {
+        if (recentItemIds is null || recentItemIds.Count == 0)
+        {
+            return 0;
+        }
+
+        await _gate.WaitAsync();
+        try
+        {
+            await EnsureLoadedCoreAsync();
+            var now = DateTimeOffset.UtcNow;
+            int converted = 0;
+            foreach (string recentItemId in recentItemIds)
+            {
+                if (TryConvertRecentToRecordCore(recentItemId, pin, now) is not null)
+                {
+                    converted++;
+                }
+            }
+
+            if (converted == 0)
+            {
+                return 0;
+            }
+
+            await SaveCoreAsync();
+            return converted;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private QuickCaptureItem? TryConvertRecentToRecordCore(string recentItemId, bool pin, DateTimeOffset now)
+    {
+        if (string.IsNullOrWhiteSpace(recentItemId))
+        {
+            return null;
+        }
+
+        var recentItem = _data!.RecentItems.FirstOrDefault(entry =>
+            string.Equals(entry.Id, recentItemId, StringComparison.Ordinal) &&
+            !entry.IsDeleted);
+        if (recentItem is null ||
+            (string.IsNullOrWhiteSpace(recentItem.Body) &&
+             string.IsNullOrWhiteSpace(recentItem.ImagePath)))
+        {
+            return null;
+        }
+
+        var item = new QuickCaptureItem
+        {
+            Body = recentItem.Body,
+            ContentFormat = TextContentFormat.PlainText,
+            Title = recentItem.Title,
+            Type = recentItem.Type,
+            Url = recentItem.Url,
+            ImagePath = recentItem.ImagePath,
+            ContentHash = recentItem.ContentHash,
+            Attachments = recentItem.Attachments.Select(attachment => attachment.Clone()).ToList(),
+            SourceKind = QuickCaptureSourceKind.Clipboard,
+            IsPinned = pin,
+            IsRecent = false,
+            SortOrder = 0,
+            PinnedSortOrder = pin ? 0 : -1,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        foreach (var existing in _data.Items)
+        {
+            existing.SortOrder++;
+            if (pin && existing.IsPinned)
+            {
+                existing.PinnedSortOrder++;
+            }
+        }
+
+        _data.Items.Insert(0, item);
+        NormalizePinnedSortOrders(_data.Items);
+        return item;
     }
 
     public async Task<bool> SetPinnedAsync(string itemId, bool isPinned)
@@ -546,6 +626,7 @@ public sealed class QuickCaptureService
         }
 
         string itemId = Guid.NewGuid().ToString("N");
+        await RegisterAttachmentImportRetentionAsync(itemId);
         var attachments = new List<TodoAttachment>();
         foreach (string path in paths)
         {
@@ -791,17 +872,16 @@ public sealed class QuickCaptureService
             _gate.Release();
             if (removalPersisted &&
                 removedAttachment is { IsManagedCopy: true } &&
-                File.Exists(removedAttachment.FilePath) &&
                 !IsPathInsideDirectory(removedAttachment.FilePath, _store.ImageDirectory))
             {
-                try
-                {
-                    File.Delete(removedAttachment.FilePath);
-                }
-                catch (Exception ex)
-                {
-                    App.Log($"[QuickCaptureService] Failed to delete managed attachment: {ex.Message}");
-                }
+                // Files in the shared image cache stay owned by the refcount
+                // GC above; anything else is deleted only when provably
+                // inside the managed attachment tree, through the recycle
+                // kernel (containment gate inside TryDeleteManagedCopyAsync).
+                await AttachmentStorageService.TryDeleteManagedCopyAsync(
+                    removedAttachment.FilePath,
+                    _store.AttachmentDirectory,
+                    _recycleAttachmentFileAsync);
             }
         }
     }
@@ -895,7 +975,12 @@ public sealed class QuickCaptureService
         try
         {
             await EnsureLoadedCoreAsync();
-            var item = _data!.Items.FirstOrDefault(entry => string.Equals(entry.Id, itemId, StringComparison.Ordinal));
+            // Skip tombstone stubs: they share the live item's id, and
+            // matching one here would re-delete an already-deleted id and
+            // hand back a tombstone clone as the undo snapshot.
+            var item = _data!.Items.FirstOrDefault(entry =>
+                !entry.IsDeleted &&
+                string.Equals(entry.Id, itemId, StringComparison.Ordinal));
             if (item is null)
             {
                 return null;
@@ -940,7 +1025,7 @@ public sealed class QuickCaptureService
             await EnsureLoadedCoreAsync();
             List<QuickCaptureItem> source = isRecent ? _data!.RecentItems : _data!.Items;
             var itemsToDelete = source
-                .Where(item => selectedIds.Contains(item.Id))
+                .Where(item => !item.IsDeleted && selectedIds.Contains(item.Id))
                 .ToList();
             if (itemsToDelete.Count == 0)
             {
@@ -992,7 +1077,12 @@ public sealed class QuickCaptureService
         try
         {
             await EnsureLoadedCoreAsync();
-            var item = _data!.RecentItems.FirstOrDefault(entry => string.Equals(entry.Id, itemId, StringComparison.Ordinal));
+            // Skip tombstone stubs: matching one would re-delete an
+            // already-deleted id and hand back a tombstone clone as the
+            // undo snapshot (see DeleteItemAsync).
+            var item = _data!.RecentItems.FirstOrDefault(entry =>
+                !entry.IsDeleted &&
+                string.Equals(entry.Id, itemId, StringComparison.Ordinal));
             if (item is null)
             {
                 return null;
@@ -1090,7 +1180,21 @@ public sealed class QuickCaptureService
                 .ToList();
             await SaveCoreAsync();
             CleanupUnusedImageCacheCore();
-            TryDeleteDirectory(_store.AttachmentDirectory);
+            // Same trust gate as the two cleanup passes: on an unreadable
+            // document the in-memory list has no idea which attachments
+            // still belong to records on disk, so the whole-tree delete
+            // must not run — clearing the tombstone document is enough.
+            if (!_dataTrusted)
+            {
+                App.Log(
+                    "[QuickCaptureService] Skipped attachment directory removal during clear: " +
+                    "the stored document was not read successfully, so managed attachments " +
+                    "may still belong to records on disk.");
+            }
+            else
+            {
+                TryDeleteDirectory(_store.AttachmentDirectory);
+            }
         }
         finally
         {
@@ -1117,12 +1221,14 @@ public sealed class QuickCaptureService
         }
     }
 
-    public async Task TrimRecentItemsAsync(int maxRecentItems)
+    public async Task TrimRecentItemsAsync(int maxRecentItems,
+        CancellationToken cancellationToken = default)
     {
-        await _gate.WaitAsync();
+        await _gate.WaitAsync(cancellationToken);
         try
         {
             await EnsureLoadedCoreAsync();
+            cancellationToken.ThrowIfCancellationRequested();
             int before = _data!.RecentItems.Count;
             TrimRecentItemsCore(NormalizeRecentLimit(maxRecentItems));
             if (_data.RecentItems.Count != before)
@@ -1506,6 +1612,14 @@ public sealed class QuickCaptureService
         }
 
         _data = await _store.LoadAsync();
+        _loadTrustedSource = _store.LastLoadSource is ResilientJsonLoadSource.Primary or ResilientJsonLoadSource.DefaultMissing;
+        _dataTrusted = _loadTrustedSource;
+        if (!_dataTrusted)
+        {
+            App.Log(
+                $"[QuickCaptureService] Quick capture store could not be read (source={_store.LastLoadSource}); " +
+                "image-cache and attachment cleanup stay disabled until a later process loads the document.");
+        }
         bool migrated = false;
         foreach (QuickCaptureItem item in _data.Items.Where(item => !item.IsDeleted))
         {
@@ -1557,6 +1671,11 @@ public sealed class QuickCaptureService
     private async Task SaveCoreAsync(bool notify = true)
     {
         await _store.SaveAsync(_data!);
+        // A successful write only preserves the load verdict. If the load fell
+        // back to defaults, the in-memory document still has no idea which
+        // images the unread document referenced, so destructive cleanup must
+        // stay disabled until a later process loads the document from disk.
+        _dataTrusted = _loadTrustedSource;
         if (notify)
         {
             Changed?.Invoke();
@@ -1736,6 +1855,31 @@ public sealed class QuickCaptureService
         }
     }
 
+    /// <summary>
+    /// An item's attachments are imported outside <see cref="_gate"/>
+    /// (multi-file copies and inline-image extraction can take seconds),
+    /// so its id must join <see cref="_undoWindowItemIds"/> before the
+    /// first file lands — until the item itself is inserted under the
+    /// gate, that set is the only thing stopping a concurrent orphan
+    /// GC pass from deleting attachments/{itemId}/ mid-import. The entry
+    /// is redundant once the item is live and self-expires with the undo
+    /// window; an import that fails or yields no attachment leaves the
+    /// partial directory to the same expiry. The gate is held only for
+    /// the dictionary write, never across the import IO.
+    /// </summary>
+    private async Task RegisterAttachmentImportRetentionAsync(string itemId)
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            _undoWindowItemIds[itemId] = DateTime.UtcNow;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     private HashSet<string> GetReferencedThumbnailPathsCore(HashSet<string> referencedImagePaths)
     {
         return referencedImagePaths
@@ -1777,6 +1921,17 @@ public sealed class QuickCaptureService
 
     private QuickCaptureImageCacheCleanupResult CleanupUnusedImageCacheCore(HashSet<string> referencedImagePaths)
     {
+        // FQC-13 sibling guard: on an unreadable document every cached image
+        // looks unreferenced, and deleting on that guess destroys the managed
+        // copies of records that still exist on disk — irreversibly.
+        if (!_dataTrusted)
+        {
+            App.Log(
+                "[QuickCaptureService] Skipped image cache cleanup: the store " +
+                "document could not be read, so referenced paths are unknown.");
+            return new QuickCaptureImageCacheCleanupResult(0, 0);
+        }
+
         if (!Directory.Exists(_store.ImageDirectory) &&
             !Directory.Exists(_store.ThumbnailDirectory) &&
             !Directory.Exists(_store.AttachmentDirectory))
@@ -1864,6 +2019,18 @@ public sealed class QuickCaptureService
     {
         if (!Directory.Exists(_store.AttachmentDirectory))
         {
+            return;
+        }
+
+        // FQC-13 safety: "referenced" is only meaningful when the document was
+        // read. After a failed load every item looks deleted, so this pass
+        // would recursively delete attachments/<id>/ for records that still
+        // exist on disk — irreversible loss from a transient read failure.
+        if (!_dataTrusted)
+        {
+            App.Log(
+                "[QuickCaptureService] Skipped orphaned attachment cleanup: the stored document " +
+                "was not read successfully, so referenced attachments cannot be determined.");
             return;
         }
 
@@ -2002,7 +2169,26 @@ public sealed class QuickCaptureService
         string imagePath = Path.Combine(_store.ImageDirectory, $"{contentHash}.png");
         if (!File.Exists(imagePath))
         {
-            await File.WriteAllBytesAsync(imagePath, imagePngBytes);
+            // Atomic publish: stage into a temp sibling and move into place
+            // so a crash mid-write can never leave a truncated png that the
+            // content-addressed cache would then treat as a valid hit.
+            string temporaryPath = $"{imagePath}.{Guid.NewGuid():N}.tmp";
+            try
+            {
+                await File.WriteAllBytesAsync(temporaryPath, imagePngBytes);
+                File.Move(temporaryPath, imagePath, overwrite: true);
+            }
+            finally
+            {
+                try
+                {
+                    File.Delete(temporaryPath);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // Best effort cleanup of the staging file only.
+                }
+            }
         }
 
         await CreateImageThumbnailAsync(imagePath);
@@ -2053,7 +2239,26 @@ public sealed class QuickCaptureService
         string imagePath = Path.Combine(_store.ImageDirectory, $"{contentHash}{extension}");
         if (!File.Exists(imagePath))
         {
-            await File.WriteAllBytesAsync(imagePath, bytes);
+            // Atomic publish: stage into a temp sibling and move into place
+            // so a crash mid-write can never leave a truncated image that
+            // the content-addressed cache would then treat as a valid hit.
+            string temporaryPath = $"{imagePath}.{Guid.NewGuid():N}.tmp";
+            try
+            {
+                await File.WriteAllBytesAsync(temporaryPath, bytes);
+                File.Move(temporaryPath, imagePath, overwrite: true);
+            }
+            finally
+            {
+                try
+                {
+                    File.Delete(temporaryPath);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // Best effort cleanup of the staging file only.
+                }
+            }
         }
 
         await CreateImageThumbnailAsync(imagePath);
@@ -2152,6 +2357,27 @@ public sealed class QuickCaptureService
     private static string ComputeContentHash(byte[] bytes)
     {
         return Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// File name for an image exported out of a Quick Capture item into a user
+    /// folder: the caller's prefix (sanitized), the item timestamp, and the
+    /// source extension. Kept here so the store, the widget menu, and the
+    /// settings export path all produce the same name for the same capture.
+    /// </summary>
+    internal static string BuildImageExportFileName(
+        string? fileNamePrefix,
+        DateTimeOffset timestamp,
+        string sourceImagePath)
+    {
+        string prefix = FileService.SanitizeFileSystemName(fileNamePrefix);
+        if (string.IsNullOrWhiteSpace(prefix))
+        {
+            prefix = "Capture";
+        }
+
+        string extension = NormalizeImageExtension(sourceImagePath);
+        return string.Create(CultureInfo.InvariantCulture, $"{prefix} {timestamp.ToLocalTime():yyyy-MM-dd HH-mm-ss}{extension}");
     }
 
     private static bool IsImageFile(string? path)

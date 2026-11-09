@@ -15,6 +15,14 @@ public sealed class WidgetTitleIconModeTests
     }
 
     [Fact]
+    public void PomodoroWidget_UsesDedicatedPomodoroIconFamily()
+    {
+        Assert.Equal(WidgetTitleIconKindNames.Pomodoro, WidgetTitleIconKindNames.FromWidgetKind(WidgetKind.Pomodoro));
+        Assert.Equal("pomodoro", WidgetTitleIconKindNames.GetColorAssetName(WidgetTitleIconKind.Pomodoro));
+        Assert.Equal("WidgetTitleIcon.Label.Pomodoro", WidgetTitleIconKindNames.GetLocalizationKey(WidgetTitleIconKind.Pomodoro));
+    }
+
+    [Fact]
     public void TodoAndQuickCaptureColorIcons_UseTheSameVisualPaletteAndCanvas()
     {
         string todo = File.ReadAllText(TestPaths.FromRepository(
